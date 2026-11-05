@@ -1,0 +1,389 @@
+{
+  "MONGO_IMAGE": {
+    "upstream": "docker.io/library/mongo:9.0.4",
+    "digest": "sha256:452bdaf2127b8ff851e31410a267809b9829eded219979f2210e7c7efb85a058",
+    "platforms": [
+      {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm64",
+        "os": "linux",
+        "variant": "v8"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "amd64",
+        "os": "windows",
+        "os.version": "10.0.26100.33674"
+      },
+      {
+        "architecture": "amd64",
+        "os": "windows",
+        "os.version": "10.0.20348.5773"
+      }
+    ]
+  },
+  "REDIS_IMAGE": {
+    "upstream": "docker.io/library/redis:8.10.3",
+    "digest": "sha256:de1068af6f552240dfab67bcc9bfef99bfc60f776bb4580ef077ea4c8c97e848",
+    "platforms": [
+      {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm",
+        "os": "linux",
+        "variant": "v5"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm",
+        "os": "linux",
+        "variant": "v7"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm64",
+        "os": "linux",
+        "variant": "v8"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "386",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "ppc64le",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "riscv64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "s390x",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      }
+    ]
+  },
+  "JAVA_IMAGE": {
+    "upstream": "docker.io/library/eclipse-temurin:17-jre-jammy",
+    "digest": "sha256:2a9eb226abb654c9d1f91b53cf638d20cb3abb726d1b18a67909c29515545469",
+    "platforms": [
+      {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm",
+        "os": "linux",
+        "variant": "v7"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm64",
+        "os": "linux",
+        "variant": "v8"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "ppc64le",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "s390x",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      }
+    ]
+  },
+  "ZOONAVIGATOR_IMAGE": {
+    "upstream": "docker.io/elkozmon/zoonavigator:latest",
+    "digest": "sha256:4df04a764c4562b544ba5e0b4300e0cd01ff9159276d91e8d9b785d017793e08",
+    "platforms": [
+      {
+        "architecture": "arm64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      }
+    ],
+    "imported_config_digest": "sha256:73b99b9979de6b95079b87781119a74e9d43ae6a35cf2adcd417e7b0faef6401",
+    "archive_sha256": "6a4126bb2cd7f64a7473be22b4d7fa5630a3856a5215846b1886144bdea2d493",
+    "imported_image_id": "sha256:64427d22c1867bccdf927183dadbc976842ce9f7b6eb02791c6accb5dd860d35"
+  },
+  "PORTAINER_IMAGE": {
+    "upstream": "docker.io/portainer/portainer-ce:2.45.3",
+    "digest": "sha256:3609c307943bca8e5c492f69ddd6965df177208b50678a4cff28391c8dd4e96e",
+    "platforms": [
+      {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm",
+        "os": "linux",
+        "variant": "v7"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "ppc64le",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "amd64",
+        "os": "windows",
+        "os.version": "10.0.17763.9376"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "amd64",
+        "os": "windows",
+        "os.version": "10.0.20348.5761"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "amd64",
+        "os": "windows",
+        "os.version": "10.0.26100.33650"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      }
+    ]
+  },
+  "PROMETHEUS_IMAGE": {
+    "upstream": "docker.io/prom/prometheus:v3.15.1",
+    "digest": "sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2",
+    "platforms": [
+      {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "architecture": "arm64",
+        "os": "linux"
+      },
+      {
+        "architecture": "arm",
+        "os": "linux",
+        "variant": "v7"
+      },
+      {
+        "architecture": "ppc64le",
+        "os": "linux"
+      },
+      {
+        "architecture": "riscv64",
+        "os": "linux"
+      },
+      {
+        "architecture": "s390x",
+        "os": "linux"
+      }
+    ]
+  },
+  "GRAFANA_IMAGE": {
+    "upstream": "docker.io/grafana/grafana:13.3.0",
+    "digest": "sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205",
+    "platforms": [
+      {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "architecture": "arm64",
+        "os": "linux"
+      },
+      {
+        "architecture": "arm",
+        "os": "linux",
+        "variant": "v7"
+      }
+    ]
+  },
+  "HELLO_IMAGE": {
+    "upstream": "docker.io/library/hello-world:latest",
+    "digest": "sha256:c567b231f65614688711a75f31518a064258a51d442117a3e771a3a8fdba78ef",
+    "platforms": [
+      {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm",
+        "os": "linux",
+        "variant": "v5"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm",
+        "os": "linux",
+        "variant": "v6"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm",
+        "os": "linux",
+        "variant": "v7"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "arm64",
+        "os": "linux",
+        "variant": "v8"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "386",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "ppc64le",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "riscv64",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "s390x",
+        "os": "linux"
+      },
+      {
+        "architecture": "unknown",
+        "os": "unknown"
+      },
+      {
+        "architecture": "amd64",
+        "os": "windows",
+        "os.version": "10.0.26100.33674"
+      },
+      {
+        "architecture": "amd64",
+        "os": "windows",
+        "os.version": "10.0.20348.5773"
+      }
+    ]
+  }
+}

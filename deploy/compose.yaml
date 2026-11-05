@@ -1,0 +1,141 @@
+name: tgame
+
+x-defaults: &defaults
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  mongo:
+    <<: *defaults
+    image: ${MONGO_IMAGE:-mongo:9.0.4}
+    mem_limit: 640m
+    command: [mongod, --wiredTigerCacheSizeGB, "0.25"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ADMIN_PASSWORD:?Set MongoDB admin password}
+      MONGO_DEV_PASSWORD: ${MONGO_DEV_PASSWORD:?Set MongoDB dev password}
+      MONGO_TEST_PASSWORD: ${MONGO_TEST_PASSWORD:?Set MongoDB test password}
+    ports: ["127.0.0.1:27017:27017"]
+    volumes:
+      - mongo-data:/data/db
+      - ./config/mongo/init.js:/docker-entrypoint-initdb.d/10-tgame.js:ro
+    healthcheck:
+      test: [CMD-SHELL, 'mongosh --quiet --username admin --password "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  redis:
+    <<: *defaults
+    image: ${REDIS_IMAGE:-redis:8.10.3}
+    mem_limit: 160m
+    command: [redis-server, /usr/local/etc/redis/redis.conf]
+    ports: ["127.0.0.1:6379:6379"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_ADMIN_PASSWORD:?Set Redis admin password}
+    volumes:
+      - redis-data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    secrets: [redis_acl]
+    healthcheck:
+      test: [CMD-SHELL, 'redis-cli --user admin ping | grep -q PONG']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    <<: *defaults
+    image: tgame/zookeeper:3.8.8
+    build:
+      context: ./zookeeper
+      args:
+        JAVA_IMAGE: ${JAVA_IMAGE:-eclipse-temurin:17-jre-jammy}
+    mem_limit: 384m
+    environment:
+      JVMFLAGS: -Xms64m -Xmx192m
+    ports: ["127.0.0.1:2181:2181"]
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+      - ./config/zookeeper/zoo.cfg:/opt/zookeeper/conf/zoo.cfg:ro
+    healthcheck:
+      test: [CMD-SHELL, 'echo ruok | nc -w 3 127.0.0.1 2181 | grep -q imok']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  zoonavigator:
+    <<: *defaults
+    image: ${ZOONAVIGATOR_IMAGE:?Set verified ZooNavigator image digest}
+    mem_limit: 384m
+    environment:
+      HTTP_PORT: "9000"
+      CONNECTION_TGAME_NAME: TGame
+      CONNECTION_TGAME_CONN: zookeeper:2181
+      AUTO_CONNECT_CONNECTION_ID: TGAME
+      JAVA_XMS: 64m
+      JAVA_XMX: 192m
+    ports: ["127.0.0.1:9000:9000"]
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  portainer:
+    <<: *defaults
+    image: ${PORTAINER_IMAGE:-portainer/portainer-ce:2.45.3}
+    mem_limit: 192m
+    command: ["--http-enabled"]
+    ports: ["127.0.0.1:9443:9443", "127.0.0.1:9001:9000"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+
+  prometheus:
+    <<: *defaults
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.15.1}
+    mem_limit: 256m
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=512MB
+    ports: ["127.0.0.1:9090:9090"]
+    volumes:
+      - prometheus-data:/prometheus
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    <<: *defaults
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.3.0}
+    mem_limit: 512m
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set Grafana password}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports: ["127.0.0.1:3000:3000"]
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+secrets:
+  redis_acl:
+    file: ./secrets/redis.acl
+
+volumes:
+  mongo-data:
+  redis-data:
+  zookeeper-data:
+  zookeeper-log:
+  portainer-data:
+  prometheus-data:
+  grafana-data:

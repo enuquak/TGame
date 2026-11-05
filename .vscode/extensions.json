@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "ms-dotnettools.csdevkit",
+    "ms-vscode-remote.remote-ssh",
+    "redhat.vscode-yaml",
+    "bufbuild.vscode-buf",
+    "DavidAnson.vscode-markdownlint",
+    "GitHub.vscode-pull-request-github",
+    "GitHub.vscode-github-actions",
+    "openai.chatgpt"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "recall": {
+    "enabled": true,
+    "peer_scope": "actor"
+  },
+  "capture": {
+    "enabled": true
+  },
+  "usage": {
+    "view": "off"
+  },
+  "peer": {
+    "id": "tgame"
+  }
+}
