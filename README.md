@@ -33,6 +33,8 @@ pwsh -NoProfile -File .\tools\scripts\powershell\Connect-Server.ps1 -RemoteComma
 
 ## 服务端设计约定
 
+进程职责、Body 与 Soul 的归属、消息路径及扩缩容时的连接数见 [服务器架构与进程拓扑](code/agents/服务器架构与进程拓扑.md)。
+
 - 引擎层与业务层分离，引擎层常驻，不参与业务热更新。
 - 核心要求是支持不重启进程的业务热重载。计划采用可回收的 `AssemblyLoadContext` 加载业务 DLL，通过 `LogicRouter` 切换业务实现。
 - 通过常驻转发方法封装 `LogicRouter`，减少热更新机制对日常业务开发的影响。
