@@ -23,7 +23,9 @@
 
 Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[测试存储地址](code/server/config/storage.test.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
 
-控制台输出本轮日志目录 `logs/server/pingpong/<运行 ID>/`。`result.log` 汇总每条链路和请求的核对结果，角色日志中可按同一请求 ID 查看原始收发记录。成功末行为 `PASS processes=8 grpc_links=9 wss_sessions=1 rounds=2 pong=25 mongo_ping=2 gm_http=5`。失败返回非零退出码，诊断信息在同目录的角色日志和 `*.err.log` 中。
+服务进程直接写入 `logs/server/<进程类型>Server/`，例如 `logs/server/BaseServer/` 和 `logs/server/GMServer/`。每行是一条 JSON 事件，可按 `runId`、`pid`、请求 `id` 查询。每个实例使用 `<运行ID>-<PID>-yyyyMMddHH.log`，按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
+
+验收材料在 `logs/tools/pingpong/<运行ID>/`。`result.log` 汇总链路和协议验证结果，`server-logs.json` 定位本轮服务日志，`Client.log` 是测试客户端输出。服务进程的致命异常以 `PROCESS_FAILED` 记录，启动器捕获的原始标准错误保存在验收目录的 `<角色>.stderr.log`。成功末行为 `PASS processes=8 grpc_links=9 wss_sessions=1 rounds=2 pong=25 mongo_ping=2 gm_http=5`。失败返回非零退出码。已有旧版验收目录仍可通过 `Test-PingPongLogs.ps1 -RunDirectory <目录>` 复核。
 
 默认在验收后停止本轮进程；传入 `-Hold` 可保留进程到按回车时。自动化使用 `pwsh -NoProfile -File ./tools/scripts/powershell/Test-PingPong.ps1`。测试覆盖固定八个实例的启动发现、消息路径、GM 指令和 Profile 摘要读写，动态扩缩容及玩家完整存盘属于后续验证范围。
 
@@ -31,13 +33,13 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 
 本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的 32 位十六进制 EntityId。返回的 `requestId` 可关联 GM 审计和 gRPC 收发日志。
 
-自动验收默认生成一次性随机令牌。手动验收时先设置 `TGAME_GM_TOKEN`（至少 32 个字符的随机令牌）和 `TGAME_GM_OPERATOR`（该凭据对应的操作员），以 `-Hold` 运行脚本，从控制台取得 GM 地址，从 `Scene.log` 的 `SINGLE_POINT_INIT` 取得目标 ID。在另一终端中使用相同令牌执行：
+自动验收默认生成一次性随机令牌。手动验收时先设置 `TGAME_GM_TOKEN`（至少 32 个字符的随机令牌）和 `TGAME_GM_OPERATOR`（该凭据对应的操作员），以 `-Hold` 运行脚本，从控制台取得 GM 地址。用 `Read-PingPongLog.ps1 -RunDirectory <本轮验收目录> -Role Scene -Event SINGLE_POINT_INIT` 读取目标 EntityId。在另一终端中使用相同令牌执行：
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri "$gmAddress/gm/commands/ping/$entityId" -Headers @{ Authorization = "Bearer $env:TGAME_GM_TOKEN" }
 ```
 
-有效指令返回 200，响应包含实际回包进程。鉴权失败返回 401，ID 格式错误返回 400，目标未登记返回 404，路由暂不可用返回 503。`GM.log` 的 `GM_COMMAND` 记录执行人、目标、请求 ID 与状态码。
+有效指令返回 200，响应包含实际回包进程。鉴权失败返回 401，ID 格式错误返回 400，目标未登记返回 404，路由暂不可用返回 503。`logs/server/GMServer/` 中的 `GM_COMMAND` 记录执行人、目标、请求 ID 与状态码。
 
 ## 云服务器连接
 
