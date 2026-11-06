@@ -1,15 +1,18 @@
 #requires -Version 7.0
 param([Parameter(Mandatory)][string]$RunDirectory)
 $ErrorActionPreference = 'Stop'
-$roles = 'Gate','Login','Base','Scene','Router','DBMgr'
-$hasProfile = Test-Path -LiteralPath (Join-Path $RunDirectory 'Profile.log')
-if ($hasProfile) { $roles += 'Profile' }
-$hasGM = Test-Path -LiteralPath (Join-Path $RunDirectory 'GM.log')
-if ($hasGM) { $roles += 'GM' }
+$manifest = Join-Path $RunDirectory 'server-logs.json'
+if (Test-Path -LiteralPath $manifest) {
+    $roles = (Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json).roles
+} else {
+    $roles = 'Gate','Login','Base','Scene','Router','DBMgr'
+    if (Test-Path -LiteralPath (Join-Path $RunDirectory 'Profile.log')) { $roles += 'Profile' }
+    if (Test-Path -LiteralPath (Join-Path $RunDirectory 'GM.log')) { $roles += 'GM' }
+}
+$hasProfile = 'Profile' -in $roles
+$hasGM = 'GM' -in $roles
 $records = @(foreach ($role in ($roles + 'Client')) {
-    foreach ($line in Get-Content -LiteralPath (Join-Path $RunDirectory "$role.log")) {
-        if ($line.StartsWith('{"time":')) { $line | ConvertFrom-Json }
-    }
+    & "$PSScriptRoot/Read-PingPongLog.ps1" $RunDirectory $role
 })
 $cases = Get-Content -LiteralPath (Join-Path $RunDirectory 'cases.json') -Raw | ConvertFrom-Json
 $points = @($records | Where-Object ev -eq SINGLE_POINT_INIT)

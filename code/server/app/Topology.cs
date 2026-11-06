@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using org.apache.zookeeper;
 
 namespace TGame.PingPong;
@@ -18,13 +17,6 @@ internal static class Topology
         ["Profile"] = "profile-1"
     };
     public static int Degree(string role) => Dials[role].Length + Dials.Values.Count(v => v.Contains(role));
-}
-
-internal static class TraceLog
-{
-    public static void Event(string ev, string role, string? peer = null, string? id = null,
-        string? entity = null, string? link = null, string? detail = null) =>
-        Console.WriteLine(JsonSerializer.Serialize(new { time = DateTimeOffset.UtcNow, ev, role, pid = Environment.ProcessId, peer, id, entity, link, detail }));
 }
 
 internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable

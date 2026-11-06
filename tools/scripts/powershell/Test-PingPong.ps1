@@ -3,13 +3,17 @@
 param([switch]$Hold)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
-$runDir = Join-Path $root ('logs/server/pingpong/' + [guid]::NewGuid().ToString('N'))
+$runId = [guid]::NewGuid().ToString('N')
+$runDir = Join-Path $root "logs/tools/pingpong/$runId"
+$serverRoot = Join-Path $root 'logs/server'
+$readLog = Join-Path $PSScriptRoot 'Read-PingPongLog.ps1'
 $null = New-Item -ItemType Directory -Path $runDir
 $children = @{}
 $dotnet = "$env:ProgramFiles/dotnet/dotnet.exe"
 if (!(Test-Path -LiteralPath $dotnet)) { $dotnet = (Get-Command dotnet -CommandType Application).Source }
 $dll = Join-Path $root 'build/bin/TGame.PingPong/debug/TGame.PingPong.dll'
-Write-Host "PingPong logs: $runDir"
+Write-Host "Server logs: $serverRoot/<Role>Server/"
+Write-Host "PingPong results: $runDir"
 Push-Location $root
 try {
     & $dotnet build code/server/app/TGame.PingPong.csproj --nologo
@@ -31,12 +35,14 @@ try {
     $gmActor = $env:TGAME_GM_OPERATOR
     if (!$gmActor) { $gmActor = 'local-smoke' }
     $roles = 'Router','DBMgr','Scene','Login','Base','Profile','GM','Gate'
+    @{ runId=$runId; serverRoot=[IO.Path]::GetRelativePath($runDir,$serverRoot); roles=$roles } |
+        ConvertTo-Json | Set-Content -LiteralPath "$runDir/server-logs.json" -Encoding utf8
     foreach ($role in $roles) {
         $launch = @{
             FilePath = $dotnet; ArgumentList = ('"{0}" {1} "{2}"' -f $dll,$role,$runDir)
             WindowStyle = 'Hidden'; PassThru = $true; WorkingDirectory = $root
-            RedirectStandardOutput = "$runDir/$role.log"; RedirectStandardError = "$runDir/$role.err.log"
-            Environment = @{ TGAME_GM_TOKEN = $null; TGAME_GM_OPERATOR = $null }
+            RedirectStandardError = "$runDir/$role.stderr.log"
+            Environment = @{ TGAME_GM_TOKEN = $null; TGAME_GM_OPERATOR = $null; TGAME_SERVER_LOG_ROOT = $serverRoot }
         }
         if ($role -eq 'GM') {
             $launch.Environment.TGAME_GM_TOKEN = $gmToken
@@ -53,8 +59,8 @@ try {
     do {
         $ready = 0
         foreach ($role in $roles) {
-            if ($children[$role].HasExited) { throw "$role exited before probes. See $role.err.log." }
-            if (Select-String -LiteralPath "$runDir/$role.log" -SimpleMatch '"ev":"READY"' -Quiet) { $ready++ }
+            if ($children[$role].HasExited) { throw "$role exited before probes. See $serverRoot/${role}Server and $runDir/$role.stderr.log." }
+            if (& $readLog $runDir $role -Event READY) { $ready++ }
         }
         if ($ready -eq $roles.Count) { break }
         if ([datetime]::UtcNow -gt $deadline) { throw "Only $ready/$($roles.Count) ready. Check SSH tunnel and role logs." }
@@ -74,8 +80,7 @@ try {
         'Gate,Base,Router,Scene','Gate,Base,Router','Gate,Login,Router,DBMgr','Gate,Base,Router,Profile','Gate,Base,Router,GM') {
         $path = @('Client') + $route.Split(',')
         $role = $path[-1]
-        $point = @(Select-String -LiteralPath "$runDir/$role.log" -SimpleMatch '"ev":"SINGLE_POINT_INIT"' |
-            ForEach-Object { $_.Line | ConvertFrom-Json })
+        $point = @(& $readLog $runDir $role -Event SINGLE_POINT_INIT)
         if ($point.Count -ne 1 -or $point[0].entity -cnotmatch '^[0-9a-f]{32}$') { throw "Expected one startup Entity in $role." }
         $pointIds[$role] = $point[0].entity
         $cases += [pscustomobject]@{ Id = [guid]::NewGuid().ToString('N'); Entity = $point[0].entity
@@ -91,11 +96,11 @@ try {
             ProfileResult = $expected; Evidence = $evidence }
     }
     $cases | ConvertTo-Json -Depth 4 -AsArray | Set-Content -LiteralPath "$runDir/cases.json" -Encoding utf8
-    $listen = (Select-String -LiteralPath "$runDir/Gate.log" -SimpleMatch '"ev":"LISTEN"').Line | ConvertFrom-Json
+    $listen = & $readLog $runDir Gate -Event LISTEN
     $endpoint = 'wss://localhost:{0}/probe' -f ([uri]$listen.detail).Port
     & $dotnet $dll client $runDir $endpoint $listen.link > "$runDir/Client.log" 2> "$runDir/Client.err.log"
     if ($LASTEXITCODE -ne 0) { throw "Client failed. See Client.err.log." }
-    $gmListen = (Select-String -LiteralPath "$runDir/GM.log" -SimpleMatch '"ev":"LISTEN"').Line | ConvertFrom-Json
+    $gmListen = & $readLog $runDir GM -Event LISTEN
     $gmUri = [uri]$gmListen.detail
     if ($gmUri.Host -ne '127.0.0.1' -or $gmUri.Scheme -ne 'http') { throw 'Unexpected GM HTTP endpoint.' }
     $unknownId = [guid]::NewGuid().ToString('N')

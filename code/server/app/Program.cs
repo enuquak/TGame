@@ -16,56 +16,71 @@ if (args.Length != 2 || !Topology.Dials.ContainsKey(args[0]))
 var role = args[0];
 var runDir = Path.GetFullPath(args[1]);
 var runId = Guid.ParseExact(Path.GetFileName(runDir), "N");
-var singlePoints = new SinglePointRegistry(typeof(ServerSinglePoint).Assembly.GetTypes());
-using var profileStore = role == "Profile" ? new ProfileStore() : null;
-var singlePoint = singlePoints.Create(Enum.Parse<ProcessType>(role));
-var node = new ProbeNode(role, singlePoint, profileStore);
-var builder = WebApplication.CreateSlimBuilder();
-builder.Logging.ClearProviders();
-using var certificate = role == "Gate" ? FindDevelopmentCertificate() : null;
-builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
-{
-    listen.Protocols = certificate is not null || singlePoint is GMServerSinglePoint ? HttpProtocols.Http1 : HttpProtocols.Http2;
-    if (certificate is not null) listen.UseHttps(certificate);
-}));
-builder.Services.AddGrpc();
-builder.Services.AddSingleton(node);
-await using var app = builder.Build();
-if (role == "Gate")
-{
-    app.UseWebSockets();
-    app.MapGet("/probe", node.WebSocketAsync);
-}
-else if (singlePoint is GMServerSinglePoint) GmHttp.Map(app, node);
-else app.MapGrpcService<LinkService>();
-await app.StartAsync();
-var address = app.Urls.Single();
-TraceLog.Event("LISTEN", role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
-using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
-await using var registry = new ProbeRegistry(runId);
-var peers = await registry.RegisterAndDiscoverAsync(role, address).WaitAsync(TimeSpan.FromSeconds(40));
-var connections = node.Start(peers, lifetime.Token);
+using var serverLog = TraceLog.OpenServer(role, runId);
 try
 {
-    while (!File.Exists(Path.Combine(runDir, "stop")) && !lifetime.IsCancellationRequested)
-    {
-        foreach (var task in connections.Where(task => task.IsCompleted))
-        {
-            await task;
-            throw new IOException("A peer stream closed before shutdown.");
-        }
-        if (node.LinkCount == Topology.Degree(role) && !node.Ready)
-        {
-            node.Ready = true;
-            TraceLog.Event("READY", role, detail: node.LinkCount.ToString());
-        }
-        await Task.Delay(100);
-    }
+    await RunServerAsync(role, runId, runDir);
 }
-finally
+catch (Exception error)
 {
-    lifetime.Cancel();
-    await app.StopAsync(TimeSpan.FromSeconds(3));
+    TraceLog.Event("PROCESS_FAILED", role, detail: error.ToString());
+    Console.Error.WriteLine(error);
+    Environment.ExitCode = 1;
+}
+
+static async Task RunServerAsync(string role, Guid runId, string runDir)
+{
+    var singlePoints = new SinglePointRegistry(typeof(ServerSinglePoint).Assembly.GetTypes());
+    using var profileStore = role == "Profile" ? new ProfileStore() : null;
+    var singlePoint = singlePoints.Create(Enum.Parse<ProcessType>(role));
+    var node = new ProbeNode(role, singlePoint, profileStore);
+    var builder = WebApplication.CreateSlimBuilder();
+    builder.Logging.ClearProviders();
+    using var certificate = role == "Gate" ? FindDevelopmentCertificate() : null;
+    builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
+    {
+        listen.Protocols = certificate is not null || singlePoint is GMServerSinglePoint ? HttpProtocols.Http1 : HttpProtocols.Http2;
+        if (certificate is not null) listen.UseHttps(certificate);
+    }));
+    builder.Services.AddGrpc();
+    builder.Services.AddSingleton(node);
+    await using var app = builder.Build();
+    if (role == "Gate")
+    {
+        app.UseWebSockets();
+        app.MapGet("/probe", node.WebSocketAsync);
+    }
+    else if (singlePoint is GMServerSinglePoint) GmHttp.Map(app, node);
+    else app.MapGrpcService<LinkService>();
+    await app.StartAsync();
+    var address = app.Urls.Single();
+    TraceLog.Event("LISTEN", role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
+    using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
+    await using var registry = new ProbeRegistry(runId);
+    var peers = await registry.RegisterAndDiscoverAsync(role, address).WaitAsync(TimeSpan.FromSeconds(40));
+    var connections = node.Start(peers, lifetime.Token);
+    try
+    {
+        while (!File.Exists(Path.Combine(runDir, "stop")) && !lifetime.IsCancellationRequested)
+        {
+            foreach (var task in connections.Where(task => task.IsCompleted))
+            {
+                await task;
+                throw new IOException("A peer stream closed before shutdown.");
+            }
+            if (node.LinkCount == Topology.Degree(role) && !node.Ready)
+            {
+                node.Ready = true;
+                TraceLog.Event("READY", role, detail: node.LinkCount.ToString());
+            }
+            await Task.Delay(100);
+        }
+    }
+    finally
+    {
+        lifetime.Cancel();
+        await app.StopAsync(TimeSpan.FromSeconds(3));
+    }
 }
 
 static X509Certificate2 FindDevelopmentCertificate()
