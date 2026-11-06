@@ -4,7 +4,40 @@
 
 ## 项目文件结构
 
-目录骨架已创建，目录职责见 [项目文件结构](docs/项目文件结构.md)。Codex 日常开发可打开 `code/`；项目工具位于 `tools/`，策划源文件位于 `design/`。当前尚未创建游戏源码工程。
+目录职责见 [项目文件结构](docs/项目文件结构.md)。Codex 日常开发可打开 `code/`；项目工具位于 `tools/`，策划源文件位于 `design/`。
+
+## Ping/Pong 联通验证
+
+在项目根目录运行以下命令。第一条启动云测试环境的 SSH 隧道，第二条编译 Protobuf 协议并启动 Gate、GM、Login、Base、Scene、Router、DBMgr、Profile 各一个本地进程。
+
+```powershell
+.\tools\scripts\Start-EnvironmentTunnel.bat
+.\tools\scripts\Test-PingPong.bat
+```
+
+需要仓库指定的 .NET SDK、PowerShell 7.4+、本机 ASP.NET Core 开发证书（可用 `dotnet dev-certs https` 创建）及 MongoDB、Redis 测试账号密码。设置 `TGAME_MONGO_TEST_PASSWORD`、`TGAME_REDIS_TEST_PASSWORD`，或使用本机 `.local/secrets/cloud.env` 中的 `MONGO_TEST_PASSWORD`、`REDIS_TEST_PASSWORD`。首次构建需还原 NuGet 包。每个进程监听随机回环端口，在 ZooKeeper 的 `/tgame/test` 下注册本轮专用临时节点并读取地址。测试客户端用同一条 WSS 连接发送二进制 Protobuf，并校验本机 Gate 证书指纹。
+
+验收程序跑两轮常规探针，按请求 ID 核对每一跳的收发及复用的 9 条 gRPC 双向流。普通 DBMgr 消息走 Router，存盘探针走 Base 的专线并执行 MongoDB `ping`。协议源文件见 [pingpong.proto](code/shared/protocols/pingpong.proto)。
+
+每个服务进程按类声明上的 `SinglePointFor` 标注创建本进程的 SinglePoint。`SINGLE_POINT_INIT` 记录进程类型、实际类名和 EntityId。八个 SinglePoint 会分别收到定向探针，五种 Game 进程和 GM 会核对 Router 的位置登记。
+
+Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[测试存储地址](code/server/config/storage.test.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
+
+控制台输出本轮日志目录 `logs/server/pingpong/<运行 ID>/`。`result.log` 汇总每条链路和请求的核对结果，角色日志中可按同一请求 ID 查看原始收发记录。成功末行为 `PASS processes=8 grpc_links=9 wss_sessions=1 rounds=2 pong=25 mongo_ping=2 gm_http=5`。失败返回非零退出码，诊断信息在同目录的角色日志和 `*.err.log` 中。
+
+默认在验收后停止本轮进程；传入 `-Hold` 可保留进程到按回车时。自动化使用 `pwsh -NoProfile -File ./tools/scripts/powershell/Test-PingPong.ps1`。测试覆盖固定八个实例的启动发现、消息路径、GM 指令和 Profile 摘要读写，动态扩缩容及玩家完整存盘属于后续验证范围。
+
+### GM 管理入口
+
+本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的 32 位十六进制 EntityId。返回的 `requestId` 可关联 GM 审计和 gRPC 收发日志。
+
+自动验收默认生成一次性随机令牌。手动验收时先设置 `TGAME_GM_TOKEN`（至少 32 个字符的随机令牌）和 `TGAME_GM_OPERATOR`（该凭据对应的操作员），以 `-Hold` 运行脚本，从控制台取得 GM 地址，从 `Scene.log` 的 `SINGLE_POINT_INIT` 取得目标 ID。在另一终端中使用相同令牌执行：
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "$gmAddress/gm/commands/ping/$entityId" -Headers @{ Authorization = "Bearer $env:TGAME_GM_TOKEN" }
+```
+
+有效指令返回 200，响应包含实际回包进程。鉴权失败返回 401，ID 格式错误返回 400，目标未登记返回 404，路由暂不可用返回 503。`GM.log` 的 `GM_COMMAND` 记录执行人、目标、请求 ID 与状态码。
 
 ## 云服务器连接
 

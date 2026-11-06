@@ -1,0 +1,4 @@
+# Host-side endpoints for the local smoke processes, forwarded over SSH.
+dbMgrMongo: &gameMongo "127.0.0.1:37017"
+profileMongo: *gameMongo
+profileRedis: "127.0.0.1:16379"

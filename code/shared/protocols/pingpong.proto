@@ -1,0 +1,37 @@
+syntax = "proto3";
+import "profile.proto";
+package tgame.smoke;
+option csharp_namespace = "TGame.PingPong";
+
+// Gate receives a binary Ping over WebSocket and returns a binary Pong.
+message Ping {
+  string request_id = 1;
+  string entity_id = 2;
+  string entry = 3;       // Login/Base, a Gate-local probe, or an internal read-only GM ping
+  bool storage = 4;       // Base -> DBMgr dedicated link
+  enum ProfileProbe { NONE = 0; PUBLISH = 1; FETCH = 2; WITHDRAW = 3; }
+  ProfileProbe profile_probe = 5;  // loopback test driver
+  string profile_subject = 6;
+}
+message Pong {
+  string request_id = 1;
+  string entity_id = 2;
+  string responder = 3;
+  tgame.profile.ProfileReply profile_reply = 4;
+  enum Status { OK = 0; NOT_FOUND = 1; UNAVAILABLE = 2; }
+  Status status = 5;
+}
+
+// Each pair of server processes shares a single bidirectional stream.
+message Frame {
+  oneof body {
+    Ping ping = 1;
+    Pong pong = 2;
+    string hello = 3;     // Opens the stream before any probe is issued.
+    tgame.profile.ProfileRequest profile_request = 4;
+    tgame.profile.ProfileReply profile_reply = 5;
+  }
+}
+service ProbeLink {
+  rpc Connect(stream Frame) returns (stream Frame);
+}

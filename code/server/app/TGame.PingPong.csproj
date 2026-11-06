@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../model/entities/**/*.cs" />
+    <Compile Include="../logic/entities/**/*.cs" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.85.0" />
+    <PackageReference Include="MongoDB.Driver" Version="3.13.0" />
+    <PackageReference Include="StackExchange.Redis" Version="3.4.31" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <Content Include="../config/storage.test.yaml" Link="config/storage.test.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <PackageReference Include="ZooKeeperNetEx" Version="3.4.12.4" />
+    <Protobuf Include="../../shared/protocols/pingpong.proto" ProtoRoot="../../shared/protocols"
+              OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '..', 'generated', 'pingpong'))" GrpcServices="Both" />
+    <Protobuf Include="../../shared/protocols/profile.proto" ProtoRoot="../../shared/protocols"
+              OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '..', 'generated', 'pingpong'))" GrpcServices="None" />
+  </ItemGroup>
+</Project>

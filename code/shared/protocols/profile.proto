@@ -1,0 +1,27 @@
+syntax = "proto3";
+package tgame.profile;
+option csharp_namespace = "TGame.Profile";
+
+message EntitySummary {
+  string entity_id = 1;
+  string display_name = 2;
+  string title = 3;
+}
+
+// Inter-process only. Writers may publish or withdraw their own entities.
+message ProfileRequest {
+  string request_id = 1;
+  oneof operation {
+    EntitySummary publish = 2;
+    string fetch = 3;
+    string withdraw = 4;
+  }
+}
+
+message ProfileReply {
+  string request_id = 1;
+  enum Result { UNSPECIFIED = 0; STORED = 1; FOUND = 2; MISSING = 3; REMOVED = 4; REJECTED = 5; UNAVAILABLE = 6; }
+  Result result = 2;
+  EntitySummary summary = 3;
+  string entity_id = 4;
+}
