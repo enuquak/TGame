@@ -5,7 +5,7 @@ using Grpc.Core;
 
 namespace TGame.PingPong;
 
-internal static class GmHttp
+internal static class GMHttp
 {
     public static void Map(WebApplication app, ProbeNode node)
     {

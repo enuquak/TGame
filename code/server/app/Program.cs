@@ -50,7 +50,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
         app.UseWebSockets();
         app.MapGet("/probe", node.WebSocketAsync);
     }
-    else if (singlePoint is GMServerSinglePoint) GmHttp.Map(app, node);
+    else if (singlePoint is GMServerSinglePoint) GMHttp.Map(app, node);
     else app.MapGrpcService<LinkService>();
     await app.StartAsync();
     var address = app.Urls.Single();
