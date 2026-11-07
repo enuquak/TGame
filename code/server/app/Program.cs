@@ -10,6 +10,7 @@ if (args is ["client", var directory, var endpoint, var pin])
     await ProbeClient.RunAsync(directory, new Uri(endpoint), pin);
     return;
 }
+
 if (args.Length != 2 || !Topology.Dials.ContainsKey(args[0]))
     throw new ArgumentException($"Usage: TGame.PingPong <{string.Join('|', Topology.Dials.Keys)}> <run-directory>");
 
@@ -34,6 +35,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     var singlePoint = singlePoints.Create(Enum.Parse<ProcessType>(role));
     using var resources = singlePoint as IDisposable;
     var node = new ProbeNode(role, singlePoint);
+
     var builder = WebApplication.CreateSlimBuilder();
     builder.Logging.ClearProviders();
     using var certificate = role == "Gate" ? FindDevelopmentCertificate() : null;
@@ -44,20 +46,26 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     }));
     builder.Services.AddGrpc();
     builder.Services.AddSingleton(node);
+
     await using var app = builder.Build();
     if (role == "Gate")
     {
         app.UseWebSockets();
         app.MapGet("/probe", node.WebSocketAsync);
     }
-    else if (singlePoint is GMServerSinglePoint gm) GMHttp.Map(app, node, gm);
-    else app.MapGrpcService<LinkService>();
+    else if (singlePoint is GMServerSinglePoint gm)
+        GMHttp.Map(app, node, gm);
+    else
+        app.MapGrpcService<LinkService>();
+
     await app.StartAsync();
     var address = app.Urls.Single();
     TraceLog.Event("LISTEN", role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
+
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
     var stop = lifetime.Token;
     bool consoleMode = File.Exists(Path.Combine(runDir, "console"));
+
     try
     {
         var initialization = node.InitializeAsync(stop);
@@ -65,10 +73,13 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
         using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
         registrationTimeout.CancelAfter(TimeSpan.FromSeconds(40));
         var registration = registry.RegisterAsync(role, address, consoleMode, registrationTimeout.Token);
+
         var workers = Topology.Dials[role].Select(peer => SuperviseAsync(ConnectAsync(peer))).ToList();
         workers.Add(SuperviseAsync(initialization));
         workers.Add(SuperviseAsync(registration));
-        if (!consoleMode) workers.Add(SuperviseAsync(node.FirstLinks.WaitAsync(TimeSpan.FromSeconds(40), stop)));
+        if (!consoleMode)
+            workers.Add(SuperviseAsync(node.FirstLinks.WaitAsync(TimeSpan.FromSeconds(40), stop)));
+
         workers.Add(SuperviseAsync(WatchStopAsync()));
         await Task.WhenAll(workers);
 
@@ -88,15 +99,24 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     {
         var stopGroup = Path.Combine(runDir, "stop");
         var stopRole = Path.Combine(runDir, $"stop-{role}");
-        while (!File.Exists(stopGroup) && !File.Exists(stopRole)) await Task.Delay(100, stop);
+        while (!File.Exists(stopGroup) && !File.Exists(stopRole))
+            await Task.Delay(100, stop);
+
         lifetime.Cancel();
     }
 
     async Task SuperviseAsync(Task worker)
     {
-        try { await worker; }
+        try
+        {
+            await worker;
+        }
         catch (Exception) when (stop.IsCancellationRequested) { }
-        catch { lifetime.Cancel(); throw; }
+        catch
+        {
+            lifetime.Cancel();
+            throw;
+        }
     }
 }
 
