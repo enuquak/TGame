@@ -16,17 +16,30 @@ internal sealed class ProfileStore : IDisposable
     private readonly IDatabase cache;
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(1);
 
-    public ProfileStore()
+    private ProfileStore(MongoClient mongo, ConnectionMultiplexer redis)
+    {
+        this.mongo = mongo;
+        this.redis = redis;
+        summaries = mongo.GetDatabase("tgame_test").GetCollection<BsonDocument>("entity_profiles");
+        cache = redis.GetDatabase();
+    }
+
+    public static async Task<ProfileStore> OpenAsync(CancellationToken stop)
     {
         var settings = TestStorage.Settings.Value;
-        mongo = TestStorage.Mongo(settings.ProfileMongo);
-        summaries = mongo.GetDatabase("tgame_test").GetCollection<BsonDocument>("entity_profiles");
-        redis = ConnectionMultiplexer.Connect(new ConfigurationOptions
+        var options = new ConfigurationOptions
         {
             EndPoints = { settings.ProfileRedis }, User = "tgame_test", Password = TestStorage.Password("TGAME_REDIS_TEST_PASSWORD"),
-            AbortOnConnectFail = false, ConnectTimeout = 2000, AsyncTimeout = 2000
-        });
-        cache = redis.GetDatabase();
+            AbortOnConnectFail = false, ConnectTimeout = 2000, AsyncTimeout = 2000, ConnectRetry = 1
+        };
+        var mongo = TestStorage.Mongo(settings.ProfileMongo);
+        try
+        {
+            await TestStorage.PingAsync(mongo.GetDatabase("tgame_test"), stop);
+            var redis = await ConnectionMultiplexer.ConnectAsync(options);
+            return new ProfileStore(mongo, redis);
+        }
+        catch { mongo.Dispose(); throw; }
     }
 
     internal static string Subject(ProfileRequest request) => request.OperationCase switch

@@ -6,6 +6,27 @@
 
 目录职责见 [项目文件结构](docs/项目文件结构.md)。Codex 日常开发可打开 `code/`；项目工具位于 `tools/`，策划源文件位于 `design/`。
 
+## 服务器控制台
+
+Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目录运行它。开发环境使用本机游戏进程及下文的数据库、ZooKeeper 隧道。打开窗口和查看已有日志可以离线进行。使用 `-Check` 可验证控制台能否加载。
+
+- **启动服务器** 按 [进程列表](code/server/config/processes.json) 拉起实例。再次执行会补起缺少的进程。双击 **关闭服务器** 后勾选本次要关闭的实例。关闭控制台窗口后服务器继续运行，下次打开可继续管理。
+- **导出 Protobuf** 生成协议 C# 源码。**编译服务器 C#** 构建服务端工程。**编译并重启** 在构建成功后切换到新一轮进程，编译失败时可在命令输出中查看原因。
+- 右栏保留包括 GM 在内的八个进程页签。可以滚动或搜索进程名、PID 切换实例。绿点表示当前实例的 SinglePoint 已完成初始化，并且所需连接齐备。关闭某个实例后，其直接邻居会显示连接不全，重新连通后恢复绿色。
+- 各页签保留最近 1000 行。按 `Ctrl+F` 搜索，`F3` 和 `Shift+F3` 跳到下一条、上一条匹配日志，也可勾选“仅匹配行”来过滤显示。清空显示后继续接收新日志，磁盘上的滚动日志可用于复盘。
+
+### 项目配置与用户配置
+
+| 范围 | 保存位置 | 内容 |
+| --- | --- | --- |
+| 项目 | [控制台配置](tools/server-console/project.json) | `environmentName` 是左栏显示的环境名称。`commands` 决定可用命令和显示顺序。可选值为 `Start`、`Stop`、`ExportProtobuf`、`Build`、`BuildAndRestart`。 |
+| 项目 | [服务端进程列表](code/server/config/processes.json) | 控制台和联通验收共用的角色与启动顺序。 |
+| 用户 | `%LOCALAPPDATA%\TGame\ServerConsole\<工作目录标识>\user.json` | 关闭窗口时保存尺寸、最大化状态、当前页签，以及各进程的搜索词、仅匹配行和跟踪最新选项。每个 Windows 账户和工作目录分别保存。 |
+
+项目配置随 Git 提交，下次打开控制台时生效。个人设置在本机自动生成。测试凭据继续取自环境变量或 `.local/secrets/cloud.env`，实际进程状态由控制台从运行实例和日志重新读取。
+
+自动化验收通过 `pwsh -NoProfile -File tools/scripts/powershell/Test-ServerConsole.ps1` 运行。请先启动测试隧道。脚本在 `build/console-check/` 中建立独立工作目录，验证起服、选关、补起、重新接管以及编译成功和失败时的重启行为。
+
 ## Ping/Pong 联通验证
 
 在项目根目录运行以下命令。第一条启动云测试环境的 SSH 隧道，第二条编译 Protobuf 协议并启动 Gate、GM、Login、Base、Scene、Router、DBMgr、Profile 各一个本地进程。
@@ -19,7 +40,7 @@
 
 验收程序跑两轮常规探针，按请求 ID 核对每一跳的收发及复用的 9 条 gRPC 双向流。普通 DBMgr 消息走 Router，存盘探针走 Base 的专线并执行 MongoDB `ping`。协议源文件见 [pingpong.proto](code/shared/protocols/pingpong.proto)。
 
-每个服务进程按类声明上的 `SinglePointFor` 标注创建本进程的 SinglePoint。`SINGLE_POINT_INIT` 记录进程类型、实际类名和 EntityId。八个 SinglePoint 会分别收到定向探针，五种 Game 进程和 GM 会核对 Router 的位置登记。
+每个服务进程按类声明上的 `SinglePointFor` 标注创建本进程的 SinglePoint。`SINGLE_POINT_INIT` 与 `SINGLE_POINT_READY` 记录角色初始化的开始与成功，均带实际类名和 EntityId。`LINKS_READY` 单独记录连接齐备。八个 SinglePoint 会分别收到定向探针，五种 Game 进程和 GM 会核对 Router 的位置登记。
 
 Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[测试存储地址](code/server/config/storage.test.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
 

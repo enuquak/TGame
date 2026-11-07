@@ -34,7 +34,7 @@ try {
     if (!$gmToken) { $gmToken = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)) }
     $gmActor = $env:TGAME_GM_OPERATOR
     if (!$gmActor) { $gmActor = 'local-smoke' }
-    $roles = 'Router','DBMgr','Scene','Login','Base','Profile','GM','Gate'
+    $roles = @(Get-Content -Raw -LiteralPath 'code/server/config/processes.json' | ConvertFrom-Json)
     @{ runId=$runId; serverRoot=[IO.Path]::GetRelativePath($runDir,$serverRoot); roles=$roles } |
         ConvertTo-Json | Set-Content -LiteralPath "$runDir/server-logs.json" -Encoding utf8
     foreach ($role in $roles) {
@@ -60,7 +60,7 @@ try {
         $ready = 0
         foreach ($role in $roles) {
             if ($children[$role].HasExited) { throw "$role exited before probes. See $serverRoot/${role}Server and $runDir/$role.stderr.log." }
-            if (& $readLog $runDir $role -Event READY) { $ready++ }
+            if ((& $readLog $runDir $role -Event SINGLE_POINT_READY) -and (& $readLog $runDir $role -Event LINKS_READY)) { $ready++ }
         }
         if ($ready -eq $roles.Count) { break }
         if ([datetime]::UtcNow -gt $deadline) { throw "Only $ready/$($roles.Count) ready. Check SSH tunnel and role logs." }
@@ -126,7 +126,7 @@ try {
     })
     $checks | ConvertTo-Json -AsArray | Set-Content -LiteralPath "$runDir/gm-checks.json" -Encoding utf8
     foreach ($child in $children.Values) { if ($child.HasExited) { throw "Server exited during probes." } }
-    & "$PSScriptRoot/Test-PingPongLogs.ps1" -RunDirectory $runDir | Tee-Object -FilePath "$runDir/result.log"
+    & "$PSScriptRoot/Test-PingPongLogs.ps1" -RunDirectory $runDir -RequireLifecycle | Tee-Object -FilePath "$runDir/result.log"
     if ($Hold) { Read-Host "Servers are running. GM HTTP $gmUri ; press Enter to stop" | Out-Null }
 }
 catch {

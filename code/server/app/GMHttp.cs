@@ -1,20 +1,14 @@
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
-using Grpc.Core;
+using TGame.Server.Logic;
 
 namespace TGame.PingPong;
 
 internal static class GMHttp
 {
-    public static void Map(WebApplication app, ProbeNode node)
+    public static void Map(WebApplication app, ProbeNode node, GMServerSinglePoint gm)
     {
-        var secret = Environment.GetEnvironmentVariable("TGAME_GM_TOKEN");
-        var actor = Environment.GetEnvironmentVariable("TGAME_GM_OPERATOR");
-        if (string.IsNullOrWhiteSpace(secret) || secret.Length < 32 || string.IsNullOrWhiteSpace(actor) || actor.Length > 64)
-            throw new InvalidOperationException("GM requires TGAME_GM_TOKEN (at least 32 characters) and TGAME_GM_OPERATOR (1–64 characters).");
-        var tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(secret));
-
         app.MapPost("/gm/commands/ping/{entityId}", async (HttpContext http, string entityId) =>
         {
             var requestId = Guid.NewGuid().ToString("N");
@@ -23,13 +17,13 @@ internal static class GMHttp
             bool validId = Guid.TryParseExact(entityId, "N", out var id);
             var target = validId ? id.ToString("N") : null;
             var authorization = http.Request.Headers.Authorization;
-            bool authenticated = authorization.Count == 1 && AuthenticationHeaderValue.TryParse(authorization[0], out var auth)
+            bool authenticated = gm.TokenHash is { } tokenHash && authorization.Count == 1 && AuthenticationHeaderValue.TryParse(authorization[0], out var auth)
                 && auth.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(auth.Parameter)
                 && CryptographicOperations.FixedTimeEquals(tokenHash, SHA256.HashData(Encoding.UTF8.GetBytes(auth.Parameter)));
 
             IResult Finish(int status, string? responder = null)
             {
-                TraceLog.Event("GM_COMMAND", node.Role, authenticated ? actor : "unauthenticated", requestId, target,
+                TraceLog.Event("GM_COMMAND", node.Role, authenticated ? gm.Actor : "unauthenticated", requestId, target,
                     detail: $"ping {status}");
                 return Results.Json(new { requestId, entityId = target, responder }, statusCode: status);
             }
@@ -56,7 +50,7 @@ internal static class GMHttp
 internal sealed partial class ProbeNode
 {
     // Only the GM HTTP handler constructs this command; it accepts no storage or profile operations.
-    internal Task<Pong> GmPingAsync(Ping ping, CancellationToken stop) => ForwardGmPingAsync("Router", ping, stop);
+    internal Task<Pong> GmPingAsync(Ping ping, CancellationToken stop) => ForwardPingAsync("Router", ping, stop);
 
     private async Task<Pong> RouteGmPingAsync(string from, Ping ping, CancellationToken stop)
     {
@@ -67,20 +61,8 @@ internal sealed partial class ProbeNode
         if (localEntities.ContainsKey(ping.EntityId))
             return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = role };
         if (role == "Router" && owners.TryGetValue(ping.EntityId, out var owner))
-            return await ForwardGmPingAsync(owner, ping, stop);
+            return await ForwardPingAsync(owner, ping, stop);
         return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.NotFound };
     }
 
-    private async Task<Pong> ForwardGmPingAsync(string peer, Ping ping, CancellationToken stop)
-    {
-        if (links.TryGetValue(peer, out var link))
-        {
-            try { return await link.PingAsync(ping, stop); }
-            catch (Exception ex) when (ex is IOException or RpcException or TimeoutException)
-            {
-                TraceLog.Event("GM_DELIVERY_FAILED", role, peer, ping.RequestId, ping.EntityId, detail: ex.GetType().Name);
-            }
-        }
-        return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.Unavailable };
-    }
 }

@@ -1,0 +1,219 @@
+<Window x:Class="TGame.ServerConsole.MainWindow" x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TGame.ServerConsole"
+        Title="TGame 服务器控制台" Width="1250" Height="760" MinWidth="960" MinHeight="590"
+        FontFamily="Microsoft YaHei UI, Segoe UI" FontSize="13" WindowStartupLocation="CenterScreen"
+        Background="#F5F7F8" UseLayoutRounding="True" PreviewKeyDown="WindowKeyDown">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries><ResourceDictionary Source="ConsoleTheme.xaml"/></ResourceDictionary.MergedDictionaries>
+            <Style x:Key="SectionLabel" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="12"/><Setter Property="Foreground" Value="#9AACB8"/>
+            </Style>
+            <Style x:Key="CommandItem" TargetType="ListBoxItem">
+                <Setter Property="Foreground" Value="#E2EAF0"/><Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListBoxItem">
+                            <Border x:Name="Bg" Background="Transparent" CornerRadius="4" Padding="12,10" Margin="0,1">
+                                <ContentPresenter/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bg" Property="Background" Value="#233440"/></Trigger>
+                                <Trigger Property="IsSelected" Value="True"><Setter TargetName="Bg" Property="Background" Value="#2A414B"/></Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="ProcessTab" TargetType="ListBoxItem">
+                <Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListBoxItem">
+                            <Grid Background="Transparent">
+                                <Border x:Name="Bg" Background="Transparent" Padding="12,10"><ContentPresenter/></Border>
+                                <Border x:Name="Mark" VerticalAlignment="Bottom" Height="2"/>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bg" Property="Background" Value="#F0F5F4"/></Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="Bg" Property="Background" Value="#EBF5F2"/>
+                                    <Setter TargetName="Mark" Property="Background" Value="{StaticResource Accent}"/>
+                                    <Setter Property="Foreground" Value="#075E55"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="LogItem" TargetType="ListBoxItem">
+                <Setter Property="Foreground" Value="#D4E1E9"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Template"><Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bg" Background="Transparent" Padding="12,3"><ContentPresenter/></Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bg" Property="Background" Value="#1C2D37"/></Trigger>
+                            <Trigger Property="IsSelected" Value="True"><Setter TargetName="Bg" Property="Background" Value="#294757"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value></Setter>
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+    <Grid Background="#F5F7F8">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="205"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Border Background="#17252F" Padding="14,22">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top">
+                    <StackPanel Orientation="Horizontal" Margin="5,0,0,31">
+                        <Border Background="#65D5B6" Width="35" Height="35" CornerRadius="7" Margin="0,0,10,0">
+                            <Path Data="M 2,2 L 8,8 2,14 M 11,14 H 19" Stroke="#153831" StrokeThickness="2.3"
+                                  StrokeLineJoin="Round" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <StackPanel VerticalAlignment="Center"><TextBlock Text="TGame" FontFamily="Segoe UI" FontSize="19" FontWeight="SemiBold"
+                             Foreground="White"/><TextBlock Text="服务器控制台" Foreground="#A4B6C1" FontSize="11"/></StackPanel>
+                    </StackPanel>
+                    <TextBlock Text="开发环境" Style="{StaticResource SectionLabel}" Margin="7,0,0,8"/>
+                    <Border Background="#233A40" Padding="11,11" CornerRadius="4">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" Foreground="#81DBC3" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBlock x:Name="EnvironmentLabel" Foreground="#E8F4F1" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </Border>
+                    <Grid Margin="7,29,6,8">
+                        <TextBlock Text="服务器命令" Style="{StaticResource SectionLabel}"/>
+                        <TextBlock Text="双击执行" Foreground="#9AACB8" FontSize="11" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <ListBox x:Name="Commands" Background="Transparent" BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled" ItemContainerStyle="{StaticResource CommandItem}"
+                             MouseDoubleClick="CommandDoubleClick" KeyDown="CommandKeyDown" AutomationProperties.Name="服务器命令">
+                        <ListBox.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" Foreground="#92C8BC"
+                                       VerticalAlignment="Center" Width="27"/>
+                            <TextBlock Text="{Binding Name}"/>
+                        </StackPanel></DataTemplate></ListBox.ItemTemplate>
+                    </ListBox>
+                </StackPanel>
+                <TextBlock x:Name="MachineLabel" VerticalAlignment="Bottom" FontFamily="Consolas" Margin="7,0"
+                           Foreground="#A4B6C1" TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+        </Border>
+        <Grid Grid.Column="1" Margin="20,17,20,14">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,12">
+                <Button x:Name="PickerButton" DockPanel.Dock="Right" Click="OpenPicker" AutomationProperties.Name="搜索并选择进程">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" Margin="0,0,7,0" VerticalAlignment="Center"/><TextBlock Text="选择进程"/></StackPanel>
+                </Button>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="进程日志" FontSize="23" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                    <TextBlock x:Name="ProcessSummary" VerticalAlignment="Center" Margin="14,3,0,0" Foreground="{StaticResource Muted}"/>
+                </StackPanel>
+            </DockPanel>
+            <Popup x:Name="Picker" PlacementTarget="{Binding ElementName=PickerButton}" Placement="Bottom"
+                   StaysOpen="False" AllowsTransparency="True" Opened="PickerOpened">
+                <Border Background="White" CornerRadius="5" Padding="10" BorderBrush="{StaticResource Line}" BorderThickness="1" Width="310">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,7">
+                            <TextBlock Text="搜索" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox x:Name="PickerSearch" Height="30" ToolTip="输入进程名或 PID" AutomationProperties.Name="进程名或 PID"
+                                     TextChanged="PickerSearchChanged" PreviewKeyDown="PickerSearchKeyDown"/>
+                        </DockPanel>
+                        <ListBox x:Name="PickerResults" BorderThickness="0" MaxHeight="325" HorizontalContentAlignment="Stretch"
+                                 PreviewMouseLeftButtonUp="ChooseProcess" PreviewKeyDown="PickerResultsKeyDown">
+                            <ListBox.ItemTemplate><DataTemplate><Grid Margin="4,5">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="13"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <Ellipse Width="7" Height="7" Fill="{Binding Dot}" HorizontalAlignment="Left"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Role}" FontWeight="SemiBold"/>
+                                <TextBlock Grid.Column="2" Text="{Binding Description}" Foreground="{StaticResource Muted}" FontSize="12"/>
+                            </Grid></DataTemplate></ListBox.ItemTemplate>
+                        </ListBox>
+                    </StackPanel>
+                </Border>
+            </Popup>
+            <Border Grid.Row="1" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5,5,0,0">
+                <ListBox x:Name="ProcessTabs" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource ProcessTab}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                         ScrollViewer.CanContentScroll="False" SelectionChanged="TabChanged" AutomationProperties.Name="实例页签">
+                    <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal" ToolTip="{Binding Description}">
+                        <Ellipse Width="7" Height="7" Fill="{Binding Dot}" Margin="0,0,7,0"/>
+                        <TextBlock Text="{Binding Role}" FontFamily="Segoe UI" FontSize="14" FontWeight="SemiBold"/>
+                    </StackPanel></DataTemplate></ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
+            <Grid Grid.Row="2">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1,0,1,0" Padding="13,10">
+                    <DockPanel>
+                        <TextBlock x:Name="ShownCount" DockPanel.Dock="Right" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+                        <StackPanel x:Name="ActiveHeading" Orientation="Horizontal">
+                            <TextBlock Text="{Binding Role}" FontFamily="Segoe UI" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                            <Ellipse Width="7" Height="7" Fill="{Binding Dot}" Margin="15,0,5,0"/>
+                            <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Foreground="{StaticResource Ink}"/>
+                            <TextBlock Text="{Binding PidLabel}" VerticalAlignment="Center" Margin="13,0,0,0" FontFamily="Consolas" Foreground="{StaticResource Muted}"/>
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+                <Border Grid.Row="1" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1,0,1,1" Padding="12,0,12,10">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0">
+                            <CheckBox x:Name="Follow" Content="跟踪最新" Click="FollowChanged" Margin="0,0,12,0"/>
+                            <Button Content="清空" Click="ClearLog" ToolTip="清空当前实例的显示，保留磁盘日志"/>
+                        </StackPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="PreviousMatch" Content="↑" Padding="7,3" Margin="6,0,2,0" Click="PreviousClicked" ToolTip="上一个匹配 (Shift+F3)" AutomationProperties.Name="上一个匹配"/>
+                            <Button x:Name="NextMatch" Content="↓" Padding="7,3" Margin="0,0,9,0" Click="NextClicked" ToolTip="下一个匹配 (F3)" AutomationProperties.Name="下一个匹配"/>
+                            <CheckBox x:Name="OnlyMatches" Content="仅匹配行" Click="FilterChanged"/>
+                        </StackPanel>
+                        <Grid>
+                            <TextBox x:Name="FilterBox" TextChanged="FilterChanged" AutomationProperties.Name="日志关键字"/>
+                            <TextBlock Text="搜索日志关键字…" IsHitTestVisible="False" Foreground="#647783" Margin="9,0,0,0" VerticalAlignment="Center">
+                                <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=FilterBox}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+                                </Style></TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                    </DockPanel>
+                </Border>
+                <Border Grid.Row="2" Background="#15212B" CornerRadius="0,0,5,5" ClipToBounds="True">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <Border Background="#22323D" Padding="12,6"><Grid TextBlock.Foreground="#AFC1CB" TextBlock.FontSize="11">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="108"/><ColumnDefinition Width="178"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="本机时间"/><TextBlock Grid.Column="1" Text="事件"/><TextBlock Grid.Column="2" Text="内容"/>
+                        </Grid></Border>
+                        <ListBox x:Name="LogList" Grid.Row="1" BorderThickness="0" Background="Transparent" Foreground="#D4E1E9"
+                                 FontFamily="Cascadia Mono, Consolas, Microsoft YaHei UI" FontSize="12" ItemContainerStyle="{StaticResource LogItem}"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True"
+                                 VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Item" Tag="{Binding Text, ElementName=FilterBox}"
+                                 AutomationProperties.Name="实例日志">
+                            <ListBox.ContextMenu><ContextMenu><MenuItem Header="复制原始日志" Click="CopyLog"/></ContextMenu></ListBox.ContextMenu>
+                            <ListBox.ItemTemplate><DataTemplate>
+                                <Grid ToolTipService.ShowDuration="20000">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="108"/><ColumnDefinition Width="178"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Grid.Resources><Style TargetType="local:LogText"><Setter Property="Keyword" Value="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListBox}}"/></Style></Grid.Resources>
+                                    <local:LogText Value="{Binding Time}" Foreground="#9DB2BE"/>
+                                    <local:LogText Grid.Column="1" Value="{Binding Event}" Foreground="{Binding EventColor}" Margin="0,0,8,0" TextWrapping="Wrap"/>
+                                    <local:LogText Grid.Column="2" Value="{Binding Content}" TextWrapping="Wrap"/>
+                                </Grid>
+                            </DataTemplate></ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="EmptyLog" Grid.Row="1" IsHitTestVisible="False" Foreground="#ABBDC8"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+            </Grid>
+            <StackPanel Grid.Row="3" Margin="0,8,0,0">
+                <DockPanel>
+                    <Button x:Name="OutputToggle" DockPanel.Dock="Left" Padding="9,4" Content="▸  命令输出" Click="ToggleOutput"/>
+                    <TextBlock x:Name="OperationStatus" VerticalAlignment="Center" Margin="10,0,0,0" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+                <TextBox x:Name="OutputBox" Visibility="Collapsed" Margin="0,6,0,0" Height="132" FontFamily="Consolas, Microsoft YaHei UI" FontSize="12"
+                         Background="#1D2B34" Foreground="#DAE5EB" BorderThickness="0" VerticalContentAlignment="Top"
+                         IsReadOnly="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

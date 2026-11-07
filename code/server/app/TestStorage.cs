@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -26,4 +27,10 @@ internal sealed class TestStorage
 
     public static string Password(string key) => Environment.GetEnvironmentVariable(key)
         ?? throw new InvalidOperationException($"Missing credential {key}.");
+
+    public static async Task PingAsync(IMongoDatabase database, CancellationToken stop)
+    {
+        var reply = await database.RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1), cancellationToken: stop);
+        if (reply["ok"].ToDouble() != 1) throw new IOException("MongoDB ping failed.");
+    }
 }

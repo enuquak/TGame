@@ -31,9 +31,9 @@ catch (Exception error)
 static async Task RunServerAsync(string role, Guid runId, string runDir)
 {
     var singlePoints = new SinglePointRegistry(typeof(ServerSinglePoint).Assembly.GetTypes());
-    using var profileStore = role == "Profile" ? new ProfileStore() : null;
     var singlePoint = singlePoints.Create(Enum.Parse<ProcessType>(role));
-    var node = new ProbeNode(role, singlePoint, profileStore);
+    using var resources = singlePoint as IDisposable;
+    var node = new ProbeNode(role, singlePoint);
     var builder = WebApplication.CreateSlimBuilder();
     builder.Logging.ClearProviders();
     using var certificate = role == "Gate" ? FindDevelopmentCertificate() : null;
@@ -50,36 +50,53 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
         app.UseWebSockets();
         app.MapGet("/probe", node.WebSocketAsync);
     }
-    else if (singlePoint is GMServerSinglePoint) GMHttp.Map(app, node);
+    else if (singlePoint is GMServerSinglePoint gm) GMHttp.Map(app, node, gm);
     else app.MapGrpcService<LinkService>();
     await app.StartAsync();
     var address = app.Urls.Single();
     TraceLog.Event("LISTEN", role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
-    await using var registry = new ProbeRegistry(runId);
-    var peers = await registry.RegisterAndDiscoverAsync(role, address).WaitAsync(TimeSpan.FromSeconds(40));
-    var connections = node.Start(peers, lifetime.Token);
+    var stop = lifetime.Token;
+    bool consoleMode = File.Exists(Path.Combine(runDir, "console"));
     try
     {
-        while (!File.Exists(Path.Combine(runDir, "stop")) && !lifetime.IsCancellationRequested)
+        var initialization = node.InitializeAsync(stop);
+        await using var registry = new ProbeRegistry(runId);
+        using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        registrationTimeout.CancelAfter(TimeSpan.FromSeconds(40));
+        var registration = registry.RegisterAsync(role, address, consoleMode, registrationTimeout.Token);
+        var workers = Topology.Dials[role].Select(peer => SuperviseAsync(ConnectAsync(peer))).ToList();
+        workers.Add(SuperviseAsync(initialization));
+        workers.Add(SuperviseAsync(registration));
+        if (!consoleMode) workers.Add(SuperviseAsync(node.FirstLinks.WaitAsync(TimeSpan.FromSeconds(40), stop)));
+        workers.Add(SuperviseAsync(WatchStopAsync()));
+        await Task.WhenAll(workers);
+
+        async Task ConnectAsync(string peer)
         {
-            foreach (var task in connections.Where(task => task.IsCompleted))
-            {
-                await task;
-                throw new IOException("A peer stream closed before shutdown.");
-            }
-            if (node.LinkCount == Topology.Degree(role) && !node.Ready)
-            {
-                node.Ready = true;
-                TraceLog.Event("READY", role, detail: node.LinkCount.ToString());
-            }
-            await Task.Delay(100);
+            await registration;
+            await node.MaintainLinkAsync(peer, registry, consoleMode, stop);
         }
     }
     finally
     {
         lifetime.Cancel();
         await app.StopAsync(TimeSpan.FromSeconds(3));
+    }
+
+    async Task WatchStopAsync()
+    {
+        var stopGroup = Path.Combine(runDir, "stop");
+        var stopRole = Path.Combine(runDir, $"stop-{role}");
+        while (!File.Exists(stopGroup) && !File.Exists(stopRole)) await Task.Delay(100, stop);
+        lifetime.Cancel();
+    }
+
+    async Task SuperviseAsync(Task worker)
+    {
+        try { await worker; }
+        catch (Exception) when (stop.IsCancellationRequested) { }
+        catch { lifetime.Cancel(); throw; }
     }
 }
 
