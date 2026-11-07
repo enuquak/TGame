@@ -3,49 +3,12 @@ using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Google.Protobuf;
-using TGame.Server.Logic;
 using Result = TGame.Profile.ProfileReply.Types.Result;
 
 namespace TGame.PingPong;
 
-internal static class Wire
-{
-    private const int MaxFrameBytes = 4096;
-
-    public static async Task<byte[]?> ReadAsync(WebSocket ws, CancellationToken stop)
-    {
-        var buffer = new byte[MaxFrameBytes];
-        int length = 0;
-        while (length < buffer.Length)
-        {
-            var chunk = await ws.ReceiveAsync(buffer.AsMemory(length), stop);
-            if (chunk.MessageType == WebSocketMessageType.Close && length == 0)
-            {
-                return null;
-            }
-
-            if (chunk.MessageType != WebSocketMessageType.Binary)
-            {
-                throw new InvalidDataException("Expected binary Protobuf.");
-            }
-
-            length += chunk.Count;
-            if (chunk.EndOfMessage)
-            {
-                return buffer[..length];
-            }
-        }
-
-        throw new InvalidDataException($"Probe exceeds {MaxFrameBytes} bytes.");
-    }
-}
-
 internal static class ProbeClient
 {
-    public const string Command = "client";
-    public const string ProfileDisplayName = "TGame probe";
-    public const string ProfileTitle = "Profile smoke";
-
     private const string CasesFileName = "cases.json";
     private const int RunTimeoutSeconds = 90;
     private const int RequestTimeoutSeconds = 15;
@@ -86,7 +49,7 @@ internal static class ProbeClient
             }
 
             await ws.SendAsync(ping.ToByteArray().AsMemory(), WebSocketMessageType.Binary, true, timeout.Token);
-            TraceLog.Event(ServerLogEvents.PingTx, ServerPeerNames.Client, nameof(ProcessType.Gate), c.Id, c.Entity);
+            Console.WriteLine(ProbeLog.Serialize(ServerLogEvents.PingTx, ServerPeerNames.Client, nameof(ProcessType.Gate), c.Id, c.Entity));
 
             var bytes = await Wire.ReadAsync(ws, timeout.Token) ?? throw new IOException("Gate closed before Pong.");
             var pong = Pong.Parser.ParseFrom(bytes);
@@ -100,14 +63,14 @@ internal static class ProbeClient
                 var payload = pong.ProfileReply;
                 if (payload?.RequestId != c.Id || payload.EntityId != c.ProfileSubject || payload.Result.ToString() != c.ProfileResult ||
                     (c.ProfileResult == nameof(Result.Found) && (payload.Summary?.EntityId != c.ProfileSubject ||
-                       payload.Summary.DisplayName != ProfileDisplayName || payload.Summary.Title != ProfileTitle)) ||
+                       payload.Summary.DisplayName != ProfileProbeData.DisplayName || payload.Summary.Title != ProfileProbeData.Title)) ||
                     (c.ProfileResult != nameof(Result.Found) && payload.Summary != null))
                 {
                     throw new InvalidDataException($"Profile result mismatch for {c.Id} (expected {c.ProfileResult}, got {payload?.Result}).");
                 }
             }
 
-            TraceLog.Event(ServerLogEvents.PongRx, ServerPeerNames.Client, nameof(ProcessType.Gate), pong.RequestId, pong.EntityId, detail: pong.Responder);
+            Console.WriteLine(ProbeLog.Serialize(ServerLogEvents.PongRx, ServerPeerNames.Client, nameof(ProcessType.Gate), pong.RequestId, pong.EntityId, detail: pong.Responder));
         }
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, stop.Token);

@@ -12,12 +12,6 @@ const int ShutdownTimeoutSeconds = 3;
 const int StopPollIntervalMilliseconds = 100;
 const string DevelopmentCertificateOid = "1.3.6.1.4.1.311.84.1.1";
 
-if (args is [ProbeClient.Command, var directory, var endpoint, var pin])
-{
-    await ProbeClient.RunAsync(directory, new Uri(endpoint), pin);
-    return;
-}
-
 if (args.Length != ProcessArgumentCount || !Topology.Dials.ContainsKey(args[0]))
 {
     throw new ArgumentException($"Usage: TGame.PingPong <{string.Join('|', Topology.Dials.Keys)}> <run-directory>");

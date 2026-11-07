@@ -29,7 +29,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 ## Ping/Pong 联通验证
 
-在项目根目录运行以下命令。第一条启动云测试环境的 SSH 隧道，第二条编译 Protobuf 协议并启动 Gate、GM、Login、Base、Scene、Router、DBMgr、Profile 各一个本地进程。
+在项目根目录运行以下命令。第一条启动云测试环境的 SSH 隧道，第二条构建共享协议、服务端和独立探测客户端，启动 Gate、GM、Login、Base、Scene、Router、DBMgr、Profile 各一个本地进程，再运行客户端完成验收。
 
 ```powershell
 .\tools\scripts\Start-EnvironmentTunnel.bat
@@ -49,6 +49,8 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 验收材料在 `logs/tools/pingpong/<运行ID>/`。`result.log` 汇总链路和协议验证结果，`server-logs.json` 定位本轮服务日志，`Client.log` 是测试客户端输出。服务进程的致命异常以 `PROCESS_FAILED` 记录，启动器捕获的原始标准错误保存在验收目录的 `<角色>.stderr.log`。成功末行为 `PASS processes=8 grpc_links=9 wss_sessions=1 rounds=2 pong=25 mongo_ping=2 gm_http=5`。失败返回非零退出码。已有旧版验收目录仍可通过 `Test-PingPongLogs.ps1 -RunDirectory <目录>` 复核。
 
 默认在验收后停止本轮进程；传入 `-Hold` 可保留进程到按回车时。自动化使用 `pwsh -NoProfile -File ./tools/scripts/powershell/Test-PingPong.ps1`。测试覆盖固定八个实例的启动发现、消息路径、GM 指令和 Profile 摘要读写，动态扩缩容及玩家完整存盘属于后续验证范围。
+
+服务端入口为 `code/server/app/Program.cs`，只接受 `<角色> <运行目录>`。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 只引用 `code/shared/TGame.Shared.csproj`，不依赖服务端工程。它接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
 
 ### GM 管理入口
 

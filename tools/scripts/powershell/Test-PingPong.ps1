@@ -34,7 +34,8 @@ if (!(Test-Path -LiteralPath $dotnet))
     $dotnet = (Get-Command dotnet -CommandType Application).Source
 }
 
-$dll = Join-Path $root 'build/bin/TGame.PingPong/debug/TGame.PingPong.dll'
+$serverDll = Join-Path $root 'build/bin/TGame.PingPong/debug/TGame.PingPong.dll'
+$clientDll = Join-Path $root 'build/bin/TGame.ProbeClient/debug/TGame.ProbeClient.dll'
 Write-Host "Server logs: $serverRoot/<Role>Server/"
 Write-Host "PingPong results: $runDir"
 Push-Location $root
@@ -44,7 +45,13 @@ try
     & $dotnet build code/server/app/TGame.PingPong.csproj --nologo
     if ($LASTEXITCODE -ne 0)
     {
-        throw "Build failed ($LASTEXITCODE)."
+        throw "Server build failed ($LASTEXITCODE)."
+    }
+
+    & $dotnet build code/tests/probe-client/TGame.ProbeClient.csproj --nologo
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "Probe client build failed ($LASTEXITCODE)."
     }
 
     $password = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::MongoTestPassword)
@@ -95,7 +102,7 @@ try
     {
         $launch = @{
             FilePath = $dotnet
-            ArgumentList = ('"{0}" {1} "{2}"' -f $dll,$role,$runDir)
+            ArgumentList = ('"{0}" {1} "{2}"' -f $serverDll,$role,$runDir)
             WindowStyle = 'Hidden'
             PassThru = $true
             WorkingDirectory = $root
@@ -235,7 +242,7 @@ try
     $cases | ConvertTo-Json -Depth $caseJsonDepth -AsArray | Set-Content -LiteralPath "$runDir/cases.json" -Encoding utf8
     $listen = & $readLog $runDir $gateRole -Event ([TGame.ServerLogEvents]::Listen)
     $endpoint = 'wss://localhost:{0}/probe' -f ([uri]$listen.detail).Port
-    & $dotnet $dll client $runDir $endpoint $listen.link > "$runDir/Client.log" 2> "$runDir/Client.err.log"
+    & $dotnet $clientDll $runDir $endpoint $listen.link > "$runDir/Client.log" 2> "$runDir/Client.err.log"
     if ($LASTEXITCODE -ne 0)
     {
         throw "Client failed. See Client.err.log."
