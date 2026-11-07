@@ -9,6 +9,7 @@ internal sealed class ConsoleSession : IDisposable
 {
     private const int GmTokenByteCount = 32;
     private const string Project = "code/server/app/TGame.PingPong.csproj";
+    private const string ProtocolProject = "code/shared/TGame.Shared.csproj";
     private const string DefaultGmOperator = "local-console";
     private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
     private const string RedisPasswordKey = "REDIS_TEST_PASSWORD";
@@ -97,7 +98,7 @@ internal sealed class ConsoleSession : IDisposable
     });
 
     public Task ExportAsync() => Command(() =>
-        Dotnet("导出 Protobuf", "msbuild", Project, "-restore", "-target:Protobuf_Compile", "-nologo", "-verbosity:minimal"));
+        Dotnet("导出 Protobuf", "msbuild", ProtocolProject, "-restore", "-target:Protobuf_Compile", "-nologo", "-verbosity:minimal"));
 
     private Task Compile() => Dotnet("编译服务器", "build", Project, "--nologo");
 

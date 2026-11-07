@@ -97,7 +97,7 @@ internal sealed partial class ProbeNode
         switch (ping.ProfileProbe)
         {
             case Ping.Types.ProfileProbe.Publish when ownProbe:
-                request.Publish = new EntitySummary { EntityId = ping.EntityId, DisplayName = ProbeClient.ProfileDisplayName, Title = ProbeClient.ProfileTitle };
+                request.Publish = new EntitySummary { EntityId = ping.EntityId, DisplayName = ProfileProbeData.DisplayName, Title = ProfileProbeData.Title };
                 break;
 
             case Ping.Types.ProfileProbe.Withdraw when ownProbe:

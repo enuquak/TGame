@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Serilog;
 using Serilog.Core;
 using Serilog.Debugging;
@@ -27,23 +26,11 @@ internal static class TraceLog
     public static void Event(string ev, string role, string? peer = null, string? id = null,
         string? entity = null, string? link = null, string? detail = null)
     {
-        var json = JsonSerializer.Serialize(new Dictionary<string, object?>
-        {
-            [ServerLogFields.Time] = DateTimeOffset.UtcNow,
-            [ServerLogFields.Event] = ev,
-            [ServerLogFields.Role] = role,
-            [ServerLogFields.Pid] = Environment.ProcessId,
-            [ServerLogFields.RunId] = runId,
-            [ServerLogFields.Peer] = peer,
-            [ServerLogFields.Id] = id,
-            [ServerLogFields.Entity] = entity,
-            [ServerLogFields.Link] = link,
-            [ServerLogFields.Detail] = detail
-        });
+        var json = ProbeLog.Serialize(ev, role, peer, id, entity, link, detail, runId);
 
         if (serverLog is null)
         {
-            Console.WriteLine(json); // The headless test client uses stdout.
+            Console.WriteLine(json);
             return;
         }
 

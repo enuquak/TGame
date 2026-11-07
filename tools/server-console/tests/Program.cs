@@ -15,7 +15,7 @@ session.Output += Console.WriteLine;
 try
 {
     await session.ExportAsync();
-    if (!Directory.EnumerateFiles(Path.Combine(checkout, "code/server/generated"), "*.cs", SearchOption.AllDirectories).Any())
+    if (!Directory.EnumerateFiles(Path.Combine(checkout, "code/shared/generated"), "*.cs", SearchOption.AllDirectories).Any())
     {
         throw new InvalidOperationException("Protobuf export produced no C# sources.");
     }
