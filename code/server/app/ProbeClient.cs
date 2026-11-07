@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Google.Protobuf;
+using TGame.Server.Logic;
 
 namespace TGame.PingPong;
 
@@ -50,7 +51,7 @@ internal static class ProbeClient
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(15));
 
-            var entry = c.Path.Length == 2 ? "Gate" : c.Path[2];
+            var entry = c.Path.Length == 2 ? nameof(ProcessType.Gate) : c.Path[2];
             var ping = new Ping { RequestId = c.Id, EntityId = c.Entity, Entry = entry, Storage = c.Storage };
             if (c.ProfileAction != null)
             {
@@ -59,7 +60,7 @@ internal static class ProbeClient
             }
 
             await ws.SendAsync(ping.ToByteArray().AsMemory(), WebSocketMessageType.Binary, true, timeout.Token);
-            TraceLog.Event("PING_TX", "Client", "Gate", c.Id, c.Entity);
+            TraceLog.Event("PING_TX", "Client", nameof(ProcessType.Gate), c.Id, c.Entity);
 
             var bytes = await Wire.ReadAsync(ws, timeout.Token) ?? throw new IOException("Gate closed before Pong.");
             var pong = Pong.Parser.ParseFrom(bytes);
@@ -76,7 +77,7 @@ internal static class ProbeClient
                     throw new InvalidDataException($"Profile result mismatch for {c.Id} (expected {c.ProfileResult}, got {payload?.Result}).");
             }
 
-            TraceLog.Event("PONG_RX", "Client", "Gate", pong.RequestId, pong.EntityId, detail: pong.Responder);
+            TraceLog.Event("PONG_RX", "Client", nameof(ProcessType.Gate), pong.RequestId, pong.EntityId, detail: pong.Responder);
         }
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, stop.Token);

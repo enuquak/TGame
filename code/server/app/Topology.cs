@@ -1,5 +1,6 @@
 using System.Text;
 using org.apache.zookeeper;
+using TGame.Server.Logic;
 
 namespace TGame.PingPong;
 
@@ -8,23 +9,23 @@ internal static class Topology
     // One instance per role for this smoke run. Each pair opens one stream.
     public static readonly Dictionary<string, string[]> Dials = new()
     {
-        ["Gate"] = ["Login", "Base"],
-        ["Login"] = ["Router"],
-        ["Base"] = ["Router", "DBMgr"],
-        ["Scene"] = ["Router"],
-        ["DBMgr"] = ["Router"],
-        ["Profile"] = ["Router"],
-        ["GM"] = ["Router"],
-        ["Router"] = []
+        [nameof(ProcessType.Gate)] = [nameof(ProcessType.Login), nameof(ProcessType.Base)],
+        [nameof(ProcessType.Login)] = [nameof(ProcessType.Router)],
+        [nameof(ProcessType.Base)] = [nameof(ProcessType.Router), nameof(ProcessType.DBMgr)],
+        [nameof(ProcessType.Scene)] = [nameof(ProcessType.Router)],
+        [nameof(ProcessType.DBMgr)] = [nameof(ProcessType.Router)],
+        [nameof(ProcessType.Profile)] = [nameof(ProcessType.Router)],
+        [nameof(ProcessType.GM)] = [nameof(ProcessType.Router)],
+        [nameof(ProcessType.Router)] = []
     };
 
     public static readonly Dictionary<string, string> Entities = new()
     {
-        ["Login"] = "login-1",
-        ["Base"] = "body-1",
-        ["Scene"] = "soul-1",
-        ["DBMgr"] = "db-probe-1",
-        ["Profile"] = "profile-1"
+        [nameof(ProcessType.Login)] = "login-1",
+        [nameof(ProcessType.Base)] = "body-1",
+        [nameof(ProcessType.Scene)] = "soul-1",
+        [nameof(ProcessType.DBMgr)] = "db-probe-1",
+        [nameof(ProcessType.Profile)] = "profile-1"
     };
 
     public static int Degree(string role) => Dials[role].Length + Dials.Values.Count(v => v.Contains(role));
@@ -81,7 +82,7 @@ internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable
             {
                 var data = await zk.getDataAsync(path).WaitAsync(stop);
                 var uri = new Uri(Encoding.UTF8.GetString(data.Data));
-                if (uri.Host != "127.0.0.1" || uri.Scheme != (peer == "Gate" ? "https" : "http"))
+                if (uri.Host != "127.0.0.1" || uri.Scheme != (peer == nameof(ProcessType.Gate) ? "https" : "http"))
                     throw new InvalidDataException($"Unexpected probe endpoint for {peer}.");
 
                 return uri.GetLeftPart(UriPartial.Authority);

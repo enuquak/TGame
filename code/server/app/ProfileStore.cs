@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using StackExchange.Redis;
 using TGame.Profile;
 using Result = TGame.Profile.ProfileReply.Types.Result;
+using TGame.Server.Logic;
 
 namespace TGame.PingPong;
 
@@ -148,7 +149,7 @@ internal sealed class ProfileStore : IDisposable
         return reply;
 
         void Log(string action, string? detail = null) =>
-            TraceLog.Event("PROFILE_" + action, "Profile", id: request.RequestId, entity: id, detail: detail);
+            TraceLog.Event("PROFILE_" + action, nameof(ProcessType.Profile), id: request.RequestId, entity: id, detail: detail);
     }
 
     public void Dispose()

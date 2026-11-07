@@ -42,7 +42,7 @@ internal static class GMHttp
             if (!node.Ready)
                 return Finish(503);
 
-            var pong = await node.GmPingAsync(new Ping { RequestId = requestId, EntityId = target, Entry = "GM" },
+            var pong = await node.GmPingAsync(new Ping { RequestId = requestId, EntityId = target, Entry = nameof(ProcessType.GM) },
                 app.Lifetime.ApplicationStopping);
 
             return pong.Status switch
@@ -58,19 +58,19 @@ internal static class GMHttp
 internal sealed partial class ProbeNode
 {
     // Only the GM HTTP handler constructs this command; it accepts no storage or profile operations.
-    internal Task<Pong> GmPingAsync(Ping ping, CancellationToken stop) => ForwardPingAsync("Router", ping, stop);
+    internal Task<Pong> GmPingAsync(Ping ping, CancellationToken stop) => ForwardPingAsync(nameof(ProcessType.Router), ping, stop);
 
     private async Task<Pong> RouteGmPingAsync(string from, Ping ping, CancellationToken stop)
     {
         if (!Guid.TryParseExact(ping.RequestId, "N", out _) || !Guid.TryParseExact(ping.EntityId, "N", out _) ||
             ping.Storage || ping.ProfileProbe != Ping.Types.ProfileProbe.None ||
-            (role == "Router" ? from != "GM" : from != "Router"))
+            (role == nameof(ProcessType.Router) ? from != nameof(ProcessType.GM) : from != nameof(ProcessType.Router)))
             throw new InvalidDataException("Invalid GM ping or ingress.");
 
         if (localEntities.ContainsKey(ping.EntityId))
             return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = role };
 
-        if (role == "Router" && owners.TryGetValue(ping.EntityId, out var owner))
+        if (role == nameof(ProcessType.Router) && owners.TryGetValue(ping.EntityId, out var owner))
             return await ForwardPingAsync(owner, ping, stop);
 
         return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.NotFound };

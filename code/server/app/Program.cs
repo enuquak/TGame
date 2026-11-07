@@ -32,13 +32,14 @@ catch (Exception error)
 static async Task RunServerAsync(string role, Guid runId, string runDir)
 {
     var singlePoints = new SinglePointRegistry(typeof(ServerSinglePoint).Assembly.GetTypes());
-    var singlePoint = singlePoints.Create(Enum.Parse<ProcessType>(role));
+    var processType = Enum.Parse<ProcessType>(role);
+    var singlePoint = singlePoints.Create(processType);
     using var resources = singlePoint as IDisposable;
     var node = new ProbeNode(role, singlePoint);
 
     var builder = WebApplication.CreateSlimBuilder();
     builder.Logging.ClearProviders();
-    using var certificate = role == "Gate" ? FindDevelopmentCertificate() : null;
+    using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
     {
         listen.Protocols = certificate is not null || singlePoint is GMServerSinglePoint ? HttpProtocols.Http1 : HttpProtocols.Http2;
@@ -48,7 +49,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     builder.Services.AddSingleton(node);
 
     await using var app = builder.Build();
-    if (role == "Gate")
+    if (processType == ProcessType.Gate)
     {
         app.UseWebSockets();
         app.MapGet("/probe", node.WebSocketAsync);
