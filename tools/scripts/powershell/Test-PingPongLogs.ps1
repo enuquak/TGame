@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$RunDirectory)
+param([Parameter(Mandatory)][string]$RunDirectory, [switch]$RequireLifecycle)
 $ErrorActionPreference = 'Stop'
 $manifest = Join-Path $RunDirectory 'server-logs.json'
 if (Test-Path -LiteralPath $manifest) {
@@ -45,8 +45,25 @@ foreach ($role in $expectedRoles) {
 }
 
 $serverPids = foreach ($role in $roles) {
-    foreach ($name in 'LISTEN','ZK_REGISTER','ZK_DISCOVER','READY') {
-        $found = @($records | Where-Object { $_.ev -eq $name -and $_.role -eq $role })
+    $rows = @($records | Where-Object role -eq $role)
+    $events = 'LISTEN','ZK_REGISTER','ZK_DISCOVER'
+    if ($RequireLifecycle -or $records.ev -contains 'SINGLE_POINT_READY' -or $records.ev -contains 'LINKS_READY') {
+        $events += 'SINGLE_POINT_READY','LINKS_READY'
+        $init = @($rows | Where-Object ev -eq SINGLE_POINT_INIT)
+        $ready = @($rows | Where-Object ev -eq SINGLE_POINT_READY)
+        if ($init.Count -ne 1 -or $ready.Count -ne 1 -or $ready[0].entity -cne $init[0].entity -or
+            $ready[0].detail -cne $init[0].detail -or $rows.IndexOf($init[0]) -ge $rows.IndexOf($ready[0])) {
+            throw "Missing or out-of-order SinglePoint completion for $role."
+        }
+        $links = @($rows | Where-Object ev -eq LINK_UP)
+        $complete = @($rows | Where-Object ev -eq LINKS_READY)
+        if ($complete.Count -ne 1 -or $complete[0].detail -ne [string]$links.Count -or
+            $rows.IndexOf($links[-1]) -ge $rows.IndexOf($complete[0]) -or $rows.IndexOf($complete[0]) -ge $rows.IndexOf($ready[0])) {
+            throw "Missing or out-of-order link readiness for $role."
+        }
+    } else { $events += 'READY' }
+    foreach ($name in $events) {
+        $found = @($rows | Where-Object ev -eq $name)
         if ($found.Count -ne 1) { throw "Missing or duplicate $role $name." }
     }
     $found[0].pid

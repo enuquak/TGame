@@ -4,8 +4,6 @@ using System.Threading.Channels;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
-using MongoDB.Bson;
-using MongoDB.Driver;
 using TGame.Server.Logic;
 using TGame.Profile;
 
@@ -25,28 +23,41 @@ internal sealed class LinkService(ProbeNode node) : ProbeLink.ProbeLinkBase
     }
 }
 
-internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoint, ProfileStore? profileStore)
+internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoint)
 {
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
     private readonly ConcurrentDictionary<string, string> owners = new();
     private readonly ConcurrentDictionary<string, byte> localEntities = new();
+    private readonly object linkChanges = new();
+    private readonly HashSet<string> sessions = [];
+    private readonly TaskCompletionSource firstLinks = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task FirstLinks => firstLinks.Task;
+    private volatile bool linksReady;
     public string Role => role;
-    public int LinkCount => links.Count;
-    public bool Ready { get; set; }
+    public bool Ready => singlePoint.Initialized && linksReady;
 
-    public List<Task> Start(IReadOnlyDictionary<string, string> addresses, CancellationToken stop)
+    public Task InitializeAsync(CancellationToken stop) => singlePoint.InitializeAsync(role, id =>
     {
-        List<Task> connections = [];
-        void Connect(string peer) => connections.Add(ConnectAsync(peer, addresses[peer], stop));
-        void Register(string id)
-        {
-            if (!localEntities.TryAdd(id, 0)) throw new InvalidOperationException($"Duplicate local entity {id}.");
-        }
+        if (!localEntities.TryAdd(id, 0)) throw new InvalidOperationException($"Duplicate local entity {id}.");
+    }, firstLinks.Task, stop);
 
-        if (Topology.Entities.TryGetValue(role, out var probeEntity)) Register(probeEntity);
-        singlePoint.Initialize(Register, Topology.Dials[role], Connect);
-        TraceLog.Event("SINGLE_POINT_INIT", role, entity: singlePoint.State.EntityId, detail: singlePoint.GetType().Name);
-        return connections;
+    public async Task MaintainLinkAsync(string peer, ProbeRegistry registry, bool reconnect, CancellationToken stop)
+    {
+        while (true)
+        {
+            var address = await registry.ResolveAsync(peer, stop);
+            try
+            {
+                await ConnectAsync(peer, address, stop);
+                throw new IOException($"Link to {peer} closed.");
+            }
+            catch (Exception error) when (reconnect && !stop.IsCancellationRequested &&
+                (error is IOException or OperationCanceledException || error is RpcException { StatusCode: StatusCode.Unavailable or StatusCode.Cancelled
+                    or StatusCode.Internal or StatusCode.AlreadyExists }))
+            {
+                await Task.Delay(500, stop);
+            }
+        }
     }
 
     private async Task ConnectAsync(string peer, string address, CancellationToken stop)
@@ -56,7 +67,6 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         var headers = new Metadata { { "peer", role }, { "link", id } };
         if (peer == "Router") headers.Add("entity", string.Join(',', localEntities.Keys));
         using var call = new ProbeLink.ProbeLinkClient(channel).Connect(headers, cancellationToken: stop);
-        // Flush request headers before the first application message on an idle stream.
         await call.RequestStream.WriteAsync(new Frame { Hello = role }, stop);
         await RunLinkAsync(peer, id, [], call.ResponseStream, call.RequestStream, stop);
     }
@@ -67,31 +77,42 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         var link = new PeerLink(role, peer, id, output);
         var probeEntity = Topology.Entities.GetValueOrDefault(peer);
         if (role == "Router" && (entities.Length == 0 || (probeEntity != null && !entities.Contains(probeEntity)) ||
-            entities.Any(entity => entity != probeEntity && !Guid.TryParseExact(entity, "N", out _))))
+            entities.Distinct().Count() != entities.Length || entities.Any(entity => entity != probeEntity && !Guid.TryParseExact(entity, "N", out _))))
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid entity registration from {peer}."));
-        if (!links.TryAdd(peer, link)) throw new InvalidDataException($"Duplicate link to {peer}.");
-        List<string> registered = [];
+        if (!await input.MoveNext(stop) || input.Current.Hello != peer)
+            throw new IOException($"Link to {peer} closed before handshake.");
+        lock (linkChanges)
+        {
+            if (!sessions.Add(peer)) throw new RpcException(new Status(StatusCode.AlreadyExists, $"Duplicate link to {peer}."));
+        }
         try
         {
-            if (role == "Router")
-                foreach (var entity in entities)
-                {
-                    if (!owners.TryAdd(entity, peer)) throw new InvalidDataException($"Duplicate entity {entity}.");
-                    registered.Add(entity);
-                    TraceLog.Event("ENTITY_ROUTE", role, peer, entity: entity, link: id);
-                }
-            TraceLog.Event("LINK_UP", role, peer, link: id);
+            if (Topology.Dials[peer].Contains(role)) await output.WriteAsync(new Frame { Hello = role }, stop);
+            lock (linkChanges)
+            {
+                if (role == "Router" && entities.Any(owners.ContainsKey)) throw new InvalidDataException($"Duplicate entity from {peer}.");
+                links[peer] = link;
+                if (role == "Router")
+                    foreach (var entity in entities)
+                    {
+                        owners[entity] = peer;
+                        TraceLog.Event("ENTITY_ROUTE", role, peer, entity: entity, link: id);
+                    }
+                TraceLog.Event("LINK_UP", role, peer, link: id);
+                UpdateLinkReadiness();
+            }
             // A Scene handler can call Profile through the same Router stream while
             // handling an incoming ping. Keep receiving replies during that call.
             using var transport = CancellationTokenSource.CreateLinkedTokenSource(stop);
             var queue = Channel.CreateBounded<Frame>(new BoundedChannelOptions(64) { SingleReader = true, SingleWriter = true });
             var read = ReadAsync();
             var serve = ServeAsync();
-            await Task.WhenAny(read, serve);
+            var finished = await Task.WhenAny(read, serve);
             transport.Cancel();
             queue.Writer.TryComplete();
             link.Close();
-            await Task.WhenAll(read, serve);
+            try { await Task.WhenAll(read, serve); }
+            catch (OperationCanceledException) when (!stop.IsCancellationRequested) { await finished; }
 
             async Task ReadAsync()
             {
@@ -99,7 +120,6 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
                 {
                     switch (frame.BodyCase)
                     {
-                        case Frame.BodyOneofCase.Hello when frame.Hello == peer: break;
                         case Frame.BodyOneofCase.Pong: link.Receive(frame, frame.Pong.RequestId, frame.Pong.EntityId, "PONG_RX"); break;
                         case Frame.BodyOneofCase.ProfileReply:
                             link.Receive(frame, frame.ProfileReply.RequestId, frame.ProfileReply.EntityId, "PROFILE_REPLY_RX"); break;
@@ -133,14 +153,31 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         }
         finally
         {
-            foreach (var entity in registered) owners.TryRemove(entity, out _);
-            links.TryRemove(peer, out _);
+            lock (linkChanges)
+            {
+                sessions.Remove(peer);
+                if (links.TryRemove(peer, out _))
+                {
+                    foreach (var entity in entities) owners.TryRemove(entity, out _);
+                    UpdateLinkReadiness();
+                }
+            }
             link.Close();
         }
     }
 
+    private void UpdateLinkReadiness()
+    {
+        bool complete = links.Count == Topology.Degree(role);
+        if (complete == linksReady) return;
+        linksReady = complete;
+        TraceLog.Event(complete ? "LINKS_READY" : "LINKS_LOST", role, detail: links.Count.ToString());
+        if (complete) firstLinks.TrySetResult();
+    }
+
     private async Task<Pong> RouteAsync(string from, Ping ping, CancellationToken stop)
     {
+        if (!Ready) return Unavailable(ping);
         if (ping.Entry == "GM") return await RouteGmPingAsync(from, ping, stop);
         var gateLocal = ping.Entry == "Gate" && role == "Gate" && ping.EntityId == singlePoint.State.EntityId;
         if (!Guid.TryParseExact(ping.RequestId, "N", out _) || (!gateLocal && ping.Entry is not ("Base" or "Login"))
@@ -152,8 +189,8 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         {
             if (ping.Storage)
             {
-                if (from != "Base") throw new InvalidDataException("Storage probe did not use the dedicated link.");
-                await PingMongoAsync(stop);
+                if (from != "Base" || singlePoint is not DBMgrServerSinglePoint db) throw new InvalidDataException("Storage probe did not use the dedicated link.");
+                await db.PingAsync(stop);
                 TraceLog.Event("MONGO_PONG", role, "MongoDB", ping.RequestId, ping.EntityId);
             }
             var result = new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = role };
@@ -161,27 +198,39 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
                 result.ProfileReply = await RunProfileProbeAsync(ping, stop);
             return result;
         }
-        string target = role switch
+        string? target = role switch
         {
             "Gate" when from == "Client" => ping.Entry,
             "Base" when from == "Gate" && ping.Storage => "DBMgr",
             "Base" or "Login" when from == "Gate" => "Router",
-            "Router" when !ping.Storage && owners.TryGetValue(ping.EntityId, out var owner) && owner != from => owner,
+            "Router" when !ping.Storage => owners.GetValueOrDefault(ping.EntityId),
             _ => throw new InvalidDataException($"No route from {from} through {role} to {ping.EntityId}.")
         };
-        return await links[target].PingAsync(ping, stop);
+        if (target == null) return Ready
+            ? new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.NotFound }
+            : Unavailable(ping);
+        if (target == from) throw new InvalidDataException($"Routing loop for {ping.EntityId} through {from}.");
+        return await ForwardPingAsync(target, ping, stop);
     }
 
-    private IMongoDatabase? database;
-    private async Task PingMongoAsync(CancellationToken stop)
+    private static Pong Unavailable(Ping ping) => new() { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.Unavailable };
+
+    private async Task<Pong> ForwardPingAsync(string peer, Ping ping, CancellationToken stop)
     {
-        if (database == null)
+        if (Ready && links.TryGetValue(peer, out var link))
         {
-            database = TestStorage.Mongo(TestStorage.Settings.Value.DbMgrMongo).GetDatabase("tgame_test");
+            try { return await link.PingAsync(ping, stop); }
+            catch (Exception error) when (!stop.IsCancellationRequested && IsDeliveryFailure(error))
+            {
+                TraceLog.Event(ping.Entry == "GM" ? "GM_DELIVERY_FAILED" : "PING_DELIVERY_FAILED", role, peer,
+                    ping.RequestId, ping.EntityId, detail: error.GetType().Name);
+            }
         }
-        var reply = await database.RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1), cancellationToken: stop);
-        if (reply["ok"].ToDouble() != 1) throw new IOException("MongoDB ping failed.");
+        return Unavailable(ping);
     }
+
+    private static bool IsDeliveryFailure(Exception error) =>
+        error is IOException or RpcException or TimeoutException or InvalidOperationException or OperationCanceledException;
 
     public async Task WebSocketAsync(HttpContext context)
     {
@@ -255,7 +304,7 @@ internal sealed class PeerLink(string role, string peer, string id, IAsyncStream
             return;
         }
         TraceLog.Event(ev, role, peer, requestId, entity, id);
-        request.SetResult(frame);
+        request.TrySetResult(frame);
     }
     public void Close()
     {

@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using TGame.Profile;
+using TGame.Server.Logic;
 using Result = TGame.Profile.ProfileReply.Types.Result;
 
 namespace TGame.PingPong;
@@ -7,12 +8,26 @@ namespace TGame.PingPong;
 internal sealed partial class ProbeNode
 {
     internal Task<ProfileReply> CallProfileAsync(ProfileRequest request, CancellationToken stop) =>
-        links["Router"].ProfileAsync(request, stop);
+        ForwardProfileAsync("Router", request, stop);
+
+    private async Task<ProfileReply> ForwardProfileAsync(string peer, ProfileRequest request, CancellationToken stop)
+    {
+        if (Ready && links.TryGetValue(peer, out var link))
+        {
+            try { return await link.ProfileAsync(request, stop); }
+            catch (Exception error) when (!stop.IsCancellationRequested && IsDeliveryFailure(error))
+            {
+                TraceLog.Event("PROFILE_DELIVERY_FAILED", role, peer, request.RequestId, ProfileStore.Subject(request), detail: error.GetType().Name);
+            }
+        }
+        return new ProfileReply { RequestId = request.RequestId, EntityId = ProfileStore.Subject(request), Result = Result.Unavailable };
+    }
 
     private async Task<ProfileReply> RouteProfileAsync(string from, ProfileRequest request, CancellationToken stop)
     {
         string subject = ProfileStore.Subject(request);
         ProfileReply Failure(Result result) => new() { RequestId = request.RequestId, EntityId = subject, Result = result };
+        if (!Ready) return Failure(Result.Unavailable);
         if (!Guid.TryParseExact(request.RequestId, "N", out _) || subject.Length is 0 or > 128 ||
             !(Guid.TryParseExact(subject, "N", out _) || Topology.Entities.ContainsValue(subject)) ||
             (request.Publish is { } summary && (string.IsNullOrWhiteSpace(summary.DisplayName) ||
@@ -24,12 +39,12 @@ internal sealed partial class ProbeNode
             if (!Topology.Entities.ContainsKey(from) ||
                 (request.OperationCase != ProfileRequest.OperationOneofCase.Fetch && owners.GetValueOrDefault(subject) != from))
                 return Failure(Result.Rejected);
-            if (!owners.TryGetValue(Topology.Entities["Profile"], out var owner) || !links.TryGetValue(owner, out var destination))
+            if (!owners.TryGetValue(Topology.Entities["Profile"], out var owner))
                 return Failure(Result.Unavailable);
-            return await destination.ProfileAsync(request, stop);
+            return await ForwardProfileAsync(owner, request, stop);
         }
-        if (profileStore == null || from != "Router") return Failure(Result.Rejected);
-        try { return await profileStore.HandleAsync(request, stop); }
+        if (singlePoint is not ProfileServerSinglePoint profile || from != "Router") return Failure(Result.Rejected);
+        try { return await profile.Store.HandleAsync(request, stop); }
         catch (Exception error) when (error is MongoException or TimeoutException)
         {
             TraceLog.Event("PROFILE_DB_ERROR", role, id: request.RequestId, entity: subject, detail: error.GetType().Name);

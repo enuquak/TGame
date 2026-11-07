@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="TGame.SinglePointTests" />
     <Compile Include="../model/entities/**/*.cs" />
     <Compile Include="../logic/entities/**/*.cs" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.85.0" />

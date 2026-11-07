@@ -30,29 +30,48 @@ internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable
     private readonly ZooKeeper zk = new("127.0.0.1:2181", 10000, new Changed());
     private readonly string prefix = $"pingpong-{run:N}-";
 
-    public async Task<Dictionary<string, string>> RegisterAndDiscoverAsync(string role, string address)
+    public async Task RegisterAsync(string role, string address, bool consoleMode, CancellationToken stop)
     {
-        await zk.createAsync($"{Root}/{prefix}{role}", Encoding.UTF8.GetBytes(address),
-            ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
-        TraceLog.Event("ZK_REGISTER", role, detail: address);
+        var path = $"{Root}/{prefix}{role}";
         while (true)
         {
-            var changed = new Changed();
-            var names = (await zk.getChildrenAsync(Root, changed)).Children.ToHashSet();
-            if (Topology.Dials.Keys.All(r => names.Contains(prefix + r))) break;
-            await changed.Signal.Task;
+            try
+            {
+                await zk.createAsync(path, Encoding.UTF8.GetBytes(address), ZooDefs.Ids.OPEN_ACL_UNSAFE,
+                    CreateMode.EPHEMERAL).WaitAsync(stop);
+                break;
+            }
+            catch (KeeperException.NodeExistsException) when (consoleMode)
+            {
+                // After a forced stop, the previous instance's ephemeral node can outlive its process.
+                var changed = new Changed();
+                if (await zk.existsAsync(path, changed).WaitAsync(stop) != null) await changed.Signal.Task.WaitAsync(stop);
+            }
         }
-        var cache = new Dictionary<string, string>();
-        foreach (var r in Topology.Dials.Keys)
+        TraceLog.Event("ZK_REGISTER", role, detail: address);
+        var names = (await zk.getChildrenAsync(Root).WaitAsync(stop)).Children;
+        TraceLog.Event("ZK_DISCOVER", role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(prefix + r))));
+    }
+
+    public async Task<string> ResolveAsync(string peer, CancellationToken stop)
+    {
+        var path = $"{Root}/{prefix}{peer}";
+        while (true)
         {
-            var data = await zk.getDataAsync($"{Root}/{prefix}{r}");
-            var uri = new Uri(Encoding.UTF8.GetString(data.Data));
-            if (uri.Host != "127.0.0.1" || uri.Scheme != (r == "Gate" ? "https" : "http"))
-                throw new InvalidDataException($"Unexpected probe endpoint for {r}.");
-            cache.Add(r, uri.GetLeftPart(UriPartial.Authority));
+            try
+            {
+                var data = await zk.getDataAsync(path).WaitAsync(stop);
+                var uri = new Uri(Encoding.UTF8.GetString(data.Data));
+                if (uri.Host != "127.0.0.1" || uri.Scheme != (peer == "Gate" ? "https" : "http"))
+                    throw new InvalidDataException($"Unexpected probe endpoint for {peer}.");
+                return uri.GetLeftPart(UriPartial.Authority);
+            }
+            catch (KeeperException.NoNodeException)
+            {
+                var changed = new Changed();
+                if (await zk.existsAsync(path, changed).WaitAsync(stop) == null) await changed.Signal.Task.WaitAsync(stop);
+            }
         }
-        TraceLog.Event("ZK_DISCOVER", role, detail: string.Join(",", cache.Keys));
-        return cache;
     }
     public async ValueTask DisposeAsync() => await zk.closeAsync();
 }

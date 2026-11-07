@@ -1,4 +1,5 @@
 using TGame.Server.Model;
+using TGame.PingPong;
 
 namespace TGame.Server.Logic;
 
@@ -14,9 +15,30 @@ internal abstract class ServerSinglePoint
 {
     public SinglePointState State { get; } = new();
 
-    public virtual void Initialize(Action<string> registerEntity, IReadOnlyList<string> peers, Action<string> connect)
+    public bool Initialized => Volatile.Read(ref initialized);
+    private bool initialized;
+
+    public async Task InitializeAsync(string role, Action<string> registerEntity, Task firstLinks, CancellationToken stop)
     {
-        registerEntity(State.EntityId);
-        foreach (var peer in peers) connect(peer);
+        TraceLog.Event("SINGLE_POINT_INIT", role, entity: State.EntityId, detail: GetType().Name);
+        try
+        {
+            stop.ThrowIfCancellationRequested();
+            registerEntity(State.EntityId);
+            if (Topology.Entities.TryGetValue(role, out var probeEntity)) registerEntity(probeEntity);
+            await firstLinks.WaitAsync(stop);
+            await InitializeRoleAsync(stop);
+            stop.ThrowIfCancellationRequested();
+            Volatile.Write(ref initialized, true);
+            TraceLog.Event("SINGLE_POINT_READY", role, entity: State.EntityId, detail: GetType().Name);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { throw; }
+        catch (Exception error)
+        {
+            TraceLog.Event("SINGLE_POINT_FAILED", role, entity: State.EntityId, detail: error.Message);
+            throw;
+        }
     }
+
+    protected virtual Task InitializeRoleAsync(CancellationToken stop) => Task.CompletedTask;
 }

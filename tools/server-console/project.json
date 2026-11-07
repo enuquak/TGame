@@ -1,0 +1,4 @@
+{
+  "environmentName": "本机开发环境",
+  "commands": ["Start", "Stop", "ExportProtobuf", "Build", "BuildAndRestart"]
+}
