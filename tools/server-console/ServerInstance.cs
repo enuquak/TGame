@@ -5,8 +5,27 @@ using System.Text.Json;
 
 namespace TGame.ServerConsole;
 
+internal static class ServerStatus
+{
+    public const string NotStarted = "未启动";
+    public const string Starting = "启动中";
+    public const string Initializing = "初始化中";
+    public const string Ready = "就绪";
+    public const string Disconnected = "连接不全";
+    public const string Stopping = "停止中";
+    public const string Stopped = "已停止";
+    public const string Failed = "异常退出";
+}
+
 internal sealed class ServerInstance(string role) : IDisposable
 {
+    internal const int MaxRetainedLines = 1000;
+    private const int StopTimeoutSeconds = 10;
+    private const int KillTimeoutSeconds = 5;
+    private const int HResultCodeMask = 0xffff;
+    private const int SharingViolation = 32;
+    private const int LockViolation = 33;
+
     private sealed record Identity(int Pid, long StartedUtcTicks);
     private readonly List<string> lines = [];
     private Process? process;
@@ -18,15 +37,23 @@ internal sealed class ServerInstance(string role) : IDisposable
     private bool initializing, initialized, connected, failed;
 
     public string Role { get; } = role;
-    public int? Pid { get; private set; }
-    public string Status { get; private set; } = "未启动";
+    public int? Pid
+    {
+        get; private set;
+    }
+
+    public string Status { get; private set; } = ServerStatus.NotStarted;
     public IReadOnlyList<string> Lines => lines;
-    public long LineCount { get; private set; }
+    public long LineCount
+    {
+        get; private set;
+    }
+
     internal bool Alive => process is { HasExited: false };
     internal string ExecutableName => Role + "Server.exe";
     private string IdentityPath => Path.Combine(runDir, Role + ".json");
     private string LaunchMarker => Path.Combine(runDir, "starting-" + Role);
-    private string StopMarker => Path.Combine(runDir, "stop-" + Role);
+    private string StopMarker => Path.Combine(runDir, ServerRunFiles.StopRolePrefix + Role);
 
     internal void Open(string directory, string logRoot, string snapshot)
     {
@@ -41,9 +68,21 @@ internal sealed class ServerInstance(string role) : IDisposable
         Pid = saved?.Pid;
         startedUtcTicks = saved?.StartedUtcTicks ?? 0;
         bool pending = File.Exists(LaunchMarker);
-        if (pending || saved != null) RestoreProcess(exe, saved, pending);
-        if (pending) File.Delete(LaunchMarker);
-        if (Pid != null) log = new RollingLog(logDir, $"{runId}-{Pid}-");
+        if (pending || saved != null)
+        {
+            RestoreProcess(exe, saved, pending);
+        }
+
+        if (pending)
+        {
+            File.Delete(LaunchMarker);
+        }
+
+        if (Pid != null)
+        {
+            log = new RollingLog(logDir, $"{runId}-{Pid}-");
+        }
+
         Refresh();
     }
 
@@ -54,20 +93,49 @@ internal sealed class ServerInstance(string role) : IDisposable
         {
             try
             {
-                if (!pending && candidate.Id != saved!.Pid) continue;
+                if (!pending && candidate.Id != saved!.Pid)
+                {
+                    continue;
+                }
+
                 long ticks = candidate.StartTime.ToUniversalTime().Ticks;
-                if (!pending && ticks != saved!.StartedUtcTicks) continue;
-                if (!string.Equals(candidate.MainModule?.FileName, exe, StringComparison.OrdinalIgnoreCase)) continue;
-                if (process != null) throw new InvalidDataException($"{Role} 在同一会话中有多个实例。");
+                if (!pending && ticks != saved!.StartedUtcTicks)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(candidate.MainModule?.FileName, exe, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (process != null)
+                {
+                    throw new InvalidDataException($"{Role} 在同一会话中有多个实例。");
+                }
+
                 process = candidate;
                 Pid = candidate.Id;
                 startedUtcTicks = ticks;
                 var actual = new Identity(candidate.Id, ticks);
-                if (actual != saved) Save(actual);
+                if (actual != saved)
+                {
+                    Save(actual);
+                }
             }
-            catch (InvalidOperationException) when (candidate.HasExited) { }
-            catch (Win32Exception) when (candidate.HasExited) { }
-            finally { if (!ReferenceEquals(candidate, process)) candidate.Dispose(); }
+            catch (InvalidOperationException) when (candidate.HasExited)
+            {
+            }
+            catch (Win32Exception) when (candidate.HasExited)
+            {
+            }
+            finally
+            {
+                if (!ReferenceEquals(candidate, process))
+                {
+                    candidate.Dispose();
+                }
+            }
         }
     }
 
@@ -82,7 +150,7 @@ internal sealed class ServerInstance(string role) : IDisposable
         startedUtcTicks = process.StartTime.ToUniversalTime().Ticks;
         Save(new Identity(process.Id, startedUtcTicks));
         File.Delete(LaunchMarker);
-        Status = "启动中";
+        Status = ServerStatus.Starting;
     }
 
     private void Save(Identity identity)
@@ -93,22 +161,59 @@ internal sealed class ServerInstance(string role) : IDisposable
 
     internal void Refresh()
     {
-        if (Pid == null) return;
+        if (Pid == null)
+        {
+            return;
+        }
+
         bool caughtUp;
-        try { caughtUp = log?.ReadAvailable(AddLine) ?? true; }
-        catch (IOException e) when (e is DirectoryNotFoundException || (e.HResult & 0xffff) is 32 or 33)
+        try
+        {
+            caughtUp = log?.ReadAvailable(AddLine) ?? true;
+        }
+        catch (IOException e) when (e is DirectoryNotFoundException || (e.HResult & HResultCodeMask) is SharingViolation or LockViolation)
         {
             // Retry a shard that disappeared or was temporarily locked while the server rolled its log.
             caughtUp = false;
         }
-        if (lines.Count > 1000) lines.RemoveRange(0, lines.Count - 1000);
+
+        if (lines.Count > MaxRetainedLines)
+        {
+            lines.RemoveRange(0, lines.Count - MaxRetainedLines);
+        }
+
         bool stopping = File.Exists(StopMarker);
-        if (failed) Status = "异常退出";
-        else if (!Alive) Status = stopping ? "已停止" : "异常退出";
-        else if (stopping) Status = "停止中";
-        else if (!caughtUp) Status = "初始化中";
-        else if (initialized) Status = connected ? "就绪" : "连接不全";
-        else Status = initializing ? "初始化中" : "启动中";
+        if (failed)
+        {
+            Status = ServerStatus.Failed;
+            return;
+        }
+
+        if (!Alive)
+        {
+            Status = stopping ? ServerStatus.Stopped : ServerStatus.Failed;
+            return;
+        }
+
+        if (stopping)
+        {
+            Status = ServerStatus.Stopping;
+            return;
+        }
+
+        if (!caughtUp)
+        {
+            Status = ServerStatus.Initializing;
+            return;
+        }
+
+        if (initialized)
+        {
+            Status = connected ? ServerStatus.Ready : ServerStatus.Disconnected;
+            return;
+        }
+
+        Status = initializing ? ServerStatus.Initializing : ServerStatus.Starting;
     }
 
     private void AddLine(string line)
@@ -117,16 +222,25 @@ internal sealed class ServerInstance(string role) : IDisposable
         {
             using var document = JsonDocument.Parse(line);
             var row = document.RootElement;
-            if (row.GetProperty("runId").GetString() != runId || row.GetProperty("role").GetString() != Role ||
-                row.GetProperty("pid").GetInt32() != Pid) return;
-            if (row.TryGetProperty("time", out var time) && time.ValueKind == JsonValueKind.String &&
-                time.TryGetDateTimeOffset(out var stamp) && stamp.UtcTicks < startedUtcTicks) return;
-            ApplyEvent(row.GetProperty("ev").GetString());
+            if (row.GetProperty(ServerLogFields.RunId).GetString() != runId || row.GetProperty(ServerLogFields.Role).GetString() != Role ||
+                row.GetProperty(ServerLogFields.Pid).GetInt32() != Pid)
+            {
+                return;
+            }
+
+            if (row.TryGetProperty(ServerLogFields.Time, out var time) && time.ValueKind == JsonValueKind.String &&
+                time.TryGetDateTimeOffset(out var stamp) && stamp.UtcTicks < startedUtcTicks)
+            {
+                return;
+            }
+
+            ApplyEvent(row.GetProperty(ServerLogFields.Event).GetString());
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
         {
             // A damaged record is still visible for diagnosis, but cannot change process state.
         }
+
         lines.Add(line);
         LineCount++;
     }
@@ -135,30 +249,52 @@ internal sealed class ServerInstance(string role) : IDisposable
     {
         switch (name)
         {
-            case "LISTEN":
-            case "SINGLE_POINT_INIT": initializing = true; break;
-            case "SINGLE_POINT_READY": initialized = true; break;
-            case "LINKS_READY": connected = true; break;
-            case "LINKS_LOST": connected = false; break;
-            case "PROCESS_FAILED": failed = true; break;
+            case ServerLogEvents.Listen:
+            case ServerLogEvents.SinglePointInit:
+                initializing = true;
+                break;
+            case ServerLogEvents.SinglePointReady:
+                initialized = true;
+                break;
+            case ServerLogEvents.LinksReady:
+                connected = true;
+                break;
+            case ServerLogEvents.LinksLost:
+                connected = false;
+                break;
+            case ServerLogEvents.ProcessFailed:
+                failed = true;
+                break;
         }
     }
 
     internal async Task StopAsync(Action<string> report)
     {
-        if (process is not { HasExited: false } child) return;
+        if (process is not { HasExited: false } child)
+        {
+            return;
+        }
+
         File.WriteAllText(StopMarker, "");
-        Status = "停止中";
-        try { await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
+        Status = ServerStatus.Stopping;
+        try
+        {
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(StopTimeoutSeconds));
+        }
         catch (TimeoutException)
         {
             if (!child.HasExited)
             {
-                report($"{Role} 超过 10 秒未退出，终止进程 {child.Id}。");
-                try { child.Kill(); }
-                catch (InvalidOperationException) when (child.HasExited) { }
+                report($"{Role} 超过 {StopTimeoutSeconds} 秒未退出，终止进程 {child.Id}。");
+                try
+                {
+                    child.Kill();
+                }
+                catch (InvalidOperationException) when (child.HasExited)
+                {
+                }
             }
-            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(KillTimeoutSeconds));
         }
         Refresh();
     }
@@ -172,7 +308,7 @@ internal sealed class ServerInstance(string role) : IDisposable
         lines.Clear();
         LineCount = 0;
         initializing = initialized = connected = failed = false;
-        Status = "未启动";
+        Status = ServerStatus.NotStarted;
     }
 
     public void Dispose() => process?.Dispose();

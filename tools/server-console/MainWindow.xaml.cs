@@ -14,12 +14,18 @@ namespace TGame.ServerConsole;
 
 internal partial class MainWindow : Window
 {
+    private const int RefreshIntervalMilliseconds = 500;
+    private const int MaxOutputBatchCharacters = 65536;
+    private const int MaxOutputCharacters = 160000;
+    private const int RetainedOutputCharacters = 100000;
+    private const double ScrollEndTolerance = 2;
+
     private sealed record ServerCommand(string Name, string Icon, Func<Task>? Execute = null);
     private readonly ConsoleSession session;
     private readonly UserSettings settings;
     private readonly ProcessPage[] pages;
     private readonly ListCollectionView pickerView;
-    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(RefreshIntervalMilliseconds) };
     private readonly ConcurrentQueue<string> output = new();
     private bool busy;
     private bool maximized;
@@ -37,7 +43,11 @@ internal partial class MainWindow : Window
         pages = session.Instances.Select(instance => new ProcessPage(instance)).ToArray();
         foreach (var page in pages)
         {
-            if (!settings.Logs.TryGetValue(page.Role, out var preference)) continue;
+            if (!settings.Logs.TryGetValue(page.Role, out var preference))
+            {
+                continue;
+            }
+
             page.Keyword = preference.Keyword;
             page.MatchesOnly = preference.MatchesOnly;
             page.Following = preference.Following;
@@ -62,10 +72,19 @@ internal partial class MainWindow : Window
             OperationStatus.Text = warning;
             SetOutputOpen(true);
         }
+
         session.Output += output.Enqueue;
         timer.Tick += (_, _) => RefreshWindow();
-        Loaded += (_, _) => { RefreshWindow(); timer.Start(); };
-        Closed += (_, _) => { timer.Stop(); session.Output -= output.Enqueue; };
+        Loaded += (_, _) =>
+        {
+            RefreshWindow();
+            timer.Start();
+        };
+        Closed += (_, _) =>
+        {
+            timer.Stop();
+            session.Output -= output.Enqueue;
+        };
     }
 
     private void RestoreWindow()
@@ -79,8 +98,18 @@ internal partial class MainWindow : Window
         Left = work.Left + (work.Width - Width) / 2;
         Top = work.Top + (work.Height - Height) / 2;
         maximized = settings.Maximized;
-        if (maximized) WindowState = WindowState.Maximized;
-        StateChanged += (_, _) => { if (WindowState != WindowState.Minimized) maximized = WindowState == WindowState.Maximized; };
+        if (maximized)
+        {
+            WindowState = WindowState.Maximized;
+        }
+
+        StateChanged += (_, _) =>
+        {
+            if (WindowState != WindowState.Minimized)
+            {
+                maximized = WindowState == WindowState.Maximized;
+            }
+        };
     }
 
     private void SaveSettings()
@@ -91,7 +120,10 @@ internal partial class MainWindow : Window
         settings.Maximized = maximized;
         settings.SelectedRole = active?.Role;
         settings.Logs = pages.ToDictionary(page => page.Role, page => new LogPreference(page.Keyword, page.MatchesOnly, page.Following));
-        try { settings.Save(); }
+        try
+        {
+            settings.Save();
+        }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             Console.Error.WriteLine($"用户偏好保存失败 · {error.Message}");
@@ -113,9 +145,16 @@ internal partial class MainWindow : Window
                 ReportError("读取进程状态失败", error);
             }
         }
+
         foreach (var page in pages)
-            if (page.Refresh() && page == active) ResetLogRows();
-        ProcessSummary.Text = $"{pages.Length} 个实例  ·  {pages.Count(page => page.Status == "就绪")} 个就绪";
+        {
+            if (page.Refresh() && page == active)
+            {
+                ResetLogRows();
+            }
+        }
+
+        ProcessSummary.Text = $"{pages.Length} 个实例  ·  {pages.Count(page => page.Status == ServerStatus.Ready)} 个就绪";
         UpdateLogs();
         FlushOutput();
     }
@@ -124,7 +163,9 @@ internal partial class MainWindow : Window
     {
         if (e.ChangedButton == MouseButton.Left && e.OriginalSource is DependencyObject origin &&
             ItemsControl.ContainerFromElement(Commands, origin) is ListBoxItem { DataContext: ServerCommand command })
+        {
             await RunCommand(command);
+        }
     }
 
     private async void CommandKeyDown(object sender, KeyEventArgs e)
@@ -138,12 +179,20 @@ internal partial class MainWindow : Window
 
     private async Task RunCommand(ServerCommand command)
     {
-        if (busy) return;
+        if (busy)
+        {
+            return;
+        }
+
         var execute = command.Execute;
         if (execute == null)
         {
             var dialog = new StopServersWindow(pages) { Owner = this };
-            if (dialog.ShowDialog() != true) return;
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
             var selected = dialog.SelectedServers;
             execute = () => session.StopAsync(selected);
         }
@@ -158,7 +207,10 @@ internal partial class MainWindow : Window
             await execute();
             OperationStatus.Text = $"已完成 · {command.Name}";
         }
-        catch (Exception error) { ReportError(command.Name + "失败", error); }
+        catch (Exception error)
+        {
+            ReportError(command.Name + "失败", error);
+        }
         finally
         {
             busy = false;
@@ -174,8 +226,12 @@ internal partial class MainWindow : Window
             e.Cancel = true;
             OperationStatus.Text = "命令执行中，完成后可关闭控制台。";
         }
+
         base.OnClosing(e);
-        if (!e.Cancel && IsLoaded) SaveSettings();
+        if (!e.Cancel && IsLoaded)
+        {
+            SaveSettings();
+        }
     }
 
     private void ReportError(string title, Exception error)
@@ -187,6 +243,7 @@ internal partial class MainWindow : Window
     }
 
     private void ToggleOutput(object sender, RoutedEventArgs e) => SetOutputOpen(!OutputBox.IsVisible);
+
     private void SetOutputOpen(bool open)
     {
         OutputBox.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
@@ -195,21 +252,34 @@ internal partial class MainWindow : Window
 
     private void FlushOutput()
     {
-        if (output.IsEmpty) return;
+        if (output.IsEmpty)
+        {
+            return;
+        }
+
         var batch = new StringBuilder();
-        while (batch.Length < 65536 && output.TryDequeue(out var line)) batch.AppendLine(line);
-        var atEnd = OutputBox.VerticalOffset >= OutputBox.ExtentHeight - OutputBox.ViewportHeight - 2;
-        if (OutputBox.Text.Length > 160000)
+        while (batch.Length < MaxOutputBatchCharacters && output.TryDequeue(out var line))
+        {
+            batch.AppendLine(line);
+        }
+
+        var atEnd = OutputBox.VerticalOffset >= OutputBox.ExtentHeight - OutputBox.ViewportHeight - ScrollEndTolerance;
+        if (OutputBox.Text.Length > MaxOutputCharacters)
         {
             var text = OutputBox.Text;
-            var split = text.IndexOf('\n', text.Length - 100000);
-            OutputBox.Text = split >= 0 ? text[(split + 1)..] : text[^100000..];
+            var split = text.IndexOf('\n', text.Length - RetainedOutputCharacters);
+            OutputBox.Text = split >= 0 ? text[(split + 1)..] : text[^RetainedOutputCharacters..];
         }
+
         OutputBox.AppendText(batch.ToString());
-        if (atEnd) OutputBox.ScrollToEnd();
+        if (atEnd)
+        {
+            OutputBox.ScrollToEnd();
+        }
     }
 
     private void OpenPicker(object sender, RoutedEventArgs e) => Picker.IsOpen = true;
+
     private void PickerOpened(object? sender, EventArgs e)
     {
         PickerSearch.Clear();
@@ -233,14 +303,24 @@ internal partial class MainWindow : Window
             PickerResults.ScrollIntoView(selected);
             (PickerResults.ItemContainerGenerator.ContainerFromItem(selected) as ListBoxItem)?.Focus();
             e.Handled = true;
+            return;
         }
-        else PickerResultsKeyDown(sender, e);
+
+        PickerResultsKeyDown(sender, e);
     }
 
     private void PickerResultsKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key is not (Key.Enter or Key.Escape)) return;
-        if (e.Key == Key.Enter && PickerResults.SelectedItem is ProcessPage page) ChoosePage(page);
+        if (e.Key is not (Key.Enter or Key.Escape))
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter && PickerResults.SelectedItem is ProcessPage page)
+        {
+            ChoosePage(page);
+        }
+
         Picker.IsOpen = false;
         e.Handled = true;
         PickerButton.Focus();
@@ -264,23 +344,50 @@ internal partial class MainWindow : Window
 
     private void WindowKeyDown(object sender, KeyEventArgs e)
     {
-        if (Picker.IsOpen) return;
+        if (Picker.IsOpen)
+        {
+            return;
+        }
+
         if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.F)
         {
             FilterBox.Focus();
             FilterBox.SelectAll();
         }
-        else if (e.Key == Key.F3) FindMatch(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1);
-        else if (e.Key == Key.Enter && FilterBox.IsKeyboardFocused) FindMatch(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1);
-        else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C && LogList.IsKeyboardFocusWithin) CopyLog(sender, e);
-        else return;
+        else if (e.Key == Key.F3)
+        {
+            FindMatch(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1);
+        }
+        else if (e.Key == Key.Enter && FilterBox.IsKeyboardFocused)
+        {
+            FindMatch(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1);
+        }
+        else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C && LogList.IsKeyboardFocusWithin)
+        {
+            CopyLog(sender, e);
+        }
+        else
+        {
+            return;
+        }
+
         e.Handled = true;
     }
 
     private void CopyLog(object sender, RoutedEventArgs e)
     {
-        if (LogList.SelectedItem is not LogEntry row) return;
-        try { Clipboard.SetText(row.Raw); }
-        catch (COMException error) { ReportError("复制日志失败", error); }
+        if (LogList.SelectedItem is not LogEntry row)
+        {
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(row.Raw);
+        }
+        catch (COMException error)
+        {
+            ReportError("复制日志失败", error);
+        }
     }
 }

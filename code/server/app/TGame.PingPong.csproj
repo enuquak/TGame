@@ -8,6 +8,7 @@
     <InternalsVisibleTo Include="TGame.SinglePointTests" />
     <Compile Include="../model/entities/**/*.cs" />
     <Compile Include="../logic/entities/**/*.cs" />
+    <Compile Include="../../shared/csharp/*.cs" LinkBase="Shared" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.85.0" />
     <PackageReference Include="MongoDB.Driver" Version="3.13.0" />
     <PackageReference Include="Serilog" Version="4.4.0" />

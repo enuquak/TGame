@@ -18,11 +18,18 @@ internal partial class StopServersWindow : Window
     private void SelectAll(object sender, RoutedEventArgs e)
     {
         foreach (var page in Choices.Items.Cast<ProcessPage>().Where(page => page.CanStop))
-            if (!Choices.SelectedItems.Contains(page)) Choices.SelectedItems.Add(page);
+        {
+            if (!Choices.SelectedItems.Contains(page))
+            {
+                Choices.SelectedItems.Add(page);
+            }
+        }
     }
 
     private void DeselectAll(object sender, RoutedEventArgs e) => Choices.UnselectAll();
+
     private void SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateCount();
+
     private void UpdateCount()
     {
         var count = SelectedServers.Count;
@@ -33,6 +40,9 @@ internal partial class StopServersWindow : Window
     private void ConfirmStop(object sender, RoutedEventArgs e)
     {
         UpdateCount();
-        if (Confirm.IsEnabled) DialogResult = true;
+        if (Confirm.IsEnabled)
+        {
+            DialogResult = true;
+        }
     }
 }
