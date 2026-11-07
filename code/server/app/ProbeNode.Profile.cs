@@ -8,7 +8,7 @@ namespace TGame.PingPong;
 internal sealed partial class ProbeNode
 {
     internal Task<ProfileReply> CallProfileAsync(ProfileRequest request, CancellationToken stop) =>
-        ForwardProfileAsync("Router", request, stop);
+        ForwardProfileAsync(nameof(ProcessType.Router), request, stop);
 
     private async Task<ProfileReply> ForwardProfileAsync(string peer, ProfileRequest request, CancellationToken stop)
     {
@@ -41,19 +41,19 @@ internal sealed partial class ProbeNode
                 summary.DisplayName.Length > 80 || summary.Title.Length > 80)))
             return Failure(Result.Rejected);
 
-        if (role == "Router")
+        if (role == nameof(ProcessType.Router))
         {
             if (!Topology.Entities.ContainsKey(from) ||
                 (request.OperationCase != ProfileRequest.OperationOneofCase.Fetch && owners.GetValueOrDefault(subject) != from))
                 return Failure(Result.Rejected);
 
-            if (!owners.TryGetValue(Topology.Entities["Profile"], out var owner))
+            if (!owners.TryGetValue(Topology.Entities[nameof(ProcessType.Profile)], out var owner))
                 return Failure(Result.Unavailable);
 
             return await ForwardProfileAsync(owner, request, stop);
         }
 
-        if (singlePoint is not ProfileServerSinglePoint profile || from != "Router")
+        if (singlePoint is not ProfileServerSinglePoint profile || from != nameof(ProcessType.Router))
             return Failure(Result.Rejected);
 
         try
@@ -72,7 +72,7 @@ internal sealed partial class ProbeNode
     private Task<ProfileReply> RunProfileProbeAsync(Ping ping, CancellationToken stop)
     {
         var request = new ProfileRequest { RequestId = ping.RequestId };
-        bool ownProbe = role == "Base" && ping.EntityId == singlePoint.State.EntityId && ping.ProfileSubject == ping.EntityId;
+        bool ownProbe = role == nameof(ProcessType.Base) && ping.EntityId == singlePoint.State.EntityId && ping.ProfileSubject == ping.EntityId;
 
         switch (ping.ProfileProbe)
         {
@@ -84,7 +84,7 @@ internal sealed partial class ProbeNode
                 request.Withdraw = ping.EntityId;
                 break;
 
-            case Ping.Types.ProfileProbe.Fetch when role is "Login" or "Scene" && Guid.TryParseExact(ping.ProfileSubject, "N", out _):
+            case Ping.Types.ProfileProbe.Fetch when role is nameof(ProcessType.Login) or nameof(ProcessType.Scene) && Guid.TryParseExact(ping.ProfileSubject, "N", out _):
                 request.Fetch = ping.ProfileSubject;
                 break;
 

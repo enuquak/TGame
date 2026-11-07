@@ -68,7 +68,7 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         using var channel = GrpcChannel.ForAddress(address);
         var id = Guid.NewGuid().ToString("N");
         var headers = new Metadata { { "peer", role }, { "link", id } };
-        if (peer == "Router")
+        if (peer == nameof(ProcessType.Router))
             headers.Add("entity", string.Join(',', localEntities.Keys));
 
         using var call = new ProbeLink.ProbeLinkClient(channel).Connect(headers, cancellationToken: stop);
@@ -81,7 +81,7 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
     {
         var link = new PeerLink(role, peer, id, output);
         var probeEntity = Topology.Entities.GetValueOrDefault(peer);
-        if (role == "Router" && (entities.Length == 0 || (probeEntity != null && !entities.Contains(probeEntity)) ||
+        if (role == nameof(ProcessType.Router) && (entities.Length == 0 || (probeEntity != null && !entities.Contains(probeEntity)) ||
             entities.Distinct().Count() != entities.Length || entities.Any(entity => entity != probeEntity && !Guid.TryParseExact(entity, "N", out _))))
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid entity registration from {peer}."));
 
@@ -101,11 +101,11 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
 
             lock (linkChanges)
             {
-                if (role == "Router" && entities.Any(owners.ContainsKey))
+                if (role == nameof(ProcessType.Router) && entities.Any(owners.ContainsKey))
                     throw new InvalidDataException($"Duplicate entity from {peer}.");
 
                 links[peer] = link;
-                if (role == "Router")
+                if (role == nameof(ProcessType.Router))
                     foreach (var entity in entities)
                     {
                         owners[entity] = peer;
@@ -221,20 +221,20 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         if (!Ready)
             return Unavailable(ping);
 
-        if (ping.Entry == "GM")
+        if (ping.Entry == nameof(ProcessType.GM))
             return await RouteGmPingAsync(from, ping, stop);
 
-        var gateLocal = ping.Entry == "Gate" && role == "Gate" && ping.EntityId == singlePoint.State.EntityId;
-        if (!Guid.TryParseExact(ping.RequestId, "N", out _) || (!gateLocal && ping.Entry is not ("Base" or "Login"))
+        var gateLocal = ping.Entry == nameof(ProcessType.Gate) && role == nameof(ProcessType.Gate) && ping.EntityId == singlePoint.State.EntityId;
+        if (!Guid.TryParseExact(ping.RequestId, "N", out _) || (!gateLocal && ping.Entry is not (nameof(ProcessType.Base) or nameof(ProcessType.Login)))
             || !(Topology.Entities.ContainsValue(ping.EntityId) || Guid.TryParseExact(ping.EntityId, "N", out _))
-            || (ping.Storage && (ping.EntityId != Topology.Entities["DBMgr"] || ping.Entry != "Base")))
+            || (ping.Storage && (ping.EntityId != Topology.Entities[nameof(ProcessType.DBMgr)] || ping.Entry != nameof(ProcessType.Base))))
             throw new InvalidDataException("Invalid ping.");
 
         if (localEntities.ContainsKey(ping.EntityId))
         {
             if (ping.Storage)
             {
-                if (from != "Base" || singlePoint is not DBMgrServerSinglePoint db)
+                if (from != nameof(ProcessType.Base) || singlePoint is not DBMgrServerSinglePoint db)
                     throw new InvalidDataException("Storage probe did not use the dedicated link.");
 
                 await db.PingAsync(stop);
@@ -250,10 +250,10 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
 
         string? target = role switch
         {
-            "Gate" when from == "Client" => ping.Entry,
-            "Base" when from == "Gate" && ping.Storage => "DBMgr",
-            "Base" or "Login" when from == "Gate" => "Router",
-            "Router" when !ping.Storage => owners.GetValueOrDefault(ping.EntityId),
+            nameof(ProcessType.Gate) when from == "Client" => ping.Entry,
+            nameof(ProcessType.Base) when from == nameof(ProcessType.Gate) && ping.Storage => nameof(ProcessType.DBMgr),
+            nameof(ProcessType.Base) or nameof(ProcessType.Login) when from == nameof(ProcessType.Gate) => nameof(ProcessType.Router),
+            nameof(ProcessType.Router) when !ping.Storage => owners.GetValueOrDefault(ping.EntityId),
             _ => throw new InvalidDataException($"No route from {from} through {role} to {ping.EntityId}.")
         };
 
@@ -280,7 +280,7 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
             }
             catch (Exception error) when (!stop.IsCancellationRequested && IsDeliveryFailure(error))
             {
-                TraceLog.Event(ping.Entry == "GM" ? "GM_DELIVERY_FAILED" : "PING_DELIVERY_FAILED", role, peer,
+                TraceLog.Event(ping.Entry == nameof(ProcessType.GM) ? "GM_DELIVERY_FAILED" : "PING_DELIVERY_FAILED", role, peer,
                     ping.RequestId, ping.EntityId, detail: error.GetType().Name);
             }
         }
