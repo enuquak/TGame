@@ -3,46 +3,68 @@ using System.Threading.Channels;
 using Grpc.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using TGame;
 using TGame.PingPong;
 using TGame.Server.Logic;
 
-using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+const int TestTimeoutSeconds = 5;
+const int HandshakeObservationMilliseconds = 200;
+
+using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
 var stop = deadline.Token;
-var loginNode = new ProbeNode("Login", new LoginServerSinglePoint());
+var loginNode = new ProbeNode(nameof(ProcessType.Login), new LoginServerSinglePoint());
 var loginInit = loginNode.InitializeAsync(stop);
 var router = new FrameStream();
-var routerLink = Open(loginNode, "Router", router);
+var routerLink = Open(loginNode, nameof(ProcessType.Router), router);
 var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-var pendingGate = Open(loginNode, "Gate", new FrameStream { BeforeWrite = handshake.Task });
-if (await Task.WhenAny(loginInit, Task.Delay(200, stop)) == loginInit)
+var pendingGate = Open(loginNode, nameof(ProcessType.Gate), new FrameStream { BeforeWrite = handshake.Task });
+if (await Task.WhenAny(loginInit, Task.Delay(HandshakeObservationMilliseconds, stop)) == loginInit)
 {
     Console.Error.WriteLine("Login became available before it sent its handshake reply.");
     return 1;
 }
 handshake.SetException(new IOException("Disconnected during handshake."));
-try { await pendingGate; throw new Exception("Failed handshake succeeded."); }
-catch (IOException) { }
-if (loginNode.Ready) throw new Exception("Failed handshake counted as a connected peer.");
+try
+{
+    await pendingGate;
+    throw new Exception("Failed handshake succeeded.");
+}
+catch (IOException)
+{
+}
+if (loginNode.Ready)
+{
+    throw new Exception("Failed handshake counted as a connected peer.");
+}
+
 var retry = new FrameStream();
-var accepted = Open(loginNode, "Gate", retry);
+var accepted = Open(loginNode, nameof(ProcessType.Gate), retry);
 await loginInit.WaitAsync(stop);
 retry.Input.Writer.Complete();
 router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
 
 var point = new WaitingSinglePoint();
-var gate = new ProbeNode("Gate", point);
+var gate = new ProbeNode(nameof(ProcessType.Gate), point);
 var initialization = gate.InitializeAsync(stop);
-if (point.Started.Task.IsCompleted) throw new Exception("Role initialization ran before the handshakes.");
+if (point.Started.Task.IsCompleted)
+{
+    throw new Exception("Role initialization ran before the handshakes.");
+}
+
 var login = new FrameStream();
 var basePeer = new FrameStream();
-var streams = Task.WhenAll(Open(gate, "Login", login), Open(gate, "Base", basePeer));
+var streams = Task.WhenAll(Open(gate, nameof(ProcessType.Login), login), Open(gate, nameof(ProcessType.Base), basePeer));
 await point.Started.Task.WaitAsync(stop);
 
 var context = new DefaultHttpContext();
 context.Features.Set<IHttpWebSocketFeature>(new WebSocketUpgrade());
 await gate.WebSocketAsync(context);
-if (context.Response.StatusCode != 503) throw new Exception("Gate accepted traffic during role initialization.");
+if (context.Response.StatusCode != StatusCodes.Status503ServiceUnavailable)
+{
+    throw new Exception("Gate accepted traffic during role initialization.");
+}
+
 await ExpectPong(Pong.Types.Status.Unavailable);
 point.Release.SetResult();
 await initialization.WaitAsync(stop);
@@ -50,34 +72,55 @@ await ExpectPong(Pong.Types.Status.Ok);
 login.Input.Writer.Complete();
 basePeer.Input.Writer.Complete();
 await streams.WaitAsync(stop);
-if (gate.Ready) throw new Exception("Gate remained available after a peer disconnected.");
+if (gate.Ready)
+{
+    throw new Exception("Gate remained available after a peer disconnected.");
+}
 
 var cancelling = new WaitingSinglePoint();
 using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
-var pending = cancelling.InitializeAsync("Gate", _ => { }, Task.CompletedTask, cancel.Token);
+var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), _ =>
+{
+}, Task.CompletedTask, cancel.Token);
 await cancelling.Started.Task.WaitAsync(stop);
 cancel.Cancel();
-try { await pending.WaitAsync(stop); throw new Exception("Cancelled initialization completed successfully."); }
-catch (OperationCanceledException) when (cancel.IsCancellationRequested && !stop.IsCancellationRequested) { }
-if (cancelling.Initialized) throw new Exception("Cancelled SinglePoint became ready.");
+try
+{
+    await pending.WaitAsync(stop);
+    throw new Exception("Cancelled initialization completed successfully.");
+}
+catch (OperationCanceledException) when (cancel.IsCancellationRequested && !stop.IsCancellationRequested)
+{
+}
+if (cancelling.Initialized)
+{
+    throw new Exception("Cancelled SinglePoint became ready.");
+}
 
-var routes = new ProbeNode("Router", new RouterServerSinglePoint());
+var routes = new ProbeNode(nameof(ProcessType.Router), new RouterServerSinglePoint());
 var routerInit = routes.InitializeAsync(stop);
-var neighbors = Topology.Dials.Where(row => row.Value.Contains("Router")).ToDictionary(row => row.Key, _ => new FrameStream());
+var neighbors = Topology.Dials.Where(row => row.Value.Contains(nameof(ProcessType.Router))).ToDictionary(row => row.Key, _ => new FrameStream());
 var routing = Task.WhenAll(neighbors.Select(pair =>
 {
     string[] ids = Topology.Entities.TryGetValue(pair.Key, out var id) ? [id] : [Guid.NewGuid().ToString("N")];
     return Open(routes, pair.Key, pair.Value, ids);
 }));
 await routerInit.WaitAsync(stop);
-var baseRoute = neighbors["Base"];
+var baseRoute = neighbors[nameof(ProcessType.Base)];
 await baseRoute.Output.Reader.ReadAsync(stop); // handshake reply
-var missing = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = Guid.NewGuid().ToString("N"), Entry = "Base" };
+var missing = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = Guid.NewGuid().ToString("N"), Entry = nameof(ProcessType.Base) };
 baseRoute.Input.Writer.TryWrite(new Frame { Ping = missing });
 var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).Pong;
 if (notFound?.RequestId != missing.RequestId || notFound.Status != Pong.Types.Status.NotFound || !routes.Ready)
+{
     throw new Exception("A missing entity interrupted a healthy stream.");
-foreach (var stream in neighbors.Values) stream.Input.Writer.Complete();
+}
+
+foreach (var stream in neighbors.Values)
+{
+    stream.Input.Writer.Complete();
+}
+
 await routing.WaitAsync(stop);
 Console.WriteLine("PASS handshake retry, delayed initialization, WSS/gRPC gating, cancellation, disconnect and missing entity");
 return 0;
@@ -90,11 +133,13 @@ Task Open(ProbeNode node, string peer, FrameStream stream, string[]? ids = null)
 
 async Task ExpectPong(Pong.Types.Status status)
 {
-    var ping = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = point.State.EntityId, Entry = "Gate" };
+    var ping = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = point.State.EntityId, Entry = nameof(ProcessType.Gate) };
     login.Input.Writer.TryWrite(new Frame { Ping = ping });
     var response = (await login.Output.Reader.ReadAsync(stop)).Pong;
     if (response?.RequestId != ping.RequestId || response.Status != status)
+    {
         throw new Exception($"Expected {status} for the Gate entity, got {response}.");
+    }
 }
 
 sealed class WaitingSinglePoint : ServerSinglePoint
@@ -114,7 +159,11 @@ sealed class FrameStream : IAsyncStreamReader<Frame>, IAsyncStreamWriter<Frame>
     public Channel<Frame> Input { get; } = Channel.CreateUnbounded<Frame>();
     public Channel<Frame> Output { get; } = Channel.CreateUnbounded<Frame>();
     public Frame Current { get; private set; } = null!;
-    public WriteOptions? WriteOptions { get; set; }
+    public WriteOptions? WriteOptions
+    {
+        get; set;
+    }
+
     public Task WriteAsync(Frame frame) => Output.Writer.WriteAsync(frame).AsTask();
     public Task BeforeWrite { get; init; } = Task.CompletedTask;
     public async Task WriteAsync(Frame frame, CancellationToken stop)
@@ -122,9 +171,14 @@ sealed class FrameStream : IAsyncStreamReader<Frame>, IAsyncStreamWriter<Frame>
         await BeforeWrite.WaitAsync(stop);
         await Output.Writer.WriteAsync(frame, stop);
     }
+
     public async Task<bool> MoveNext(CancellationToken stop)
     {
-        if (!await Input.Reader.WaitToReadAsync(stop)) return false;
+        if (!await Input.Reader.WaitToReadAsync(stop))
+        {
+            return false;
+        }
+
         Current = await Input.Reader.ReadAsync(stop);
         return true;
     }

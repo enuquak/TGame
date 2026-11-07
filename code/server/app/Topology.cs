@@ -1,4 +1,5 @@
 using System.Text;
+using System.Net;
 using org.apache.zookeeper;
 using TGame.Server.Logic;
 
@@ -45,7 +46,8 @@ internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable
     }
 
     private const string Root = "/tgame/test";
-    private readonly ZooKeeper zk = new("127.0.0.1:2181", 10000, new Changed());
+    private const int SessionTimeoutMilliseconds = 10000;
+    private readonly ZooKeeper zk = new(TestStorage.Settings.Value.ZooKeeper, SessionTimeoutMilliseconds, new Changed());
     private readonly string prefix = $"pingpong-{run:N}-";
 
     public async Task RegisterAsync(string role, string address, bool consoleMode, CancellationToken stop)
@@ -64,13 +66,15 @@ internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable
                 // After a forced stop, the previous instance's ephemeral node can outlive its process.
                 var changed = new Changed();
                 if (await zk.existsAsync(path, changed).WaitAsync(stop) != null)
+                {
                     await changed.Signal.Task.WaitAsync(stop);
+                }
             }
         }
 
-        TraceLog.Event("ZK_REGISTER", role, detail: address);
+        TraceLog.Event(ServerLogEvents.ZkRegister, role, detail: address);
         var names = (await zk.getChildrenAsync(Root).WaitAsync(stop)).Children;
-        TraceLog.Event("ZK_DISCOVER", role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(prefix + r))));
+        TraceLog.Event(ServerLogEvents.ZkDiscover, role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(prefix + r))));
     }
 
     public async Task<string> ResolveAsync(string peer, CancellationToken stop)
@@ -82,8 +86,10 @@ internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable
             {
                 var data = await zk.getDataAsync(path).WaitAsync(stop);
                 var uri = new Uri(Encoding.UTF8.GetString(data.Data));
-                if (uri.Host != "127.0.0.1" || uri.Scheme != (peer == nameof(ProcessType.Gate) ? "https" : "http"))
+                if (uri.Host != IPAddress.Loopback.ToString() || uri.Scheme != (peer == nameof(ProcessType.Gate) ? Uri.UriSchemeHttps : Uri.UriSchemeHttp))
+                {
                     throw new InvalidDataException($"Unexpected probe endpoint for {peer}.");
+                }
 
                 return uri.GetLeftPart(UriPartial.Authority);
             }
@@ -91,7 +97,9 @@ internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable
             {
                 var changed = new Changed();
                 if (await zk.existsAsync(path, changed).WaitAsync(stop) == null)
+                {
                     await changed.Signal.Task.WaitAsync(stop);
+                }
             }
         }
     }

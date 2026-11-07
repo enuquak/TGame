@@ -7,49 +7,64 @@ namespace TGame.PingPong;
 
 internal static class GMHttp
 {
+    private const string PingRoute = "/gm/commands/ping/{entityId}";
+    private const string RequestIdHeader = "X-Request-Id";
+    private const string AuthenticationScheme = "Bearer";
+    private const string NoStoreCacheControl = "no-store";
+    private const string UnauthenticatedActor = "unauthenticated";
+
     public static void Map(WebApplication app, ProbeNode node, GMServerSinglePoint gm)
     {
-        app.MapPost("/gm/commands/ping/{entityId}", async (HttpContext http, string entityId) =>
+        app.MapPost(PingRoute, async (HttpContext http, string entityId) =>
         {
             var requestId = Guid.NewGuid().ToString("N");
-            http.Response.Headers["X-Request-Id"] = requestId;
-            http.Response.Headers.CacheControl = "no-store";
+            http.Response.Headers[RequestIdHeader] = requestId;
+            http.Response.Headers.CacheControl = NoStoreCacheControl;
 
             bool validId = Guid.TryParseExact(entityId, "N", out var id);
             var target = validId ? id.ToString("N") : null;
 
             var authorization = http.Request.Headers.Authorization;
             bool authenticated = gm.TokenHash is { } tokenHash && authorization.Count == 1 && AuthenticationHeaderValue.TryParse(authorization[0], out var auth)
-                && auth.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(auth.Parameter)
+                && auth.Scheme.Equals(AuthenticationScheme, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(auth.Parameter)
                 && CryptographicOperations.FixedTimeEquals(tokenHash, SHA256.HashData(Encoding.UTF8.GetBytes(auth.Parameter)));
 
             IResult Finish(int status, string? responder = null)
             {
-                TraceLog.Event("GM_COMMAND", node.Role, authenticated ? gm.Actor : "unauthenticated", requestId, target,
+                TraceLog.Event(ServerLogEvents.GMCommand, node.Role, authenticated ? gm.Actor : UnauthenticatedActor, requestId, target,
                     detail: $"ping {status}");
-                return Results.Json(new { requestId, entityId = target, responder }, statusCode: status);
+                return Results.Json(new
+                {
+                    requestId,
+                    entityId = target,
+                    responder
+                }, statusCode: status);
             }
 
             if (!authenticated)
             {
-                http.Response.Headers.WWWAuthenticate = "Bearer";
-                return Finish(401);
+                http.Response.Headers.WWWAuthenticate = AuthenticationScheme;
+                return Finish(StatusCodes.Status401Unauthorized);
             }
 
             if (!validId)
-                return Finish(400);
+            {
+                return Finish(StatusCodes.Status400BadRequest);
+            }
 
             if (!node.Ready)
-                return Finish(503);
+            {
+                return Finish(StatusCodes.Status503ServiceUnavailable);
+            }
 
             var pong = await node.GmPingAsync(new Ping { RequestId = requestId, EntityId = target, Entry = nameof(ProcessType.GM) },
                 app.Lifetime.ApplicationStopping);
 
             return pong.Status switch
             {
-                Pong.Types.Status.Ok => Finish(200, pong.Responder),
-                Pong.Types.Status.NotFound => Finish(404),
-                _ => Finish(503)
+                Pong.Types.Status.Ok => Finish(StatusCodes.Status200OK, pong.Responder),
+                Pong.Types.Status.NotFound => Finish(StatusCodes.Status404NotFound),
+                _ => Finish(StatusCodes.Status503ServiceUnavailable)
             };
         });
     }
@@ -65,13 +80,19 @@ internal sealed partial class ProbeNode
         if (!Guid.TryParseExact(ping.RequestId, "N", out _) || !Guid.TryParseExact(ping.EntityId, "N", out _) ||
             ping.Storage || ping.ProfileProbe != Ping.Types.ProfileProbe.None ||
             (role == nameof(ProcessType.Router) ? from != nameof(ProcessType.GM) : from != nameof(ProcessType.Router)))
+        {
             throw new InvalidDataException("Invalid GM ping or ingress.");
+        }
 
         if (localEntities.ContainsKey(ping.EntityId))
+        {
             return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = role };
+        }
 
         if (role == nameof(ProcessType.Router) && owners.TryGetValue(ping.EntityId, out var owner))
+        {
             return await ForwardPingAsync(owner, ping, stop);
+        }
 
         return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.NotFound };
     }

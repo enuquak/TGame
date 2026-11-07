@@ -3,8 +3,6 @@ using TGame.PingPong;
 
 namespace TGame.Server.Logic;
 
-internal enum ProcessType { Gate, Login, Base, Scene, Router, DBMgr, Profile, GM }
-
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 internal sealed class SinglePointForAttribute(ProcessType role) : Attribute
 {
@@ -20,20 +18,22 @@ internal abstract class ServerSinglePoint
 
     public async Task InitializeAsync(string role, Action<string> registerEntity, Task firstLinks, CancellationToken stop)
     {
-        TraceLog.Event("SINGLE_POINT_INIT", role, entity: State.EntityId, detail: GetType().Name);
+        TraceLog.Event(ServerLogEvents.SinglePointInit, role, entity: State.EntityId, detail: GetType().Name);
 
         try
         {
             stop.ThrowIfCancellationRequested();
             registerEntity(State.EntityId);
             if (Topology.Entities.TryGetValue(role, out var probeEntity))
+            {
                 registerEntity(probeEntity);
+            }
 
             await firstLinks.WaitAsync(stop);
             await InitializeRoleAsync(stop);
             stop.ThrowIfCancellationRequested();
             Volatile.Write(ref initialized, true);
-            TraceLog.Event("SINGLE_POINT_READY", role, entity: State.EntityId, detail: GetType().Name);
+            TraceLog.Event(ServerLogEvents.SinglePointReady, role, entity: State.EntityId, detail: GetType().Name);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
@@ -41,7 +41,7 @@ internal abstract class ServerSinglePoint
         }
         catch (Exception error)
         {
-            TraceLog.Event("SINGLE_POINT_FAILED", role, entity: State.EntityId, detail: error.Message);
+            TraceLog.Event(ServerLogEvents.SinglePointFailed, role, entity: State.EntityId, detail: error.Message);
             throw;
         }
     }

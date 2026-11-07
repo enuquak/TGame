@@ -11,29 +11,34 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$connection = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'ServerConnection.psd1')
 $sshExecutable = (Get-Command ssh -CommandType Application -ErrorAction Stop).Source
 $sshConfigPath = Join-Path $env:USERPROFILE '.ssh\config'
 
-if (-not (Test-Path -LiteralPath $sshConfigPath -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $sshConfigPath -PathType Leaf))
+{
     throw "SSH config not found: $sshConfigPath. See the server connection guide in docs."
 }
 
 $sshArguments = @(
     '-F', $sshConfigPath,
     '-o', 'StrictHostKeyChecking=yes',
-    '-o', 'ConnectTimeout=15'
+    '-o', "ConnectTimeout=$($connection.ConnectTimeoutSeconds)"
 )
 
-if ($PSCmdlet.ParameterSetName -ne 'Interactive') {
+if ($PSCmdlet.ParameterSetName -ne 'Interactive')
+{
     $sshArguments += @('-o', 'BatchMode=yes', '-T')
 }
 
-$sshArguments += 'TGame-server'
+$sshArguments += $connection.HostAlias
 
-if ($PSCmdlet.ParameterSetName -eq 'Check') {
+if ($PSCmdlet.ParameterSetName -eq 'Check')
+{
     $sshArguments += 'id -un && hostname && uname -srm && cat /etc/os-release'
 }
-elseif ($PSCmdlet.ParameterSetName -eq 'Command') {
+elseif ($PSCmdlet.ParameterSetName -eq 'Command')
+{
     $sshArguments += $RemoteCommand
 }
 

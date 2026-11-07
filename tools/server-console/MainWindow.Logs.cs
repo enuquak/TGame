@@ -25,7 +25,11 @@ internal partial class MainWindow
 
     private void TabChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (ProcessTabs.SelectedItem is not ProcessPage page) return;
+        if (ProcessTabs.SelectedItem is not ProcessPage page)
+        {
+            return;
+        }
+
         if (active != null)
         {
             active.TopLine = ViewportLine();
@@ -41,8 +45,14 @@ internal partial class MainWindow
         ResetLogRows();
         UpdateLogs();
         if (page.SelectedLine.HasValue)
+        {
             LogList.SelectedItem = rows.FirstOrDefault(row => row.Number == page.SelectedLine && logs.Contains(row));
-        if (!page.Following) RestoreViewport(page.TopLine);
+        }
+
+        if (!page.Following)
+        {
+            RestoreViewport(page.TopLine);
+        }
     }
 
     private void ResetLogRows()
@@ -55,7 +65,11 @@ internal partial class MainWindow
 
     private void UpdateLogs()
     {
-        if (active is null) return;
+        if (active is null)
+        {
+            return;
+        }
+
         var source = active.Instance;
         if (source.LineCount < readThrough)
         {
@@ -63,7 +77,12 @@ internal partial class MainWindow
             active.TopLine = active.SelectedLine = null;
             ResetLogRows();
         }
-        if (readThrough == source.LineCount) return;
+
+        if (readThrough == source.LineCount)
+        {
+            return;
+        }
+
         var first = source.LineCount - source.Lines.Count + 1;
         var viewport = !active.Following && rows.Count > 0 && rows[0].Number < first ? ViewportLine() : null;
         if (rows.Count != 0 && rows[^1].Number < first)
@@ -75,49 +94,88 @@ internal partial class MainWindow
         {
             while (rows.Count != 0 && rows[0].Number < first)
             {
-                if (IsMatch(rows[0])) matchCount--;
+                if (IsMatch(rows[0]))
+                {
+                    matchCount--;
+                }
+
                 rows.RemoveAt(0);
             }
         }
+
         for (var n = Math.Max(first, readThrough + 1); n <= source.LineCount; n++)
         {
             var row = LogEntry.Parse(n, source.Lines[(int)(n - first)]);
-            if (IsMatch(row)) matchCount++;
+            if (IsMatch(row))
+            {
+                matchCount++;
+            }
+
             rows.Add(row);
         }
         readThrough = source.LineCount;
         UpdateCounts();
-        if (active.Following) FollowLatest();
-        else if (viewport.HasValue) RestoreViewport(viewport);
+        if (active.Following)
+        {
+            FollowLatest();
+        }
+        else if (viewport.HasValue)
+        {
+            RestoreViewport(viewport);
+        }
     }
 
     private bool IsMatch(LogEntry entry) => active is { Keyword.Length: > 0 } && entry.Matches(active.Keyword);
 
     private void FilterChanged(object sender, RoutedEventArgs e)
     {
-        if (switching || active is null) return;
+        if (switching || active is null)
+        {
+            return;
+        }
+
         var top = active.Following ? null : ViewportLine();
         active.Keyword = FilterBox.Text;
         active.MatchesOnly = OnlyMatches.IsChecked == true;
         matchCount = rows.Count(IsMatch);
         var selected = LogList.SelectedItem;
         logs.Refresh();
-        if (selected != null && logs.Contains(selected)) LogList.SelectedItem = selected;
+        if (selected != null && logs.Contains(selected))
+        {
+            LogList.SelectedItem = selected;
+        }
+
         UpdateCounts();
-        if (active.Following) FollowLatest();
-        else RestoreViewport(top);
+        if (active.Following)
+        {
+            FollowLatest();
+        }
+        else
+        {
+            RestoreViewport(top);
+        }
     }
 
     private void FollowChanged(object sender, RoutedEventArgs e)
     {
-        if (active is null) return;
+        if (active is null)
+        {
+            return;
+        }
+
         active.Following = Follow.IsChecked == true;
-        if (active.Following) FollowLatest();
+        if (active.Following)
+        {
+            FollowLatest();
+        }
     }
 
     private void FollowLatest()
     {
-        if (logs.Count > 0) LogList.ScrollIntoView(logs.GetItemAt(logs.Count - 1));
+        if (logs.Count > 0)
+        {
+            LogList.ScrollIntoView(logs.GetItemAt(logs.Count - 1));
+        }
     }
 
     private void UpdateCounts()
@@ -130,17 +188,31 @@ internal partial class MainWindow
     }
 
     private void PreviousClicked(object sender, RoutedEventArgs e) => FindMatch(-1);
+
     private void NextClicked(object sender, RoutedEventArgs e) => FindMatch(1);
+
     private void FindMatch(int direction)
     {
-        if (active is null || matchCount == 0) return;
+        if (active is null || matchCount == 0)
+        {
+            return;
+        }
+
         var index = LogList.SelectedIndex;
-        if (index < 0) index = direction == 1 ? -1 : 0;
+        if (index < 0)
+        {
+            index = direction == 1 ? -1 : 0;
+        }
+
         for (int i = 0; i < logs.Count; i++)
         {
             index = (index + direction + logs.Count) % logs.Count;
             var row = (LogEntry)logs.GetItemAt(index);
-            if (!IsMatch(row)) continue;
+            if (!IsMatch(row))
+            {
+                continue;
+            }
+
             active.Following = false;
             Follow.IsChecked = false;
             LogList.SelectedItem = row;
@@ -151,7 +223,11 @@ internal partial class MainWindow
 
     private void ClearLog(object sender, RoutedEventArgs e)
     {
-        if (active is null) return;
+        if (active is null)
+        {
+            return;
+        }
+
         active.ClearedThrough = active.Instance.LineCount;
         active.TopLine = active.SelectedLine = null;
         ResetLogRows();
@@ -164,6 +240,7 @@ internal partial class MainWindow
             LogList.ApplyTemplate();
             logScroller = FindScrollViewer(LogList);
         }
+
         return logScroller;
     }
 
@@ -172,9 +249,17 @@ internal partial class MainWindow
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
         {
             var child = VisualTreeHelper.GetChild(root, i);
-            if (child is ScrollViewer viewer) return viewer;
-            if (FindScrollViewer(child) is { } nested) return nested;
+            if (child is ScrollViewer viewer)
+            {
+                return viewer;
+            }
+
+            if (FindScrollViewer(child) is { } nested)
+            {
+                return nested;
+            }
         }
+
         return null;
     }
 
@@ -186,9 +271,17 @@ internal partial class MainWindow
 
     private void RestoreViewport(long? top)
     {
-        if (!top.HasValue || logs.Count == 0) return;
+        if (!top.HasValue || logs.Count == 0)
+        {
+            return;
+        }
+
         int index = 0;
-        while (index < logs.Count - 1 && ((LogEntry)logs.GetItemAt(index)).Number < top.Value) index++;
+        while (index < logs.Count - 1 && ((LogEntry)logs.GetItemAt(index)).Number < top.Value)
+        {
+            index++;
+        }
+
         LogScroller()?.ScrollToVerticalOffset(index);
     }
 }

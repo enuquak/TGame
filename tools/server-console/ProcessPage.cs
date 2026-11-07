@@ -13,18 +13,34 @@ internal sealed class ProcessPage(ServerInstance instance) : INotifyPropertyChan
     public string Description => $"{Status}  ·  {PidLabel}";
     public Brush Dot => Status switch
     {
-        "就绪" => Brushes.SeaGreen,
-        "启动中" or "初始化中" => Brushes.SteelBlue,
-        "连接不全" or "停止中" => Brushes.DarkGoldenrod,
-        "异常退出" => Brushes.IndianRed,
+        ServerStatus.Ready => Brushes.SeaGreen,
+        ServerStatus.Starting or ServerStatus.Initializing => Brushes.SteelBlue,
+        ServerStatus.Disconnected or ServerStatus.Stopping => Brushes.DarkGoldenrod,
+        ServerStatus.Failed => Brushes.IndianRed,
         _ => Brushes.SlateGray
     };
     public bool CanStop => Instance.Alive;
-    public long ClearedThrough { get; set; }
-    public long? TopLine { get; set; }
-    public long? SelectedLine { get; set; }
+    public long ClearedThrough
+    {
+        get; set;
+    }
+
+    public long? TopLine
+    {
+        get; set;
+    }
+
+    public long? SelectedLine
+    {
+        get; set;
+    }
+
     public string Keyword { get; set; } = "";
-    public bool MatchesOnly { get; set; }
+    public bool MatchesOnly
+    {
+        get; set;
+    }
+
     public bool Following { get; set; } = true;
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -36,12 +52,14 @@ internal sealed class ProcessPage(ServerInstance instance) : INotifyPropertyChan
             ClearedThrough = 0;
             TopLine = SelectedLine = null;
         }
+
         if (changedInstance || Instance.Status != Status)
         {
             Pid = Instance.Pid;
             Status = Instance.Status;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(null));
         }
+
         return changedInstance;
     }
 }

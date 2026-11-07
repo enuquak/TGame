@@ -6,16 +6,31 @@ namespace TGame.Server.Logic;
 [SinglePointFor(ProcessType.GM)]
 internal sealed class GMServerSinglePoint : ServerSinglePoint
 {
-    public string? Actor { get; private set; }
-    public byte[]? TokenHash { get; private set; }
+    private const int MinimumTokenLength = 32;
+    private const int MaximumOperatorLength = 64;
+
+    public string? Actor
+    {
+        get;
+        private set;
+    }
+
+    public byte[]? TokenHash
+    {
+        get;
+        private set;
+    }
 
     protected override Task InitializeRoleAsync(CancellationToken stop)
     {
-        var secret = Environment.GetEnvironmentVariable("TGAME_GM_TOKEN");
-        Actor = Environment.GetEnvironmentVariable("TGAME_GM_OPERATOR");
+        var secret = Environment.GetEnvironmentVariable(ServerEnvironment.GMToken);
+        Actor = Environment.GetEnvironmentVariable(ServerEnvironment.GMOperator);
 
-        if (string.IsNullOrWhiteSpace(secret) || secret.Length < 32 || string.IsNullOrWhiteSpace(Actor) || Actor.Length > 64)
-            throw new InvalidOperationException("GM requires TGAME_GM_TOKEN (at least 32 characters) and TGAME_GM_OPERATOR (1–64 characters).");
+        if (string.IsNullOrWhiteSpace(secret) || secret.Length < MinimumTokenLength ||
+            string.IsNullOrWhiteSpace(Actor) || Actor.Length > MaximumOperatorLength)
+        {
+            throw new InvalidOperationException($"GM requires {ServerEnvironment.GMToken} (at least {MinimumTokenLength} characters) and {ServerEnvironment.GMOperator} (1–{MaximumOperatorLength} characters).");
+        }
 
         TokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(secret));
         return Task.CompletedTask;

@@ -7,12 +7,25 @@ namespace TGame.ServerConsole;
 
 internal sealed class ConsoleSession : IDisposable
 {
+    private const int GmTokenByteCount = 32;
     private const string Project = "code/server/app/TGame.PingPong.csproj";
+    private const string DefaultGmOperator = "local-console";
+    private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
+    private const string RedisPasswordKey = "REDIS_TEST_PASSWORD";
+
     private readonly string root, sessions, logRoot;
     private string? runId;
     private bool busy;
-    public ConsoleProject ProjectSettings { get; }
-    public IReadOnlyList<ServerInstance> Instances { get; }
+    public ConsoleProject ProjectSettings
+    {
+        get;
+    }
+
+    public IReadOnlyList<ServerInstance> Instances
+    {
+        get;
+    }
+
     public event Action<string>? Output;
 
     public ConsoleSession(string repoRoot)
@@ -24,31 +37,51 @@ internal sealed class ConsoleSession : IDisposable
         var roles = JsonSerializer.Deserialize<string[]>(File.ReadAllText(Path.Combine(root, "code/server/config/processes.json")));
         if (roles is not { Length: > 0 } || roles.Any(r => string.IsNullOrEmpty(r) || !r.All(char.IsAsciiLetter)) ||
             roles.Distinct(StringComparer.OrdinalIgnoreCase).Count() != roles.Length)
+        {
             throw new InvalidDataException("processes.json 需要包含不重复的进程名。");
+        }
+
         Instances = roles.Select(role => new ServerInstance(role)).ToArray();
         var current = Path.Combine(sessions, "current");
-        if (!File.Exists(current)) return;
+        if (!File.Exists(current))
+        {
+            return;
+        }
+
         var saved = File.ReadAllText(current).Trim();
-        if (!Guid.TryParseExact(saved, "N", out _) || !File.Exists(Path.Combine(sessions, saved, "console")))
+        if (!Guid.TryParseExact(saved, "N", out _) || !File.Exists(Path.Combine(sessions, saved, ServerRunFiles.ConsoleMode)))
+        {
             throw new InvalidDataException("控制台当前会话记录无效。");
+        }
+
         Open(saved);
     }
 
     public void Refresh()
     {
-        foreach (var instance in Instances) instance.Refresh();
+        foreach (var instance in Instances)
+        {
+            instance.Refresh();
+        }
     }
 
     public Task StartAsync() => Command(async () =>
     {
         var missing = Instances.Where(i => !i.Alive).ToArray();
-        if (missing.Length == 0) { Report("所有进程均已启动。"); return; }
-        if (missing.Length == Instances.Count)
+        if (missing.Length == 0)
         {
-            await Compile();
-            await StartNewRun();
+            Report("所有进程均已启动。");
+            return;
         }
-        else Launch(missing, runId!);
+
+        if (missing.Length != Instances.Count)
+        {
+            Launch(missing, runId!);
+            return;
+        }
+
+        await Compile();
+        await StartNewRun();
     });
 
     public Task StopAsync(IReadOnlyList<ServerInstance> selected) => Command(() =>
@@ -57,7 +90,10 @@ internal sealed class ConsoleSession : IDisposable
     public Task BuildAsync(bool restart) => Command(async () =>
     {
         await Compile();
-        if (restart) await StartNewRun();
+        if (restart)
+        {
+            await StartNewRun();
+        }
     });
 
     public Task ExportAsync() => Command(() =>
@@ -68,10 +104,20 @@ internal sealed class ConsoleSession : IDisposable
     // The UI dispatches commands, timer ticks and continuations on the same thread.
     private async Task Command(Func<Task> action)
     {
-        if (busy) throw new InvalidOperationException("上一项操作仍在进行。");
+        if (busy)
+        {
+            throw new InvalidOperationException("上一项操作仍在进行。");
+        }
+
         busy = true;
-        try { await action(); }
-        finally { busy = false; }
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            busy = false;
+        }
     }
 
     private string Snapshot(string id) => Path.Combine(root, "build", "server-console", "runs", id);
@@ -81,7 +127,7 @@ internal sealed class ConsoleSession : IDisposable
         var id = Guid.NewGuid().ToString("N");
         var snapshot = Snapshot(id);
         var runDir = Directory.CreateDirectory(Path.Combine(sessions, id)).FullName;
-        File.WriteAllText(Path.Combine(runDir, "console"), "");
+        File.WriteAllText(Path.Combine(runDir, ServerRunFiles.ConsoleMode), "");
         // Prepare credentials and a complete copy before asking healthy processes to shut down.
         var starts = Instances.Select(i => StartInfo(i, id)).ToArray();
         await Task.Run(() =>
@@ -93,8 +139,11 @@ internal sealed class ConsoleSession : IDisposable
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                 File.Copy(file, dest);
             }
+
             foreach (var start in starts)
+            {
                 File.Copy(Path.Combine(snapshot, "TGame.PingPong.exe"), start.FileName);
+            }
         });
         await Task.WhenAll(Instances.Select(i => i.StopAsync(Report)));
         var previous = runId;
@@ -102,12 +151,21 @@ internal sealed class ConsoleSession : IDisposable
         File.WriteAllText(current + ".tmp", id);
         File.Move(current + ".tmp", current, true);
         Open(id);
-        for (int i = 0; i < Instances.Count; i++) Launch(Instances[i], starts[i]);
+        for (int i = 0; i < Instances.Count; i++)
+        {
+            Launch(Instances[i], starts[i]);
+        }
+
         if (previous != null && Directory.Exists(Snapshot(previous)))
         {
-            try { Directory.Delete(Snapshot(previous), recursive: true); }
+            try
+            {
+                Directory.Delete(Snapshot(previous), recursive: true);
+            }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            { Report($"旧构建快照待清理：{e.Message}"); }
+            {
+                Report($"旧构建快照待清理：{e.Message}");
+            }
         }
     }
 
@@ -115,13 +173,18 @@ internal sealed class ConsoleSession : IDisposable
     {
         runId = id;
         foreach (var instance in Instances)
+        {
             instance.Open(Path.Combine(sessions, id), logRoot, Snapshot(id));
+        }
     }
 
     private void Launch(ServerInstance[] missing, string id)
     {
         var starts = missing.Select(i => StartInfo(i, id)).ToArray();
-        for (int i = 0; i < missing.Length; i++) Launch(missing[i], starts[i]);
+        for (int i = 0; i < missing.Length; i++)
+        {
+            Launch(missing[i], starts[i]);
+        }
     }
 
     private void Launch(ServerInstance instance, ProcessStartInfo start)
@@ -135,38 +198,57 @@ internal sealed class ConsoleSession : IDisposable
         var info = NewProcess(Path.Combine(Snapshot(id), instance.ExecutableName));
         info.ArgumentList.Add(instance.Role);
         info.ArgumentList.Add(Path.Combine(sessions, id));
-        info.Environment["TGAME_SERVER_LOG_ROOT"] = logRoot;
-        if (instance.Role is "DBMgr" or "Profile")
-            info.Environment["TGAME_MONGO_TEST_PASSWORD"] = Password("MONGO_TEST_PASSWORD");
-        if (instance.Role == "Profile")
-            info.Environment["TGAME_REDIS_TEST_PASSWORD"] = Password("REDIS_TEST_PASSWORD");
-        if (instance.Role == "GM")
+        info.Environment[ServerEnvironment.LogRoot] = logRoot;
+        if (instance.Role is nameof(ProcessType.DBMgr) or nameof(ProcessType.Profile))
         {
-            var token = Environment.GetEnvironmentVariable("TGAME_GM_TOKEN");
-            info.Environment["TGAME_GM_TOKEN"] = string.IsNullOrEmpty(token)
-                ? Convert.ToHexString(RandomNumberGenerator.GetBytes(32)) : token;
-            var actor = Environment.GetEnvironmentVariable("TGAME_GM_OPERATOR");
-            info.Environment["TGAME_GM_OPERATOR"] = string.IsNullOrEmpty(actor) ? "local-console" : actor;
+            info.Environment[ServerEnvironment.MongoTestPassword] = Password(MongoPasswordKey);
         }
+
+        if (instance.Role == nameof(ProcessType.Profile))
+        {
+            info.Environment[ServerEnvironment.RedisTestPassword] = Password(RedisPasswordKey);
+        }
+
+        if (instance.Role == nameof(ProcessType.GM))
+        {
+            var token = Environment.GetEnvironmentVariable(ServerEnvironment.GMToken);
+            info.Environment[ServerEnvironment.GMToken] = string.IsNullOrEmpty(token)
+                ? Convert.ToHexString(RandomNumberGenerator.GetBytes(GmTokenByteCount)) : token;
+            var actor = Environment.GetEnvironmentVariable(ServerEnvironment.GMOperator);
+            info.Environment[ServerEnvironment.GMOperator] = string.IsNullOrEmpty(actor) ? DefaultGmOperator : actor;
+        }
+
         return info;
     }
 
     private string Password(string key)
     {
         var envKey = "TGAME_" + key;
-        if (Environment.GetEnvironmentVariable(envKey) is { Length: > 0 } password) return password;
+        if (Environment.GetEnvironmentVariable(envKey) is { Length: > 0 } password)
+        {
+            return password;
+        }
+
         var path = Path.Combine(root, ".local", "secrets", "cloud.env");
         var prefix = key + "=";
         if (File.Exists(path) && File.ReadLines(path).FirstOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal)) is { } line &&
-            line.Length > prefix.Length) return line[prefix.Length..];
+            line.Length > prefix.Length)
+        {
+            return line[prefix.Length..];
+        }
+
         throw new InvalidOperationException($"请设置 {envKey} 或在 .local/secrets/cloud.env 中配置 {key}。");
     }
 
     private ProcessStartInfo NewProcess(string exe)
     {
         var info = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var key in new[] { "TGAME_GM_TOKEN", "TGAME_GM_OPERATOR", "TGAME_MONGO_TEST_PASSWORD",
-            "TGAME_REDIS_TEST_PASSWORD", "MONGO_TEST_PASSWORD", "REDIS_TEST_PASSWORD" }) info.Environment.Remove(key);
+        foreach (var key in new[] { ServerEnvironment.GMToken, ServerEnvironment.GMOperator, ServerEnvironment.MongoTestPassword,
+            ServerEnvironment.RedisTestPassword, MongoPasswordKey, RedisPasswordKey })
+        {
+            info.Environment.Remove(key);
+        }
+
         return info;
     }
 
@@ -174,24 +256,38 @@ internal sealed class ConsoleSession : IDisposable
     {
         var sdk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
         var info = NewProcess(File.Exists(sdk) ? sdk : "dotnet");
-        foreach (var argument in arguments) info.ArgumentList.Add(argument);
+        foreach (var argument in arguments)
+        {
+            info.ArgumentList.Add(argument);
+        }
+
         info.RedirectStandardOutput = info.RedirectStandardError = true;
         Report(operation + "…");
         using var child = Process.Start(info) ?? throw new InvalidOperationException(operation + "启动失败。");
         await Task.WhenAll(Forward(child.StandardOutput), Forward(child.StandardError), child.WaitForExitAsync());
-        if (child.ExitCode != 0) throw new InvalidOperationException($"{operation}失败，退出码 {child.ExitCode}。");
+        if (child.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"{operation}失败，退出码 {child.ExitCode}。");
+        }
+
         Report(operation + "成功。");
     }
 
     private async Task Forward(StreamReader reader)
     {
-        while (await reader.ReadLineAsync() is { } line) Report(line);
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            Report(line);
+        }
     }
 
     private void Report(string text) => Output?.Invoke(text);
 
     public void Dispose()
     {
-        foreach (var instance in Instances) instance.Dispose();
+        foreach (var instance in Instances)
+        {
+            instance.Dispose();
+        }
     }
 }

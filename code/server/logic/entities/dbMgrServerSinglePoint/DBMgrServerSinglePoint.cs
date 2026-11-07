@@ -14,7 +14,7 @@ internal sealed class DBMgrServerSinglePoint : ServerSinglePoint, IDisposable
         return PingAsync(stop);
     }
 
-    public Task PingAsync(CancellationToken stop) => TestStorage.PingAsync(mongo!.GetDatabase("tgame_test"), stop);
+    public Task PingAsync(CancellationToken stop) => TestStorage.PingAsync(mongo!.GetDatabase(TestStorage.DatabaseName), stop);
 
     public void Dispose() => mongo?.Dispose();
 }
