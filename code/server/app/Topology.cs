@@ -8,14 +8,25 @@ internal static class Topology
     // One instance per role for this smoke run. Each pair opens one stream.
     public static readonly Dictionary<string, string[]> Dials = new()
     {
-        ["Gate"] = ["Login", "Base"], ["Login"] = ["Router"], ["Base"] = ["Router", "DBMgr"],
-        ["Scene"] = ["Router"], ["DBMgr"] = ["Router"], ["Profile"] = ["Router"], ["GM"] = ["Router"], ["Router"] = []
+        ["Gate"] = ["Login", "Base"],
+        ["Login"] = ["Router"],
+        ["Base"] = ["Router", "DBMgr"],
+        ["Scene"] = ["Router"],
+        ["DBMgr"] = ["Router"],
+        ["Profile"] = ["Router"],
+        ["GM"] = ["Router"],
+        ["Router"] = []
     };
+
     public static readonly Dictionary<string, string> Entities = new()
     {
-        ["Login"] = "login-1", ["Base"] = "body-1", ["Scene"] = "soul-1", ["DBMgr"] = "db-probe-1",
+        ["Login"] = "login-1",
+        ["Base"] = "body-1",
+        ["Scene"] = "soul-1",
+        ["DBMgr"] = "db-probe-1",
         ["Profile"] = "profile-1"
     };
+
     public static int Degree(string role) => Dials[role].Length + Dials.Values.Count(v => v.Contains(role));
 }
 
@@ -24,8 +35,14 @@ internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable
     private sealed class Changed : Watcher
     {
         public TaskCompletionSource Signal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public override Task process(WatchedEvent evt) { Signal.TrySetResult(); return Task.CompletedTask; }
+
+        public override Task process(WatchedEvent evt)
+        {
+            Signal.TrySetResult();
+            return Task.CompletedTask;
+        }
     }
+
     private const string Root = "/tgame/test";
     private readonly ZooKeeper zk = new("127.0.0.1:2181", 10000, new Changed());
     private readonly string prefix = $"pingpong-{run:N}-";
@@ -45,9 +62,11 @@ internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable
             {
                 // After a forced stop, the previous instance's ephemeral node can outlive its process.
                 var changed = new Changed();
-                if (await zk.existsAsync(path, changed).WaitAsync(stop) != null) await changed.Signal.Task.WaitAsync(stop);
+                if (await zk.existsAsync(path, changed).WaitAsync(stop) != null)
+                    await changed.Signal.Task.WaitAsync(stop);
             }
         }
+
         TraceLog.Event("ZK_REGISTER", role, detail: address);
         var names = (await zk.getChildrenAsync(Root).WaitAsync(stop)).Children;
         TraceLog.Event("ZK_DISCOVER", role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(prefix + r))));
@@ -64,14 +83,17 @@ internal sealed class ProbeRegistry(Guid run) : IAsyncDisposable
                 var uri = new Uri(Encoding.UTF8.GetString(data.Data));
                 if (uri.Host != "127.0.0.1" || uri.Scheme != (peer == "Gate" ? "https" : "http"))
                     throw new InvalidDataException($"Unexpected probe endpoint for {peer}.");
+
                 return uri.GetLeftPart(UriPartial.Authority);
             }
             catch (KeeperException.NoNodeException)
             {
                 var changed = new Changed();
-                if (await zk.existsAsync(path, changed).WaitAsync(stop) == null) await changed.Signal.Task.WaitAsync(stop);
+                if (await zk.existsAsync(path, changed).WaitAsync(stop) == null)
+                    await changed.Signal.Task.WaitAsync(stop);
             }
         }
     }
+
     public async ValueTask DisposeAsync() => await zk.closeAsync();
 }

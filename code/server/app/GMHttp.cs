@@ -14,8 +14,10 @@ internal static class GMHttp
             var requestId = Guid.NewGuid().ToString("N");
             http.Response.Headers["X-Request-Id"] = requestId;
             http.Response.Headers.CacheControl = "no-store";
+
             bool validId = Guid.TryParseExact(entityId, "N", out var id);
             var target = validId ? id.ToString("N") : null;
+
             var authorization = http.Request.Headers.Authorization;
             bool authenticated = gm.TokenHash is { } tokenHash && authorization.Count == 1 && AuthenticationHeaderValue.TryParse(authorization[0], out var auth)
                 && auth.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(auth.Parameter)
@@ -33,10 +35,16 @@ internal static class GMHttp
                 http.Response.Headers.WWWAuthenticate = "Bearer";
                 return Finish(401);
             }
-            if (!validId) return Finish(400);
-            if (!node.Ready) return Finish(503);
+
+            if (!validId)
+                return Finish(400);
+
+            if (!node.Ready)
+                return Finish(503);
+
             var pong = await node.GmPingAsync(new Ping { RequestId = requestId, EntityId = target, Entry = "GM" },
                 app.Lifetime.ApplicationStopping);
+
             return pong.Status switch
             {
                 Pong.Types.Status.Ok => Finish(200, pong.Responder),
@@ -58,11 +66,13 @@ internal sealed partial class ProbeNode
             ping.Storage || ping.ProfileProbe != Ping.Types.ProfileProbe.None ||
             (role == "Router" ? from != "GM" : from != "Router"))
             throw new InvalidDataException("Invalid GM ping or ingress.");
+
         if (localEntities.ContainsKey(ping.EntityId))
             return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = role };
+
         if (role == "Router" && owners.TryGetValue(ping.EntityId, out var owner))
             return await ForwardPingAsync(owner, ping, stop);
+
         return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.NotFound };
     }
-
 }

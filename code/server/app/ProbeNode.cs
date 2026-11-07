@@ -18,6 +18,7 @@ internal sealed class LinkService(ProbeNode node) : ProbeLink.ProbeLinkBase
         if (!Guid.TryParseExact(link, "N", out _) || !Topology.Dials.TryGetValue(peer, out var targets)
             || !targets.Contains(node.Role))
             throw new RpcException(new Status(StatusCode.InvalidArgument, "Unexpected link."));
+
         var entities = context.RequestHeaders.GetValue("entity")?.Split(',') ?? [];
         return node.RunLinkAsync(peer, link, entities, input, output, context.CancellationToken);
     }
@@ -38,7 +39,8 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
 
     public Task InitializeAsync(CancellationToken stop) => singlePoint.InitializeAsync(role, id =>
     {
-        if (!localEntities.TryAdd(id, 0)) throw new InvalidOperationException($"Duplicate local entity {id}.");
+        if (!localEntities.TryAdd(id, 0))
+            throw new InvalidOperationException($"Duplicate local entity {id}.");
     }, firstLinks.Task, stop);
 
     public async Task MaintainLinkAsync(string peer, ProbeRegistry registry, bool reconnect, CancellationToken stop)
@@ -46,6 +48,7 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         while (true)
         {
             var address = await registry.ResolveAsync(peer, stop);
+
             try
             {
                 await ConnectAsync(peer, address, stop);
@@ -65,7 +68,9 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         using var channel = GrpcChannel.ForAddress(address);
         var id = Guid.NewGuid().ToString("N");
         var headers = new Metadata { { "peer", role }, { "link", id } };
-        if (peer == "Router") headers.Add("entity", string.Join(',', localEntities.Keys));
+        if (peer == "Router")
+            headers.Add("entity", string.Join(',', localEntities.Keys));
+
         using var call = new ProbeLink.ProbeLinkClient(channel).Connect(headers, cancellationToken: stop);
         await call.RequestStream.WriteAsync(new Frame { Hello = role }, stop);
         await RunLinkAsync(peer, id, [], call.ResponseStream, call.RequestStream, stop);
@@ -79,18 +84,26 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         if (role == "Router" && (entities.Length == 0 || (probeEntity != null && !entities.Contains(probeEntity)) ||
             entities.Distinct().Count() != entities.Length || entities.Any(entity => entity != probeEntity && !Guid.TryParseExact(entity, "N", out _))))
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid entity registration from {peer}."));
+
         if (!await input.MoveNext(stop) || input.Current.Hello != peer)
             throw new IOException($"Link to {peer} closed before handshake.");
+
         lock (linkChanges)
         {
-            if (!sessions.Add(peer)) throw new RpcException(new Status(StatusCode.AlreadyExists, $"Duplicate link to {peer}."));
+            if (!sessions.Add(peer))
+                throw new RpcException(new Status(StatusCode.AlreadyExists, $"Duplicate link to {peer}."));
         }
+
         try
         {
-            if (Topology.Dials[peer].Contains(role)) await output.WriteAsync(new Frame { Hello = role }, stop);
+            if (Topology.Dials[peer].Contains(role))
+                await output.WriteAsync(new Frame { Hello = role }, stop);
+
             lock (linkChanges)
             {
-                if (role == "Router" && entities.Any(owners.ContainsKey)) throw new InvalidDataException($"Duplicate entity from {peer}.");
+                if (role == "Router" && entities.Any(owners.ContainsKey))
+                    throw new InvalidDataException($"Duplicate entity from {peer}.");
+
                 links[peer] = link;
                 if (role == "Router")
                     foreach (var entity in entities)
@@ -98,9 +111,11 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
                         owners[entity] = peer;
                         TraceLog.Event("ENTITY_ROUTE", role, peer, entity: entity, link: id);
                     }
+
                 TraceLog.Event("LINK_UP", role, peer, link: id);
                 UpdateLinkReadiness();
             }
+
             // A Scene handler can call Profile through the same Router stream while
             // handling an incoming ping. Keep receiving replies during that call.
             using var transport = CancellationTokenSource.CreateLinkedTokenSource(stop);
@@ -108,11 +123,18 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
             var read = ReadAsync();
             var serve = ServeAsync();
             var finished = await Task.WhenAny(read, serve);
+
             transport.Cancel();
             queue.Writer.TryComplete();
             link.Close();
-            try { await Task.WhenAll(read, serve); }
-            catch (OperationCanceledException) when (!stop.IsCancellationRequested) { await finished; }
+            try
+            {
+                await Task.WhenAll(read, serve);
+            }
+            catch (OperationCanceledException) when (!stop.IsCancellationRequested)
+            {
+                await finished;
+            }
 
             async Task ReadAsync()
             {
@@ -120,16 +142,26 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
                 {
                     switch (frame.BodyCase)
                     {
-                        case Frame.BodyOneofCase.Pong: link.Receive(frame, frame.Pong.RequestId, frame.Pong.EntityId, "PONG_RX"); break;
-                        case Frame.BodyOneofCase.ProfileReply:
-                            link.Receive(frame, frame.ProfileReply.RequestId, frame.ProfileReply.EntityId, "PROFILE_REPLY_RX"); break;
-                        case Frame.BodyOneofCase.Ping or Frame.BodyOneofCase.ProfileRequest:
-                            if (!queue.Writer.TryWrite(frame)) throw new RpcException(new Status(StatusCode.ResourceExhausted, "Peer request queue is full."));
+                        case Frame.BodyOneofCase.Pong:
+                            link.Receive(frame, frame.Pong.RequestId, frame.Pong.EntityId, "PONG_RX");
                             break;
-                        default: throw new InvalidDataException("Invalid stream frame.");
+
+                        case Frame.BodyOneofCase.ProfileReply:
+                            link.Receive(frame, frame.ProfileReply.RequestId, frame.ProfileReply.EntityId, "PROFILE_REPLY_RX");
+                            break;
+
+                        case Frame.BodyOneofCase.Ping or Frame.BodyOneofCase.ProfileRequest:
+                            if (!queue.Writer.TryWrite(frame))
+                                throw new RpcException(new Status(StatusCode.ResourceExhausted, "Peer request queue is full."));
+
+                            break;
+
+                        default:
+                            throw new InvalidDataException("Invalid stream frame.");
                     }
                 }
             }
+
             async Task ServeAsync()
             {
                 await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
@@ -140,9 +172,14 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
                         await link.ReplyAsync(await RouteProfileAsync(peer, request, transport.Token), transport.Token);
                         continue;
                     }
+
                     var ping = frame.Ping;
                     TraceLog.Event("PING_RX", role, peer, ping.RequestId, ping.EntityId, id);
-                    try { await link.ReplyAsync(await RouteAsync(peer, ping, transport.Token), transport.Token); }
+
+                    try
+                    {
+                        await link.ReplyAsync(await RouteAsync(peer, ping, transport.Token), transport.Token);
+                    }
                     catch (Exception error) when (!transport.IsCancellationRequested)
                     {
                         TraceLog.Event("PING_FAILED", role, peer, ping.RequestId, ping.EntityId, id, error.Message);
@@ -162,6 +199,7 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
                     UpdateLinkReadiness();
                 }
             }
+
             link.Close();
         }
     }
@@ -169,16 +207,23 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
     private void UpdateLinkReadiness()
     {
         bool complete = links.Count == Topology.Degree(role);
-        if (complete == linksReady) return;
+        if (complete == linksReady)
+            return;
+
         linksReady = complete;
         TraceLog.Event(complete ? "LINKS_READY" : "LINKS_LOST", role, detail: links.Count.ToString());
-        if (complete) firstLinks.TrySetResult();
+        if (complete)
+            firstLinks.TrySetResult();
     }
 
     private async Task<Pong> RouteAsync(string from, Ping ping, CancellationToken stop)
     {
-        if (!Ready) return Unavailable(ping);
-        if (ping.Entry == "GM") return await RouteGmPingAsync(from, ping, stop);
+        if (!Ready)
+            return Unavailable(ping);
+
+        if (ping.Entry == "GM")
+            return await RouteGmPingAsync(from, ping, stop);
+
         var gateLocal = ping.Entry == "Gate" && role == "Gate" && ping.EntityId == singlePoint.State.EntityId;
         if (!Guid.TryParseExact(ping.RequestId, "N", out _) || (!gateLocal && ping.Entry is not ("Base" or "Login"))
             || !(Topology.Entities.ContainsValue(ping.EntityId) || Guid.TryParseExact(ping.EntityId, "N", out _))
@@ -189,15 +234,20 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
         {
             if (ping.Storage)
             {
-                if (from != "Base" || singlePoint is not DBMgrServerSinglePoint db) throw new InvalidDataException("Storage probe did not use the dedicated link.");
+                if (from != "Base" || singlePoint is not DBMgrServerSinglePoint db)
+                    throw new InvalidDataException("Storage probe did not use the dedicated link.");
+
                 await db.PingAsync(stop);
                 TraceLog.Event("MONGO_PONG", role, "MongoDB", ping.RequestId, ping.EntityId);
             }
+
             var result = new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = role };
             if (ping.ProfileProbe != Ping.Types.ProfileProbe.None)
                 result.ProfileReply = await RunProfileProbeAsync(ping, stop);
+
             return result;
         }
+
         string? target = role switch
         {
             "Gate" when from == "Client" => ping.Entry,
@@ -206,10 +256,15 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
             "Router" when !ping.Storage => owners.GetValueOrDefault(ping.EntityId),
             _ => throw new InvalidDataException($"No route from {from} through {role} to {ping.EntityId}.")
         };
-        if (target == null) return Ready
-            ? new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.NotFound }
-            : Unavailable(ping);
-        if (target == from) throw new InvalidDataException($"Routing loop for {ping.EntityId} through {from}.");
+
+        if (target == null)
+            return Ready
+                ? new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.NotFound }
+                : Unavailable(ping);
+
+        if (target == from)
+            throw new InvalidDataException($"Routing loop for {ping.EntityId} through {from}.");
+
         return await ForwardPingAsync(target, ping, stop);
     }
 
@@ -219,13 +274,17 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
     {
         if (Ready && links.TryGetValue(peer, out var link))
         {
-            try { return await link.PingAsync(ping, stop); }
+            try
+            {
+                return await link.PingAsync(ping, stop);
+            }
             catch (Exception error) when (!stop.IsCancellationRequested && IsDeliveryFailure(error))
             {
                 TraceLog.Event(ping.Entry == "GM" ? "GM_DELIVERY_FAILED" : "PING_DELIVERY_FAILED", role, peer,
                     ping.RequestId, ping.EntityId, detail: error.GetType().Name);
             }
         }
+
         return Unavailable(ping);
     }
 
@@ -234,17 +293,25 @@ internal sealed partial class ProbeNode(string role, ServerSinglePoint singlePoi
 
     public async Task WebSocketAsync(HttpContext context)
     {
-        if (!context.WebSockets.IsWebSocketRequest || !Ready) { context.Response.StatusCode = 503; return; }
+        if (!context.WebSockets.IsWebSocketRequest || !Ready)
+        {
+            context.Response.StatusCode = 503;
+            return;
+        }
+
         using var ws = await context.WebSockets.AcceptWebSocketAsync();
         string link = context.Connection.Id;
+
         while (await Wire.ReadAsync(ws, context.RequestAborted) is { } bytes)
         {
             var ping = Ping.Parser.ParseFrom(bytes);
             TraceLog.Event("PING_RX", role, "Client", ping.RequestId, ping.EntityId, link);
+
             var pong = await RouteAsync("Client", ping, context.RequestAborted);
             await ws.SendAsync(pong.ToByteArray().AsMemory(), WebSocketMessageType.Binary, true, context.RequestAborted);
             TraceLog.Event("PONG_TX", role, "Client", pong.RequestId, pong.EntityId, link);
         }
+
         await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted);
     }
 }
@@ -257,44 +324,65 @@ internal sealed class PeerLink(string role, string peer, string id, IAsyncStream
     private async Task WriteAsync(Frame frame, CancellationToken stop)
     {
         await writer.WaitAsync(stop);
-        try { await output.WriteAsync(frame, stop); }
-        finally { writer.Release(); }
+        try
+        {
+            await output.WriteAsync(frame, stop);
+        }
+        finally
+        {
+            writer.Release();
+        }
     }
+
     public async Task<Pong> PingAsync(Ping ping, CancellationToken stop)
     {
         var frame = await CallAsync(new Frame { Ping = ping }, ping.RequestId, ping.EntityId, "PING_TX", stop);
-        if (frame.Pong?.EntityId != ping.EntityId) throw new InvalidDataException("Pong entity mismatch.");
+        if (frame.Pong?.EntityId != ping.EntityId)
+            throw new InvalidDataException("Pong entity mismatch.");
+
         return frame.Pong;
     }
+
     public async Task<ProfileReply> ProfileAsync(ProfileRequest request, CancellationToken stop)
     {
         var subject = ProfileStore.Subject(request);
         var frame = await CallAsync(new Frame { ProfileRequest = request }, request.RequestId, subject, "PROFILE_REQUEST_TX", stop);
-        if (frame.ProfileReply?.EntityId != subject) throw new InvalidDataException("Profile reply entity mismatch.");
+        if (frame.ProfileReply?.EntityId != subject)
+            throw new InvalidDataException("Profile reply entity mismatch.");
+
         return frame.ProfileReply;
     }
+
     private async Task<Frame> CallAsync(Frame frame, string requestId, string entity, string ev, CancellationToken stop)
     {
         var reply = new TaskCompletionSource<Frame>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!waiting.TryAdd(requestId, reply)) throw new InvalidDataException("Duplicate request ID.");
+        if (!waiting.TryAdd(requestId, reply))
+            throw new InvalidDataException("Duplicate request ID.");
+
         try
         {
             await WriteAsync(frame, stop);
             TraceLog.Event(ev, role, peer, requestId, entity, id);
             return await reply.Task.WaitAsync(TimeSpan.FromSeconds(12), stop);
         }
-        finally { waiting.TryRemove(requestId, out _); }
+        finally
+        {
+            waiting.TryRemove(requestId, out _);
+        }
     }
+
     public async Task ReplyAsync(Pong pong, CancellationToken stop)
     {
         await WriteAsync(new Frame { Pong = pong }, stop);
         TraceLog.Event("PONG_TX", role, peer, pong.RequestId, pong.EntityId, id);
     }
+
     public async Task ReplyAsync(ProfileReply reply, CancellationToken stop)
     {
         await WriteAsync(new Frame { ProfileReply = reply }, stop);
         TraceLog.Event("PROFILE_REPLY_TX", role, peer, reply.RequestId, reply.EntityId, id);
     }
+
     public void Receive(Frame frame, string requestId, string entity, string ev)
     {
         if (!waiting.TryGetValue(requestId, out var request))
@@ -303,9 +391,11 @@ internal sealed class PeerLink(string role, string peer, string id, IAsyncStream
             TraceLog.Event("UNMATCHED_REPLY", role, peer, requestId, entity, id);
             return;
         }
+
         TraceLog.Event(ev, role, peer, requestId, entity, id);
         request.TrySetResult(frame);
     }
+
     public void Close()
     {
         foreach (var pending in waiting.Values) pending.TrySetException(new IOException($"Link {role}-{peer} closed."));
