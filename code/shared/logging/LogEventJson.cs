@@ -1,8 +1,8 @@
 using System.Text.Json;
 
-namespace TGame.PingPong;
+namespace TGame.Logging;
 
-public static class ProbeLog
+public static class LogEventJson
 {
     public static string Serialize(string ev, string role, string? peer = null, string? id = null,
         string? entity = null, string? link = null, string? detail = null, string? runId = null)

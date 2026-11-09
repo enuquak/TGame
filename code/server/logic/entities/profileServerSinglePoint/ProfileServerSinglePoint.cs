@@ -1,4 +1,4 @@
-using TGame.PingPong;
+using TGame.Server;
 
 namespace TGame.Server.Logic;
 

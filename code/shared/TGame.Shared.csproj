@@ -9,9 +9,11 @@
     <PackageReference Include="Google.Protobuf" Version="3.36.2" />
     <PackageReference Include="Grpc.Core.Api" Version="2.85.0" />
     <PackageReference Include="Grpc.Tools" Version="2.85.0" PrivateAssets="All" />
+    <Protobuf Include="protocols/transport.proto" ProtoRoot="protocols"
+              OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'generated', 'protocols'))" GrpcServices="Both" />
     <Protobuf Include="protocols/pingpong.proto" ProtoRoot="protocols"
-              OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'generated', 'pingpong'))" GrpcServices="Both" />
+              OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'generated', 'protocols'))" GrpcServices="None" />
     <Protobuf Include="protocols/profile.proto" ProtoRoot="protocols"
-              OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'generated', 'pingpong'))" GrpcServices="None" />
+              OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'generated', 'protocols'))" GrpcServices="None" />
   </ItemGroup>
 </Project>

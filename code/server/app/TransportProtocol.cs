@@ -1,9 +1,8 @@
-namespace TGame.PingPong;
+namespace TGame.Server;
 
-internal static class ProbeProtocol
+internal static class TransportProtocol
 {
     public const string PeerHeader = "peer";
     public const string LinkHeader = "link";
     public const string EntityHeader = "entity";
-    public const string WebSocketPath = "/probe";
 }

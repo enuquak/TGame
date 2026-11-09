@@ -1,7 +1,7 @@
 using System.Reflection;
 using TGame.Server.Logic;
 
-namespace TGame.PingPong;
+namespace TGame.Server;
 
 internal sealed class SinglePointRegistry
 {

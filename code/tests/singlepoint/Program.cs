@@ -1,10 +1,13 @@
+using TGame.Diagnostics;
+using TGame.Transport;
+using TGame.Profile;
 using System.Net.WebSockets;
 using System.Threading.Channels;
 using Grpc.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using TGame;
-using TGame.PingPong;
+using TGame.Server;
 using TGame.Server.Logic;
 
 const int TestTimeoutSeconds = 5;
@@ -12,7 +15,7 @@ const int HandshakeObservationMilliseconds = 200;
 
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
 var stop = deadline.Token;
-var loginNode = new ProbeNode(nameof(ProcessType.Login), new LoginServerSinglePoint());
+var loginNode = new ServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint());
 var loginInit = loginNode.InitializeAsync(stop);
 var router = new FrameStream();
 var routerLink = Open(loginNode, nameof(ProcessType.Router), router);
@@ -40,12 +43,35 @@ if (loginNode.Ready)
 var retry = new FrameStream();
 var accepted = Open(loginNode, nameof(ProcessType.Gate), retry);
 await loginInit.WaitAsync(stop);
+
+var profileRequest = new ProfileRequest { RequestId = Guid.NewGuid().ToString("N"), Fetch = Guid.NewGuid().ToString("N") };
+var profileCall = loginNode.CallProfileAsync(profileRequest, stop);
+var profileFrame = await router.Output.Reader.ReadAsync(stop);
+if (profileFrame.ProfileRequest?.RequestId != profileRequest.RequestId || profileFrame.ProfileRequest.Fetch != profileRequest.Fetch)
+{
+    throw new Exception("Profile requests must use their own transport message without a Ping wrapper.");
+}
+
+router.Input.Writer.TryWrite(new Frame
+{
+    ProfileReply = new ProfileReply
+    {
+        RequestId = profileRequest.RequestId,
+        EntityId = profileRequest.Fetch,
+        Result = ProfileReply.Types.Result.Missing
+    }
+});
+if ((await profileCall.WaitAsync(stop)).Result != ProfileReply.Types.Result.Missing)
+{
+    throw new Exception("Profile reply was not delivered independently of Ping/Pong.");
+}
+
 retry.Input.Writer.Complete();
 router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
 
 var point = new WaitingSinglePoint();
-var gate = new ProbeNode(nameof(ProcessType.Gate), point);
+var gate = new ServerNode(nameof(ProcessType.Gate), point);
 var initialization = gate.InitializeAsync(stop);
 if (point.Started.Task.IsCompleted)
 {
@@ -97,7 +123,7 @@ if (cancelling.Initialized)
     throw new Exception("Cancelled SinglePoint became ready.");
 }
 
-var routes = new ProbeNode(nameof(ProcessType.Router), new RouterServerSinglePoint());
+var routes = new ServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint());
 var routerInit = routes.InitializeAsync(stop);
 var neighbors = Topology.Dials.Where(row => row.Value.Contains(nameof(ProcessType.Router))).ToDictionary(row => row.Key, _ => new FrameStream());
 var routing = Task.WhenAll(neighbors.Select(pair =>
@@ -122,10 +148,10 @@ foreach (var stream in neighbors.Values)
 }
 
 await routing.WaitAsync(stop);
-Console.WriteLine("PASS handshake retry, delayed initialization, WSS/gRPC gating, cancellation, disconnect and missing entity");
+Console.WriteLine("PASS handshake retry, direct Profile RPC, delayed initialization, WSS/gRPC gating, cancellation, disconnect and missing entity");
 return 0;
 
-Task Open(ProbeNode node, string peer, FrameStream stream, string[]? ids = null)
+Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null)
 {
     stream.Input.Writer.TryWrite(new Frame { Hello = peer });
     return node.RunLinkAsync(peer, Guid.NewGuid().ToString("N"), ids ?? [], stream, stream, stop);

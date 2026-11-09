@@ -1,3 +1,6 @@
+using TGame.Diagnostics;
+using TGame.Logging;
+using TGame.Transport;
 using System.Net.Security;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
@@ -5,7 +8,7 @@ using System.Text.Json;
 using Google.Protobuf;
 using Result = TGame.Profile.ProfileReply.Types.Result;
 
-namespace TGame.PingPong;
+namespace TGame.Tests;
 
 internal static class ProbeClient
 {
@@ -49,9 +52,9 @@ internal static class ProbeClient
             }
 
             await ws.SendAsync(ping.ToByteArray().AsMemory(), WebSocketMessageType.Binary, true, timeout.Token);
-            Console.WriteLine(ProbeLog.Serialize(ServerLogEvents.PingTx, ServerPeerNames.Client, nameof(ProcessType.Gate), c.Id, c.Entity));
+            Console.WriteLine(LogEventJson.Serialize(ServerLogEvents.PingTx, ServerPeerNames.Client, nameof(ProcessType.Gate), c.Id, c.Entity));
 
-            var bytes = await Wire.ReadAsync(ws, timeout.Token) ?? throw new IOException("Gate closed before Pong.");
+            var bytes = await WebSocketFrames.ReadAsync(ws, timeout.Token) ?? throw new IOException("Gate closed before Pong.");
             var pong = Pong.Parser.ParseFrom(bytes);
             if (pong.RequestId != c.Id || pong.EntityId != c.Entity || pong.Responder != c.Path[^1])
             {
@@ -70,7 +73,7 @@ internal static class ProbeClient
                 }
             }
 
-            Console.WriteLine(ProbeLog.Serialize(ServerLogEvents.PongRx, ServerPeerNames.Client, nameof(ProcessType.Gate), pong.RequestId, pong.EntityId, detail: pong.Responder));
+            Console.WriteLine(LogEventJson.Serialize(ServerLogEvents.PongRx, ServerPeerNames.Client, nameof(ProcessType.Gate), pong.RequestId, pong.EntityId, detail: pong.Responder));
         }
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, stop.Token);

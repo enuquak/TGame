@@ -52,6 +52,10 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 
 服务端入口为 `code/server/app/Program.cs`，只接受 `<角色> <运行目录>`。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 只引用 `code/shared/TGame.Shared.csproj`，不依赖服务端工程。它接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
 
+服务端工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。启动、节点、连接和服务注册使用 `TGame.Server` 命名空间；共享的日志格式、WebSocket 读帧与诊断数据分别属于 `TGame.Logging`、`TGame.Transport` 和 `TGame.Diagnostics`。通用连接服务与帧定义在 [transport.proto](code/shared/protocols/transport.proto)，Ping/Pong 消息保留在诊断协议中，消息分发集中在 `ServerNode.Messages.cs`。Profile 请求直接使用自身消息，不需要经过 Ping/Pong 包装。构建时统一生成到 `code/shared/generated/protocols/`。
+
+本次整理将内部 gRPC 服务改为 `tgame.transport.ServerLink`，服务发现临时节点前缀改为 `server-<运行ID>-`；同一轮进程须使用统一重新构建的版本，不能混用旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。Ping/Pong 验收脚本及历史日志目录继续保留测试名称。
+
 ### GM 管理入口
 
 本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的 32 位十六进制 EntityId。返回的 `requestId` 可关联 GM 审计和 gRPC 收发日志。

@@ -1,4 +1,4 @@
-using TGame.PingPong;
+using TGame.Tests;
 
 if (args is not [var directory, var endpoint, var pin])
 {
