@@ -6,6 +6,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../server/app/TGame.PingPong.csproj" />
+    <ProjectReference Include="../../server/app/TGame.Server.csproj" />
   </ItemGroup>
 </Project>

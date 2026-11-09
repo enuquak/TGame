@@ -3,9 +3,9 @@ using TGame.Profile;
 using TGame.Server.Logic;
 using Result = TGame.Profile.ProfileReply.Types.Result;
 
-namespace TGame.PingPong;
+namespace TGame.Server;
 
-internal sealed partial class ProbeNode
+internal sealed partial class ServerNode
 {
     private const int MaxProfileEntityIdLength = 128;
     private const int MaxProfileTextLength = 80;
@@ -85,33 +85,5 @@ internal sealed partial class ProbeNode
             TraceLog.Event(ServerLogEvents.ProfileDbError, role, id: request.RequestId, entity: subject, detail: error.GetType().Name);
             return Failure(Result.Unavailable);
         }
-    }
-
-    // The loopback smoke driver can only change this run's Base SinglePoint summary.
-    // Other Game entities use the same typed ProfileRequest over their Router stream.
-    private Task<ProfileReply> RunProfileProbeAsync(Ping ping, CancellationToken stop)
-    {
-        var request = new ProfileRequest { RequestId = ping.RequestId };
-        bool ownProbe = role == nameof(ProcessType.Base) && ping.EntityId == singlePoint.State.EntityId && ping.ProfileSubject == ping.EntityId;
-
-        switch (ping.ProfileProbe)
-        {
-            case Ping.Types.ProfileProbe.Publish when ownProbe:
-                request.Publish = new EntitySummary { EntityId = ping.EntityId, DisplayName = ProfileProbeData.DisplayName, Title = ProfileProbeData.Title };
-                break;
-
-            case Ping.Types.ProfileProbe.Withdraw when ownProbe:
-                request.Withdraw = ping.EntityId;
-                break;
-
-            case Ping.Types.ProfileProbe.Fetch when role is nameof(ProcessType.Login) or nameof(ProcessType.Scene) && Guid.TryParseExact(ping.ProfileSubject, "N", out _):
-                request.Fetch = ping.ProfileSubject;
-                break;
-
-            default:
-                throw new InvalidDataException("Invalid Profile probe.");
-        }
-
-        return CallProfileAsync(request, stop);
     }
 }

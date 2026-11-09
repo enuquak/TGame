@@ -1,8 +1,9 @@
+using TGame.Logging;
 using Serilog;
 using Serilog.Core;
 using Serilog.Debugging;
 
-namespace TGame.PingPong;
+namespace TGame.Server;
 
 internal static class TraceLog
 {
@@ -26,7 +27,7 @@ internal static class TraceLog
     public static void Event(string ev, string role, string? peer = null, string? id = null,
         string? entity = null, string? link = null, string? detail = null)
     {
-        var json = ProbeLog.Serialize(ev, role, peer, id, entity, link, detail, runId);
+        var json = LogEventJson.Serialize(ev, role, peer, id, entity, link, detail, runId);
 
         if (serverLog is null)
         {

@@ -3,7 +3,7 @@ using MongoDB.Driver;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
-namespace TGame.PingPong;
+namespace TGame.Server;
 
 internal sealed class TestStorage
 {
@@ -34,7 +34,11 @@ internal sealed class TestStorage
         init;
     }
 
-    public required string ZooKeeper { get; init; }
+    public required string ZooKeeper
+    {
+        get;
+        init;
+    }
 
     public static readonly Lazy<TestStorage> Settings = new(() =>
     {

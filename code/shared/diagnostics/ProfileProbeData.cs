@@ -1,4 +1,4 @@
-namespace TGame.PingPong;
+namespace TGame.Diagnostics;
 
 public static class ProfileProbeData
 {

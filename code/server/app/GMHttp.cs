@@ -1,9 +1,10 @@
+using TGame.Diagnostics;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using TGame.Server.Logic;
 
-namespace TGame.PingPong;
+namespace TGame.Server;
 
 internal static class GMHttp
 {
@@ -13,7 +14,7 @@ internal static class GMHttp
     private const string NoStoreCacheControl = "no-store";
     private const string UnauthenticatedActor = "unauthenticated";
 
-    public static void Map(WebApplication app, ProbeNode node, GMServerSinglePoint gm)
+    public static void Map(WebApplication app, ServerNode node, GMServerSinglePoint gm)
     {
         app.MapPost(PingRoute, async (HttpContext http, string entityId) =>
         {
@@ -67,33 +68,5 @@ internal static class GMHttp
                 _ => Finish(StatusCodes.Status503ServiceUnavailable)
             };
         });
-    }
-}
-
-internal sealed partial class ProbeNode
-{
-    // Only the GM HTTP handler constructs this command; it accepts no storage or profile operations.
-    internal Task<Pong> GmPingAsync(Ping ping, CancellationToken stop) => ForwardPingAsync(nameof(ProcessType.Router), ping, stop);
-
-    private async Task<Pong> RouteGmPingAsync(string from, Ping ping, CancellationToken stop)
-    {
-        if (!Guid.TryParseExact(ping.RequestId, "N", out _) || !Guid.TryParseExact(ping.EntityId, "N", out _) ||
-            ping.Storage || ping.ProfileProbe != Ping.Types.ProfileProbe.None ||
-            (role == nameof(ProcessType.Router) ? from != nameof(ProcessType.GM) : from != nameof(ProcessType.Router)))
-        {
-            throw new InvalidDataException("Invalid GM ping or ingress.");
-        }
-
-        if (localEntities.ContainsKey(ping.EntityId))
-        {
-            return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = role };
-        }
-
-        if (role == nameof(ProcessType.Router) && owners.TryGetValue(ping.EntityId, out var owner))
-        {
-            return await ForwardPingAsync(owner, ping, stop);
-        }
-
-        return new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Status = Pong.Types.Status.NotFound };
     }
 }

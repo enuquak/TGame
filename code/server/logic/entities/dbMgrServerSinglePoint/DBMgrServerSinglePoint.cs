@@ -1,5 +1,5 @@
 using MongoDB.Driver;
-using TGame.PingPong;
+using TGame.Server;
 
 namespace TGame.Server.Logic;
 

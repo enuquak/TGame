@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using TGame;
-using TGame.PingPong;
+using TGame.Server;
 using TGame.Server.Logic;
 
 const int ProcessArgumentCount = 2;
@@ -14,7 +14,7 @@ const string DevelopmentCertificateOid = "1.3.6.1.4.1.311.84.1.1";
 
 if (args.Length != ProcessArgumentCount || !Topology.Dials.ContainsKey(args[0]))
 {
-    throw new ArgumentException($"Usage: TGame.PingPong <{string.Join('|', Topology.Dials.Keys)}> <run-directory>");
+    throw new ArgumentException($"Usage: TGame.Server <{string.Join('|', Topology.Dials.Keys)}> <run-directory>");
 }
 
 var role = args[0];
@@ -38,7 +38,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     var processType = Enum.Parse<ProcessType>(role);
     var singlePoint = singlePoints.Create(processType);
 
-    var node = new ProbeNode(role, singlePoint);
+    var node = new ServerNode(role, singlePoint);
     using var resources = singlePoint as IDisposable;
 
     var builder = WebApplication.CreateSlimBuilder();
@@ -66,8 +66,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     await using var app = builder.Build();
     if (processType == ProcessType.Gate)
     {
-        app.UseWebSockets();
-        app.MapGet(ProbeProtocol.WebSocketPath, node.WebSocketAsync);
+        node.MapDiagnostics(app);
     }
     else if (singlePoint is GMServerSinglePoint gm)
     {
@@ -89,7 +88,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     try
     {
         var initialization = node.InitializeAsync(stop);
-        await using var registry = new ProbeRegistry(runId);
+        await using var registry = new ServiceRegistry(runId);
         using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
         registrationTimeout.CancelAfter(TimeSpan.FromSeconds(StartupTimeoutSeconds));
         var registration = registry.RegisterAsync(role, address, consoleMode, registrationTimeout.Token);

@@ -34,7 +34,7 @@ if (!(Test-Path -LiteralPath $dotnet))
     $dotnet = (Get-Command dotnet -CommandType Application).Source
 }
 
-$serverDll = Join-Path $root 'build/bin/TGame.PingPong/debug/TGame.PingPong.dll'
+$serverDll = Join-Path $root 'build/bin/TGame.Server/debug/TGame.Server.dll'
 $clientDll = Join-Path $root 'build/bin/TGame.ProbeClient/debug/TGame.ProbeClient.dll'
 Write-Host "Server logs: $serverRoot/<Role>Server/"
 Write-Host "PingPong results: $runDir"
@@ -42,7 +42,7 @@ Push-Location $root
 
 try
 {
-    & $dotnet build code/server/app/TGame.PingPong.csproj --nologo
+    & $dotnet build code/server/app/TGame.Server.csproj --nologo
     if ($LASTEXITCODE -ne 0)
     {
         throw "Server build failed ($LASTEXITCODE)."

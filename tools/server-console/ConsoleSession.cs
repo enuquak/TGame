@@ -8,7 +8,7 @@ namespace TGame.ServerConsole;
 internal sealed class ConsoleSession : IDisposable
 {
     private const int GmTokenByteCount = 32;
-    private const string Project = "code/server/app/TGame.PingPong.csproj";
+    private const string Project = "code/server/app/TGame.Server.csproj";
     private const string ProtocolProject = "code/shared/TGame.Shared.csproj";
     private const string DefaultGmOperator = "local-console";
     private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
@@ -133,7 +133,7 @@ internal sealed class ConsoleSession : IDisposable
         var starts = Instances.Select(i => StartInfo(i, id)).ToArray();
         await Task.Run(() =>
         {
-            var source = Path.Combine(root, "build", "bin", "TGame.PingPong", "debug");
+            var source = Path.Combine(root, "build", "bin", "TGame.Server", "debug");
             foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
             {
                 string dest = Path.Combine(snapshot, Path.GetRelativePath(source, file));
@@ -143,7 +143,7 @@ internal sealed class ConsoleSession : IDisposable
 
             foreach (var start in starts)
             {
-                File.Copy(Path.Combine(snapshot, "TGame.PingPong.exe"), start.FileName);
+                File.Copy(Path.Combine(snapshot, "TGame.Server.exe"), start.FileName);
             }
         });
         await Task.WhenAll(Instances.Select(i => i.StopAsync(Report)));

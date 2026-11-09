@@ -1,5 +1,5 @@
 using TGame.Server.Model;
-using TGame.PingPong;
+using TGame.Server;
 
 namespace TGame.Server.Logic;
 

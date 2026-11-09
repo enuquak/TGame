@@ -1,8 +1,8 @@
 using System.Net.WebSockets;
 
-namespace TGame.PingPong;
+namespace TGame.Transport;
 
-public static class Wire
+public static class WebSocketFrames
 {
     private const int MaxFrameBytes = 4096;
 
@@ -30,6 +30,6 @@ public static class Wire
             }
         }
 
-        throw new InvalidDataException($"Probe exceeds {MaxFrameBytes} bytes.");
+        throw new InvalidDataException($"Frame exceeds {MaxFrameBytes} bytes.");
     }
 }

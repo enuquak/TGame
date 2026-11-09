@@ -6,7 +6,7 @@ using TGame.Profile;
 using Result = TGame.Profile.ProfileReply.Types.Result;
 using TGame.Server.Logic;
 
-namespace TGame.PingPong;
+namespace TGame.Server;
 
 // The smoke host runs in the test namespace over the project's SSH tunnel.
 internal sealed class ProfileStore : IDisposable
