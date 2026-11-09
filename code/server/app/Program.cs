@@ -46,7 +46,15 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
     {
-        listen.Protocols = certificate is not null || singlePoint is GMServerSinglePoint ? HttpProtocols.Http1 : HttpProtocols.Http2;
+        if (certificate is not null || singlePoint is GMServerSinglePoint)
+        {
+            listen.Protocols = HttpProtocols.Http1;
+        }
+        else
+        {
+            listen.Protocols = HttpProtocols.Http2;
+        }
+
         if (certificate is not null)
         {
             listen.UseHttps(certificate);
