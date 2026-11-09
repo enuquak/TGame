@@ -149,8 +149,40 @@ static X509Certificate2 FindDevelopmentCertificate()
 {
     using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
     store.Open(OpenFlags.ReadOnly);
-    return store.Certificates.Where(c => c.HasPrivateKey && c.NotBefore <= DateTime.Now && c.NotAfter > DateTime.Now
-        && c.Extensions.Any(e => e.Oid?.Value == DevelopmentCertificateOid))
-        .OrderByDescending(c => c.NotAfter).FirstOrDefault()
-        ?? throw new InvalidOperationException("Create a local development certificate with dotnet dev-certs https.");
+
+    var candidates = new List<X509Certificate2>();
+    foreach (var certificate in store.Certificates)
+    {
+        if (!certificate.HasPrivateKey)
+        {
+            continue;
+        }
+
+        if (certificate.NotBefore > DateTime.Now)
+        {
+            continue;
+        }
+
+        if (certificate.NotAfter <= DateTime.Now)
+        {
+            continue;
+        }
+
+        bool isDevelopmentCertificate = certificate.Extensions.Any(extension => extension.Oid?.Value == DevelopmentCertificateOid);
+        if (!isDevelopmentCertificate)
+        {
+            continue;
+        }
+
+        candidates.Add(certificate);
+    }
+
+    var certificatesByExpiry = candidates.OrderByDescending(certificate => certificate.NotAfter);
+    var selectedCertificate = certificatesByExpiry.FirstOrDefault();
+    if (selectedCertificate is null)
+    {
+        throw new InvalidOperationException("Create a local development certificate with dotnet dev-certs https.");
+    }
+
+    return selectedCertificate;
 }
