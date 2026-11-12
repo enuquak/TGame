@@ -2,7 +2,7 @@ namespace TGame.Server;
 
 internal static class Topology
 {
-    // One local instance per role. Each pair opens one stream.
+    // The dial direction avoids opening two streams for the same pair of instances.
     public static readonly Dictionary<string, string[]> Dials = new()
     {
         [nameof(ProcessType.Gate)] = [nameof(ProcessType.Login), nameof(ProcessType.Base)],
@@ -15,14 +15,33 @@ internal static class Topology
         [nameof(ProcessType.Router)] = []
     };
 
-    public static readonly Dictionary<string, string> Entities = new()
+    public static string[] DialTargets(ServerGroup group, string name)
     {
-        [nameof(ProcessType.Login)] = "login-1",
-        [nameof(ProcessType.Base)] = "body-1",
-        [nameof(ProcessType.Scene)] = "soul-1",
-        [nameof(ProcessType.DBMgr)] = "db-probe-1",
-        [nameof(ProcessType.Profile)] = "profile-1"
-    };
+        var role = group.GetProcess(name).Role;
+        var targets = new List<string>();
+        foreach (var process in group.Processes)
+        {
+            if (Dials[role].Contains(process.Role))
+            {
+                targets.Add(process.Name);
+            }
+        }
 
-    public static int Degree(string role) => Dials[role].Length + Dials.Values.Count(v => v.Contains(role));
+        return targets.ToArray();
+    }
+
+    public static HashSet<string> Peers(ServerGroup group, string name)
+    {
+        var role = group.GetProcess(name).Role;
+        var peers = new HashSet<string>(DialTargets(group, name), StringComparer.Ordinal);
+        foreach (var process in group.Processes)
+        {
+            if (Dials[process.Role].Contains(role))
+            {
+                peers.Add(process.Name);
+            }
+        }
+
+        return peers;
+    }
 }

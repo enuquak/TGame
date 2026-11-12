@@ -17,7 +17,7 @@ internal static class ServerStatus
     public const string Failed = "异常退出";
 }
 
-internal sealed class ServerInstance(string role) : IDisposable
+internal sealed class ServerInstance(string role, int number = 1) : IDisposable
 {
     internal const int MaxRetainedLines = 1000;
     private const int StopTimeoutSeconds = 10;
@@ -37,6 +37,7 @@ internal sealed class ServerInstance(string role) : IDisposable
     private bool initializing, initialized, connected, failed;
 
     public string Role { get; } = role;
+    public string Name { get; } = ServerProcess.FormatName(role, number);
     public int? Pid
     {
         get; private set;
@@ -50,17 +51,17 @@ internal sealed class ServerInstance(string role) : IDisposable
     }
 
     internal bool Alive => process is { HasExited: false };
-    internal string ExecutableName => Role + "Server.exe";
-    private string IdentityPath => Path.Combine(runDir, Role + ".json");
-    private string LaunchMarker => Path.Combine(runDir, "starting-" + Role);
-    private string StopMarker => Path.Combine(runDir, ServerRunFiles.StopRolePrefix + Role);
+    internal string ExecutableName => Name + "Server.exe";
+    private string IdentityPath => Path.Combine(runDir, Name + ".json");
+    private string LaunchMarker => Path.Combine(runDir, "starting-" + Name);
+    private string StopMarker => Path.Combine(runDir, ServerRunFiles.StopRolePrefix + Name);
 
     internal void Open(string directory, string logRoot, string snapshot)
     {
         Reset();
         runDir = directory;
         runId = Path.GetFileName(directory);
-        logDir = Path.Combine(logRoot, Role + "Server");
+        logDir = Path.Combine(logRoot, Name + "Server");
         var exe = Path.Combine(snapshot, ExecutableName);
         var saved = File.Exists(IdentityPath)
             ? JsonSerializer.Deserialize<Identity>(File.ReadAllText(IdentityPath)) ?? throw new InvalidDataException(IdentityPath)
@@ -88,7 +89,7 @@ internal sealed class ServerInstance(string role) : IDisposable
 
     private void RestoreProcess(string exe, Identity? saved, bool pending)
     {
-        // The unique role apphost also recovers a child if the UI closed between Start and saving its PID.
+        // The unique instance apphost also recovers a child if the UI closed between Start and saving its PID.
         foreach (var candidate in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(ExecutableName)))
         {
             try
@@ -111,7 +112,7 @@ internal sealed class ServerInstance(string role) : IDisposable
 
                 if (process != null)
                 {
-                    throw new InvalidDataException($"{Role} 在同一会话中有多个实例。");
+                    throw new InvalidDataException($"{Name} 在同一会话中有多个实例。");
                 }
 
                 process = candidate;
@@ -144,7 +145,7 @@ internal sealed class ServerInstance(string role) : IDisposable
         File.Delete(StopMarker);
         File.WriteAllText(LaunchMarker, "");
         Reset();
-        process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{Role} 启动失败。");
+        process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{Name} 启动失败。");
         Pid = process.Id;
         log = new RollingLog(logDir, $"{runId}-{Pid}-");
         startedUtcTicks = process.StartTime.ToUniversalTime().Ticks;
@@ -228,6 +229,11 @@ internal sealed class ServerInstance(string role) : IDisposable
                 return;
             }
 
+            if (row.TryGetProperty(ServerLogFields.Instance, out var instance) && instance.GetString() != Name)
+            {
+                return;
+            }
+
             if (row.TryGetProperty(ServerLogFields.Time, out var time) && time.ValueKind == JsonValueKind.String &&
                 time.TryGetDateTimeOffset(out var stamp) && stamp.UtcTicks < startedUtcTicks)
             {
@@ -285,7 +291,7 @@ internal sealed class ServerInstance(string role) : IDisposable
         {
             if (!child.HasExited)
             {
-                report($"{Role} 超过 {StopTimeoutSeconds} 秒未退出，终止进程 {child.Id}。");
+                report($"{Name} 超过 {StopTimeoutSeconds} 秒未退出，终止进程 {child.Id}。");
                 try
                 {
                     child.Kill();

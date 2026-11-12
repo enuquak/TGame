@@ -7,11 +7,13 @@ using TGame.Transport;
 
 namespace TGame.Server;
 
-internal sealed partial class ServerNode(string role, ServerSinglePoint singlePoint)
+internal sealed partial class ServerNode(string name, ServerSinglePoint singlePoint, ServerGroup group)
 {
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
 
+    private readonly string role = group.GetProcess(name).Role;
+    private readonly HashSet<string> expectedPeers = Topology.Peers(group, name);
     private volatile bool linksReady;
     private readonly object linkChanges = new();
     private readonly HashSet<string> sessions = [];
@@ -21,16 +23,47 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
 
     public Task FirstLinks => firstLinks.Task;
+    public string Name => name;
     public string Role => role;
     public bool Ready => singlePoint.Initialized && linksReady;
 
-    public Task InitializeAsync(CancellationToken stop) => singlePoint.InitializeAsync(role, id =>
+    public Task InitializeAsync(CancellationToken stop)
     {
-        if (!localEntities.TryAdd(id, 0))
+        var initialization = singlePoint.InitializeAsync(role, id =>
         {
-            throw new InvalidOperationException($"Duplicate local entity {id}.");
+            if (!localEntities.TryAdd(id, 0))
+            {
+                throw new InvalidOperationException($"Duplicate local entity {id}.");
+            }
+        }, firstLinks.Task, stop);
+
+        lock (linkChanges)
+        {
+            UpdateLinkReadiness();
         }
-    }, firstLinks.Task, stop);
+
+        return initialization;
+    }
+
+    public bool AcceptsIncoming(string peer)
+    {
+        if (!expectedPeers.Contains(peer))
+        {
+            return false;
+        }
+
+        return Topology.Dials[group.GetProcess(peer).Role].Contains(role);
+    }
+
+    private string PeerRole(string peer)
+    {
+        if (peer == ServerPeerNames.Client)
+        {
+            return peer;
+        }
+
+        return group.GetProcess(peer).Role;
+    }
 
     public async Task MaintainLinkAsync(string peer, ServiceRegistry registry, bool reconnect, CancellationToken stop)
     {
@@ -59,26 +92,34 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
     {
         using var channel = GrpcChannel.ForAddress(address);
         var id = Guid.NewGuid().ToString("N");
-        var headers = new Metadata { { TransportProtocol.PeerHeader, role }, { TransportProtocol.LinkHeader, id } };
-        if (peer == nameof(ProcessType.Router))
+        var headers = new Metadata { { TransportProtocol.PeerHeader, name }, { TransportProtocol.LinkHeader, id } };
+        if (PeerRole(peer) == nameof(ProcessType.Router))
         {
             headers.Add(TransportProtocol.EntityHeader, string.Join(',', localEntities.Keys));
         }
 
         using var call = new ServerLink.ServerLinkClient(channel).Connect(headers, cancellationToken: stop);
-        await call.RequestStream.WriteAsync(new Frame { Hello = role }, stop);
+        await call.RequestStream.WriteAsync(new Frame { Hello = name }, stop);
         await RunLinkAsync(peer, id, [], call.ResponseStream, call.RequestStream, stop);
     }
 
     public async Task RunLinkAsync(string peer, string id, string[] entities, IAsyncStreamReader<Frame> input,
         IAsyncStreamWriter<Frame> output, CancellationToken stop)
     {
-        var link = new PeerLink(role, peer, id, output);
-        var probeEntity = Topology.Entities.GetValueOrDefault(peer);
-        if (role == nameof(ProcessType.Router) && (entities.Length == 0 || (probeEntity != null && !entities.Contains(probeEntity)) ||
-            entities.Distinct().Count() != entities.Length || entities.Any(entity => entity != probeEntity && !Guid.TryParseExact(entity, "N", out _))))
+        if (!expectedPeers.Contains(peer))
         {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid entity registration from {peer}."));
+            throw new RpcException(new Status(StatusCode.InvalidArgument, $"Unexpected peer instance {peer}."));
+        }
+
+        var link = new PeerLink(role, peer, id, output);
+        if (role == nameof(ProcessType.Router))
+        {
+            bool hasInvalidIds = entities.Any(entity => !Guid.TryParseExact(entity, "N", out _));
+            bool hasDuplicateIds = entities.Distinct().Count() != entities.Length;
+            if (entities.Length == 0 || hasInvalidIds || hasDuplicateIds)
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid entity registration from {peer}."));
+            }
         }
 
         if (!await input.MoveNext(stop) || input.Current.Hello != peer)
@@ -96,9 +137,9 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
 
         try
         {
-            if (Topology.Dials[peer].Contains(role))
+            if (AcceptsIncoming(peer))
             {
-                await output.WriteAsync(new Frame { Hello = role }, stop);
+                await output.WriteAsync(new Frame { Hello = name }, stop);
             }
 
             lock (linkChanges)
@@ -180,7 +221,7 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
 
     private void UpdateLinkReadiness()
     {
-        bool complete = links.Count == Topology.Degree(role);
+        bool complete = expectedPeers.All(links.ContainsKey);
         if (complete == linksReady)
         {
             return;

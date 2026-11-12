@@ -10,9 +10,9 @@
 
 Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目录运行它。开发环境使用本机游戏进程及下文的数据库、ZooKeeper 隧道。打开窗口和查看已有日志可以离线进行。使用 `-Check` 可验证控制台能否加载。
 
-- **启动服务器** 按 [进程列表](code/server/config/processes.json) 拉起实例。再次执行会补起缺少的进程。双击 **关闭服务器** 后勾选本次要关闭的实例。关闭控制台窗口后服务器继续运行，下次打开可继续管理。
+- **启动服务器** 按 [进程数量配置](code/server/config/processes.json) 拉起各类型的全部实例。再次执行会按本组配置快照补起缺少的进程。配置格式、实例命名与就绪条件见 [服务器组配置](docs/服务器组配置.md)。双击 **关闭服务器** 后勾选本次要关闭的实例。关闭控制台窗口后服务器继续运行，下次打开可继续管理。
 - **导出 Protobuf** 生成协议 C# 源码。**编译服务器 C#** 构建服务端工程。**编译并重启** 在构建成功后切换到新一轮进程，编译失败时可在命令输出中查看原因。
-- 右栏保留包括 GM 在内的八个进程页签。可以滚动或搜索进程名、PID 切换实例。绿点表示当前实例的 SinglePoint 已完成初始化，并且所需连接齐备。关闭某个实例后，其直接邻居会显示连接不全，重新连通后恢复绿色。
+- 右栏为每个配置实例创建独立页签。可以滚动或搜索进程名、PID 切换实例。绿点表示当前实例的 SinglePoint 已完成初始化，并且所依赖类型的全部配置实例连接齐备。关闭某个实例后，其直接邻居会显示连接不全，重新连通后恢复绿色。
 - 各页签保留最近 1000 行。按 `Ctrl+F` 搜索，`F3` 和 `Shift+F3` 跳到下一条、上一条匹配日志，也可勾选“仅匹配行”来过滤显示。清空显示后继续接收新日志，磁盘上的滚动日志可用于复盘。
 
 ### 项目配置与用户配置
@@ -20,7 +20,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 | 范围 | 保存位置 | 内容 |
 | --- | --- | --- |
 | 项目 | [控制台配置](tools/server-console/project.json) | `environmentName` 是左栏显示的环境名称。`commands` 决定可用命令和显示顺序。可选值为 `Start`、`Stop`、`ExportProtobuf`、`Build`、`BuildAndRestart`。 |
-| 项目 | [服务端进程列表](code/server/config/processes.json) | 控制台和联通验收共用的角色与启动顺序。 |
+| 项目 | [服务端进程数量](code/server/config/processes.json) | 服务器、控制台和联通验收共用的类型与实例数量；新运行组保存配置快照。 |
 | 用户 | `%LOCALAPPDATA%\TGame\ServerConsole\<工作目录标识>\user.json` | 关闭窗口时保存尺寸、最大化状态、当前页签，以及各进程的搜索词、仅匹配行和跟踪最新选项。每个 Windows 账户和工作目录分别保存。 |
 
 项目配置随 Git 提交，下次打开控制台时生效。个人设置在本机自动生成。测试凭据继续取自环境变量或 `.local/secrets/cloud.env`，实际进程状态由控制台从运行实例和日志重新读取。
@@ -29,7 +29,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 ## Ping/Pong 联通验证
 
-在项目根目录运行以下命令。第一条启动云测试环境的 SSH 隧道，第二条构建共享协议、服务端和独立探测客户端，启动 Gate、GM、Login、Base、Scene、Router、DBMgr、Profile 各一个本地进程，再运行客户端完成验收。
+在项目根目录运行以下命令。第一条启动云测试环境的 SSH 隧道，第二条构建共享协议、服务端和独立探测客户端，按数量配置启动本组实例（默认 Gate、GM、Login、Base、Scene、Router、DBMgr、Profile 各一个），再运行客户端完成验收。
 
 ```powershell
 .\tools\scripts\Start-EnvironmentTunnel.bat
@@ -38,13 +38,15 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 需要仓库指定的 .NET SDK、PowerShell 7.4+、本机 ASP.NET Core 开发证书（可用 `dotnet dev-certs https` 创建）及 MongoDB、Redis 测试账号密码。设置 `TGAME_MONGO_TEST_PASSWORD`、`TGAME_REDIS_TEST_PASSWORD`，或使用本机 `.local/secrets/cloud.env` 中的 `MONGO_TEST_PASSWORD`、`REDIS_TEST_PASSWORD`。首次构建需还原 NuGet 包。每个进程监听随机回环端口，在 ZooKeeper 的 `/tgame/test` 下注册本轮专用临时节点并读取地址。测试客户端用同一条 WSS 连接发送二进制 Protobuf，并校验本机 Gate 证书指纹。
 
-验收程序跑两轮常规探针，按请求 ID 核对每一跳的收发及复用的 9 条 gRPC 双向流。普通 DBMgr 消息走 Router，存盘探针走 Base 的专线并执行 MongoDB `ping`。协议源文件见 [pingpong.proto](code/shared/protocols/pingpong.proto)。
+验收程序跑两轮常规探针，按请求 ID 核对每一跳的收发及复用的 gRPC 双向流（默认配置为 9 条）。普通 DBMgr 消息走 Router，存盘探针走 Base 的专线并执行 MongoDB `ping`。协议源文件见 [pingpong.proto](code/shared/protocols/pingpong.proto)。
 
 每个服务进程按类声明上的 `SinglePointFor` 标注创建本进程的 SinglePoint。`SINGLE_POINT_INIT` 与 `SINGLE_POINT_READY` 记录角色初始化的开始与成功，均带实际类名和 EntityId。`LINKS_READY` 单独记录连接齐备。八个 SinglePoint 会分别收到定向探针，五种 Game 进程和 GM 会核对 Router 的位置登记。
 
+正常初始化只登记 SinglePoint 自身生成的 EntityId。Router 只接受非空、无重复的 GUID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。联通脚本从本轮启动日志读取实际 EntityId 来生成测试用例，正式流程不再登记或依赖固定的测试 ID，旧版固定 ID 请求也不再接受。
+
 Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[测试存储地址](code/server/config/storage.test.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
 
-服务进程直接写入 `logs/server/<进程类型>Server/`，例如 `logs/server/BaseServer/` 和 `logs/server/GMServer/`。每行是一条 JSON 事件，可按 `runId`、`pid`、请求 `id` 查询。每个实例使用 `<运行ID>-<PID>-yyyyMMddHH.log`，按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
+服务进程直接写入 `logs/server/<实例名称>Server/`，例如 `logs/server/BaseServer/` 和 `logs/server/GMServer/`。每行是一条 JSON 事件，可按 `runId`、`pid`、请求 `id` 查询。每个实例使用 `<运行ID>-<PID>-yyyyMMddHH.log`，按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
 
 验收材料在 `logs/tools/pingpong/<运行ID>/`。`result.log` 汇总链路和协议验证结果，`server-logs.json` 定位本轮服务日志，`Client.log` 是测试客户端输出。服务进程的致命异常以 `PROCESS_FAILED` 记录，启动器捕获的原始标准错误保存在验收目录的 `<角色>.stderr.log`。成功末行为 `PASS processes=8 grpc_links=9 wss_sessions=1 rounds=2 pong=25 mongo_ping=2 gm_http=5`。失败返回非零退出码。已有旧版验收目录仍可通过 `Test-PingPongLogs.ps1 -RunDirectory <目录>` 复核。
 

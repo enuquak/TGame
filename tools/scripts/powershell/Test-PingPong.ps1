@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([switch]$Hold)
+param([switch]$Hold, [string]$Configuration)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Import-ServerTypes.ps1')
@@ -90,7 +90,23 @@ try
         $gmActor = 'local-smoke'
     }
 
-    $roles = @(Get-Content -Raw -LiteralPath 'code/server/config/processes.json' | ConvertFrom-Json)
+    if (!$Configuration)
+    {
+        $Configuration = Join-Path $root 'code/server/config/processes.json'
+    }
+
+    $groupFile = Join-Path $runDir ([TGame.ServerRunFiles]::GroupConfiguration)
+    Copy-Item -LiteralPath $Configuration -Destination $groupFile
+    $instances = @(& "$PSScriptRoot/Read-ServerGroup.ps1" -Path $groupFile)
+    $roles = @($instances.Name)
+    foreach ($required in [Enum]::GetNames([TGame.ProcessType]))
+    {
+        if ($required -cnotin $roles)
+        {
+            throw "The full protocol smoke test requires at least one $required instance."
+        }
+    }
+
     @{
         runId = $runId
         serverRoot = [IO.Path]::GetRelativePath($runDir,$serverRoot)
@@ -100,6 +116,7 @@ try
 
     foreach ($role in $roles)
     {
+        $processRole = ($instances | Where-Object Name -CEQ $role).Role
         $launch = @{
             FilePath = $dotnet
             ArgumentList = ('"{0}" {1} "{2}"' -f $serverDll,$role,$runDir)
@@ -114,18 +131,18 @@ try
             }
         }
 
-        if ($role -eq $gmRole)
+        if ($processRole -eq $gmRole)
         {
             $launch.Environment[[TGame.ServerEnvironment]::GMToken] = $gmToken
             $launch.Environment[[TGame.ServerEnvironment]::GMOperator] = $gmActor
         }
 
-        if ($role -eq $dbMgrRole)
+        if ($processRole -eq $dbMgrRole)
         {
             $launch.Environment[[TGame.ServerEnvironment]::MongoTestPassword] = $password
         }
 
-        if ($role -eq $profileRole)
+        if ($processRole -eq $profileRole)
         {
             $launch.Environment[[TGame.ServerEnvironment]::MongoTestPassword] = $password
             $launch.Environment[[TGame.ServerEnvironment]::RedisTestPassword] = $redisPassword
@@ -166,27 +183,38 @@ try
     }
     while ($true)
 
+    $pointIds = @{}
+    foreach ($role in $roles)
+    {
+        $point = @(& $readLog $runDir $role -Event ([TGame.ServerLogEvents]::SinglePointInit))
+        if ($point.Count -ne 1 -or $point[0].entity -cnotmatch '^[0-9a-f]{32}$')
+        {
+            throw "Expected one startup Entity in $role."
+        }
+
+        $pointIds[$role] = $point[0].entity
+    }
+
     $cases = @(foreach ($round in 1..2)
         {
             foreach ($route in @(
-                "$loginRole login-1"
-                "$baseRole body-1"
-                "$baseRole,$routerRole,$sceneRole soul-1"
-                "$loginRole,$routerRole,$sceneRole soul-1"
-                "$baseRole,$routerRole,$dbMgrRole db-probe-1"
-                "$baseRole,$dbMgrRole db-probe-1"
+                $loginRole
+                $baseRole
+                "$baseRole,$routerRole,$sceneRole"
+                "$loginRole,$routerRole,$sceneRole"
+                "$baseRole,$routerRole,$dbMgrRole"
+                "$baseRole,$dbMgrRole"
             ))
             {
-                $tail,$entity = $route.Split(' ')
+                $path = @(([TGame.ServerPeerNames]::Client), $gateRole) + $route.Split(',')
                 [pscustomobject]@{
                     Id = [guid]::NewGuid().ToString('N')
-                    Entity = $entity
-                    Path = @(([TGame.ServerPeerNames]::Client), $gateRole) + $tail.Split(',')
-                    Storage = ($tail -eq "$baseRole,$dbMgrRole")
+                    Entity = $pointIds[$path[-1]]
+                    Path = $path
+                    Storage = ($route -eq "$baseRole,$dbMgrRole")
                 }
             }
         })
-    $pointIds = @{}
 
     foreach ($route in @(
         $gateRole
@@ -200,17 +228,9 @@ try
     ))
     {
         $path = @(([TGame.ServerPeerNames]::Client)) + $route.Split(',')
-        $role = $path[-1]
-        $point = @(& $readLog $runDir $role -Event ([TGame.ServerLogEvents]::SinglePointInit))
-        if ($point.Count -ne 1 -or $point[0].entity -cnotmatch '^[0-9a-f]{32}$')
-        {
-            throw "Expected one startup Entity in $role."
-        }
-
-        $pointIds[$role] = $point[0].entity
         $cases += [pscustomobject]@{
             Id = [guid]::NewGuid().ToString('N')
-            Entity = $point[0].entity
+            Entity = $pointIds[$path[-1]]
             Path = $path
             Storage = $false
         }

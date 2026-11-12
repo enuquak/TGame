@@ -12,10 +12,28 @@ using TGame.Server.Logic;
 
 const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
+const string LegacyProbeEntityId = "body-1";
 
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
 var stop = deadline.Token;
-var loginNode = new ServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint());
+var group = new ServerGroup(Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1));
+
+await GroupChecks.RunAsync(stop);
+
+foreach (var processType in Enum.GetValues<ProcessType>())
+{
+    var registeredIds = new List<string>();
+    var singlePoint = new WaitingSinglePoint();
+    singlePoint.Release.SetResult();
+
+    await singlePoint.InitializeAsync(processType.ToString(), registeredIds.Add, Task.CompletedTask, stop);
+    if (registeredIds.Count != 1 || registeredIds[0] != singlePoint.State.EntityId)
+    {
+        throw new Exception($"{processType} initialization registered IDs other than its own EntityId.");
+    }
+}
+
+var loginNode = new ServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint(), group);
 var loginInit = loginNode.InitializeAsync(stop);
 var router = new FrameStream();
 var routerLink = Open(loginNode, nameof(ProcessType.Router), router);
@@ -71,7 +89,7 @@ router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
 
 var point = new WaitingSinglePoint();
-var gate = new ServerNode(nameof(ProcessType.Gate), point);
+var gate = new ServerNode(nameof(ProcessType.Gate), point, group);
 var initialization = gate.InitializeAsync(stop);
 if (point.Started.Task.IsCompleted)
 {
@@ -123,17 +141,106 @@ if (cancelling.Initialized)
     throw new Exception("Cancelled SinglePoint became ready.");
 }
 
-var routes = new ServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint());
+var routes = new ServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint(), group);
 var routerInit = routes.InitializeAsync(stop);
-var neighbors = Topology.Dials.Where(row => row.Value.Contains(nameof(ProcessType.Router))).ToDictionary(row => row.Key, _ => new FrameStream());
-var routing = Task.WhenAll(neighbors.Select(pair =>
+var duplicateEntityId = Guid.NewGuid().ToString("N");
+string[][] invalidRegistrations = [[], [LegacyProbeEntityId], [duplicateEntityId, duplicateEntityId]];
+foreach (var ids in invalidRegistrations)
 {
-    string[] ids = Topology.Entities.TryGetValue(pair.Key, out var id) ? [id] : [Guid.NewGuid().ToString("N")];
-    return Open(routes, pair.Key, pair.Value, ids);
-}));
+    try
+    {
+        await Open(routes, nameof(ProcessType.Base), new FrameStream(), ids).WaitAsync(stop);
+        throw new Exception("Router accepted an empty, non-GUID or duplicate entity registration.");
+    }
+    catch (RpcException error) when (error.StatusCode == StatusCode.InvalidArgument)
+    {
+    }
+}
+
+var neighbors = new Dictionary<string, FrameStream>();
+var neighborIds = new Dictionary<string, string>();
+foreach (var pair in Topology.Dials)
+{
+    if (!pair.Value.Contains(nameof(ProcessType.Router)))
+    {
+        continue;
+    }
+
+    neighbors.Add(pair.Key, new FrameStream());
+    neighborIds.Add(pair.Key, Guid.NewGuid().ToString("N"));
+}
+
+var routeTasks = new List<Task>();
+foreach (var pair in neighbors)
+{
+    routeTasks.Add(Open(routes, pair.Key, pair.Value, [neighborIds[pair.Key]]));
+}
+
+var routing = Task.WhenAll(routeTasks);
 await routerInit.WaitAsync(stop);
+foreach (var stream in neighbors.Values)
+{
+    var reply = await stream.Output.Reader.ReadAsync(stop);
+    if (reply.Hello != nameof(ProcessType.Router))
+    {
+        throw new Exception("Router did not acknowledge a GUID-only registration.");
+    }
+}
+
 var baseRoute = neighbors[nameof(ProcessType.Base)];
-await baseRoute.Output.Reader.ReadAsync(stop); // handshake reply
+var profileRoute = neighbors[nameof(ProcessType.Profile)];
+var publish = new ProfileRequest
+{
+    RequestId = Guid.NewGuid().ToString("N"),
+    Publish = new EntitySummary
+    {
+        EntityId = neighborIds[nameof(ProcessType.Base)],
+        DisplayName = ProfileProbeData.DisplayName,
+        Title = ProfileProbeData.Title
+    }
+};
+baseRoute.Input.Writer.TryWrite(new Frame { ProfileRequest = publish });
+var forwarded = await profileRoute.Output.Reader.ReadAsync(stop);
+if (forwarded.ProfileRequest?.RequestId != publish.RequestId || forwarded.ProfileRequest.Publish?.EntityId != publish.Publish.EntityId)
+{
+    throw new Exception("Router did not forward an owned GUID entity to the Profile role.");
+}
+
+profileRoute.Input.Writer.TryWrite(new Frame
+{
+    ProfileReply = new ProfileReply
+    {
+        RequestId = publish.RequestId,
+        EntityId = publish.Publish.EntityId,
+        Result = ProfileReply.Types.Result.Stored
+    }
+});
+var published = (await baseRoute.Output.Reader.ReadAsync(stop)).ProfileReply;
+if (published?.RequestId != publish.RequestId || published.EntityId != publish.Publish.EntityId || published.Result != ProfileReply.Types.Result.Stored)
+{
+    throw new Exception("Profile reply did not return to the owner of the GUID entity.");
+}
+
+var foreignPublish = publish.Clone();
+foreignPublish.RequestId = Guid.NewGuid().ToString("N");
+foreignPublish.Publish.EntityId = neighborIds[nameof(ProcessType.Scene)];
+await ExpectProfileRejected(nameof(ProcessType.Base), foreignPublish);
+await ExpectProfileRejected(nameof(ProcessType.Base), new ProfileRequest
+{
+    RequestId = Guid.NewGuid().ToString("N"),
+    Withdraw = neighborIds[nameof(ProcessType.Scene)]
+});
+await ExpectProfileRejected(nameof(ProcessType.Base), new ProfileRequest
+{
+    RequestId = Guid.NewGuid().ToString("N"),
+    Fetch = LegacyProbeEntityId
+});
+await ExpectProfileRejected(nameof(ProcessType.GM), new ProfileRequest
+{
+    RequestId = Guid.NewGuid().ToString("N"),
+    Fetch = neighborIds[nameof(ProcessType.Base)]
+});
+
 var missing = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = Guid.NewGuid().ToString("N"), Entry = nameof(ProcessType.Base) };
 baseRoute.Input.Writer.TryWrite(new Frame { Ping = missing });
 var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).Pong;
@@ -148,8 +255,24 @@ foreach (var stream in neighbors.Values)
 }
 
 await routing.WaitAsync(stop);
-Console.WriteLine("PASS handshake retry, direct Profile RPC, delayed initialization, WSS/gRPC gating, cancellation, disconnect and missing entity");
+Console.WriteLine("PASS GUID-only initialization and registration, Profile routing and authorization, handshake retry, WSS/gRPC gating, cancellation, disconnect and missing entity");
 return 0;
+
+async Task ExpectProfileRejected(string peer, ProfileRequest request)
+{
+    var stream = neighbors[peer];
+    stream.Input.Writer.TryWrite(new Frame { ProfileRequest = request });
+    var reply = (await stream.Output.Reader.ReadAsync(stop)).ProfileReply;
+    if (reply?.RequestId != request.RequestId || reply.Result != ProfileReply.Types.Result.Rejected || !routes.Ready)
+    {
+        throw new Exception("Profile accepted an invalid subject, foreign mutation or unauthorized caller.");
+    }
+
+    if (profileRoute.Output.Reader.TryRead(out _))
+    {
+        throw new Exception("Rejected Profile request reached the Profile service.");
+    }
+}
 
 Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null)
 {
