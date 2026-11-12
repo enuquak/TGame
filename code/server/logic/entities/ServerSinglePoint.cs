@@ -24,10 +24,6 @@ internal abstract class ServerSinglePoint
         {
             stop.ThrowIfCancellationRequested();
             registerEntity(State.EntityId);
-            if (Topology.Entities.TryGetValue(role, out var probeEntity))
-            {
-                registerEntity(probeEntity);
-            }
 
             await firstLinks.WaitAsync(stop);
             await InitializeRoleAsync(stop);

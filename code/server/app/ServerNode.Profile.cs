@@ -48,7 +48,7 @@ internal sealed partial class ServerNode
         }
 
         if (!Guid.TryParseExact(request.RequestId, "N", out _) || subject.Length is 0 or > MaxProfileEntityIdLength ||
-            !(Guid.TryParseExact(subject, "N", out _) || Topology.Entities.ContainsValue(subject)) ||
+            !Guid.TryParseExact(subject, "N", out _) ||
             (request.Publish is { } summary && (string.IsNullOrWhiteSpace(summary.DisplayName) ||
                 summary.DisplayName.Length > MaxProfileTextLength || summary.Title.Length > MaxProfileTextLength)))
         {
@@ -57,18 +57,15 @@ internal sealed partial class ServerNode
 
         if (role == nameof(ProcessType.Router))
         {
-            if (!Topology.Entities.ContainsKey(from) ||
+            bool canAccessProfiles = from is nameof(ProcessType.Login) or nameof(ProcessType.Base) or nameof(ProcessType.Scene)
+                or nameof(ProcessType.DBMgr) or nameof(ProcessType.Profile);
+            if (!canAccessProfiles ||
                 (request.OperationCase != ProfileRequest.OperationOneofCase.Fetch && owners.GetValueOrDefault(subject) != from))
             {
                 return Failure(Result.Rejected);
             }
 
-            if (!owners.TryGetValue(Topology.Entities[nameof(ProcessType.Profile)], out var owner))
-            {
-                return Failure(Result.Unavailable);
-            }
-
-            return await ForwardProfileAsync(owner, request, stop);
+            return await ForwardProfileAsync(nameof(ProcessType.Profile), request, stop);
         }
 
         if (singlePoint is not ProfileServerSinglePoint profile || from != nameof(ProcessType.Router))

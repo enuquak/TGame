@@ -74,7 +74,8 @@ foreach ($role in $expectedRoles)
         $type = 'BaseServerSinglePoint'
     }
 
-    if (!$type -or $id -cnotmatch '^[0-9a-f]{32}$' -or $routes.Count -ne [int]$routed -or $probes.Count -ne 1)
+    # Multiple route cases may now target the same real SinglePoint.
+    if (!$type -or $id -cnotmatch '^[0-9a-f]{32}$' -or $routes.Count -ne [int]$routed -or $probes.Count -lt 1)
     {
         throw "Incomplete SinglePoint initialization, registration or probe evidence for $role."
     }

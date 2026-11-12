@@ -31,8 +31,8 @@ internal sealed partial class ServerNode
 
         var gateLocal = ping.Entry == nameof(ProcessType.Gate) && role == nameof(ProcessType.Gate) && ping.EntityId == singlePoint.State.EntityId;
         if (!Guid.TryParseExact(ping.RequestId, "N", out _) || (!gateLocal && ping.Entry is not (nameof(ProcessType.Base) or nameof(ProcessType.Login)))
-            || !(Topology.Entities.ContainsValue(ping.EntityId) || Guid.TryParseExact(ping.EntityId, "N", out _))
-            || (ping.Storage && (ping.EntityId != Topology.Entities[nameof(ProcessType.DBMgr)] || ping.Entry != nameof(ProcessType.Base))))
+            || !Guid.TryParseExact(ping.EntityId, "N", out _)
+            || (ping.Storage && ping.Entry != nameof(ProcessType.Base)))
         {
             throw new InvalidDataException("Invalid ping.");
         }

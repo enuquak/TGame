@@ -166,27 +166,38 @@ try
     }
     while ($true)
 
+    $pointIds = @{}
+    foreach ($role in $roles)
+    {
+        $point = @(& $readLog $runDir $role -Event ([TGame.ServerLogEvents]::SinglePointInit))
+        if ($point.Count -ne 1 -or $point[0].entity -cnotmatch '^[0-9a-f]{32}$')
+        {
+            throw "Expected one startup Entity in $role."
+        }
+
+        $pointIds[$role] = $point[0].entity
+    }
+
     $cases = @(foreach ($round in 1..2)
         {
             foreach ($route in @(
-                "$loginRole login-1"
-                "$baseRole body-1"
-                "$baseRole,$routerRole,$sceneRole soul-1"
-                "$loginRole,$routerRole,$sceneRole soul-1"
-                "$baseRole,$routerRole,$dbMgrRole db-probe-1"
-                "$baseRole,$dbMgrRole db-probe-1"
+                $loginRole
+                $baseRole
+                "$baseRole,$routerRole,$sceneRole"
+                "$loginRole,$routerRole,$sceneRole"
+                "$baseRole,$routerRole,$dbMgrRole"
+                "$baseRole,$dbMgrRole"
             ))
             {
-                $tail,$entity = $route.Split(' ')
+                $path = @(([TGame.ServerPeerNames]::Client), $gateRole) + $route.Split(',')
                 [pscustomobject]@{
                     Id = [guid]::NewGuid().ToString('N')
-                    Entity = $entity
-                    Path = @(([TGame.ServerPeerNames]::Client), $gateRole) + $tail.Split(',')
-                    Storage = ($tail -eq "$baseRole,$dbMgrRole")
+                    Entity = $pointIds[$path[-1]]
+                    Path = $path
+                    Storage = ($route -eq "$baseRole,$dbMgrRole")
                 }
             }
         })
-    $pointIds = @{}
 
     foreach ($route in @(
         $gateRole
@@ -200,17 +211,9 @@ try
     ))
     {
         $path = @(([TGame.ServerPeerNames]::Client)) + $route.Split(',')
-        $role = $path[-1]
-        $point = @(& $readLog $runDir $role -Event ([TGame.ServerLogEvents]::SinglePointInit))
-        if ($point.Count -ne 1 -or $point[0].entity -cnotmatch '^[0-9a-f]{32}$')
-        {
-            throw "Expected one startup Entity in $role."
-        }
-
-        $pointIds[$role] = $point[0].entity
         $cases += [pscustomobject]@{
             Id = [guid]::NewGuid().ToString('N')
-            Entity = $point[0].entity
+            Entity = $pointIds[$path[-1]]
             Path = $path
             Storage = $false
         }

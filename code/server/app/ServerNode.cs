@@ -74,11 +74,14 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
         IAsyncStreamWriter<Frame> output, CancellationToken stop)
     {
         var link = new PeerLink(role, peer, id, output);
-        var probeEntity = Topology.Entities.GetValueOrDefault(peer);
-        if (role == nameof(ProcessType.Router) && (entities.Length == 0 || (probeEntity != null && !entities.Contains(probeEntity)) ||
-            entities.Distinct().Count() != entities.Length || entities.Any(entity => entity != probeEntity && !Guid.TryParseExact(entity, "N", out _))))
+        if (role == nameof(ProcessType.Router))
         {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid entity registration from {peer}."));
+            bool hasInvalidIds = entities.Any(entity => !Guid.TryParseExact(entity, "N", out _));
+            bool hasDuplicateIds = entities.Distinct().Count() != entities.Length;
+            if (entities.Length == 0 || hasInvalidIds || hasDuplicateIds)
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid entity registration from {peer}."));
+            }
         }
 
         if (!await input.MoveNext(stop) || input.Current.Hello != peer)
