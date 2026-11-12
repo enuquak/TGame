@@ -57,6 +57,20 @@ if ($points.Count -gt 1 -and (@($points.entity | Sort-Object -Unique).Count -ne 
     throw 'Expected distinct process Entity IDs and classes.'
 }
 
+$instances = @(foreach ($name in $roles)
+    {
+        $type = $name
+        $point = $points | Where-Object ([TGame.ServerLogFields]::Instance) -CEQ $name | Select-Object -First 1
+        if ($point)
+        {
+            $type = $point.role
+        }
+
+        # Historical single-instance runs can have no SinglePoint records at all.
+        [pscustomobject]@{ Name = $name; Role = $type }
+    })
+$routerCount = @($instances | Where-Object Role -EQ ([TGame.ProcessType]::Router.ToString())).Count
+
 foreach ($role in $expectedRoles)
 {
     $point = @($points | Where-Object ([TGame.ServerLogFields]::Instance) -eq $role)
@@ -76,7 +90,6 @@ foreach ($role in $expectedRoles)
     }
 
     # Multiple route cases may now target the same real SinglePoint.
-    $routerCount = @($points | Where-Object role -EQ ([TGame.ProcessType]::Router.ToString())).Count
     $requiresProbe = $role -ceq $point[0].role
     if (!$type -or $id -cnotmatch '^[0-9a-f]{32}$' -or $routes.Count -ne ([int]$routed * $routerCount) -or ($requiresProbe -and $probes.Count -lt 1))
     {
@@ -147,11 +160,11 @@ $typePairs = $pairs
 $pairs = @(foreach ($pair in $typePairs)
     {
         $leftType, $rightType = $pair.Split(' ')
-        foreach ($leftPoint in ($points | Where-Object role -EQ $leftType))
+        foreach ($leftPoint in ($instances | Where-Object Role -EQ $leftType))
         {
-            foreach ($rightPoint in ($points | Where-Object role -EQ $rightType))
+            foreach ($rightPoint in ($instances | Where-Object Role -EQ $rightType))
             {
-                "$($leftPoint.instance) $($rightPoint.instance)"
+                "$($leftPoint.Name) $($rightPoint.Name)"
             }
         }
     })
