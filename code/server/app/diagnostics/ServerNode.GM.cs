@@ -12,7 +12,7 @@ internal sealed partial class ServerNode
         var expectedSender = role == nameof(ProcessType.Router) ? nameof(ProcessType.GM) : nameof(ProcessType.Router);
         if (!Guid.TryParseExact(ping.RequestId, "N", out _) || !Guid.TryParseExact(ping.EntityId, "N", out _) ||
             ping.Storage || ping.ProfileProbe != Ping.Types.ProfileProbe.None ||
-            from != expectedSender)
+            PeerRole(from) != expectedSender)
         {
             throw new InvalidDataException("Invalid GM ping or ingress.");
         }

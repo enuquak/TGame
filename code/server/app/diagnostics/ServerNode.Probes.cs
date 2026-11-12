@@ -19,6 +19,7 @@ internal sealed partial class ServerNode
 
     private async Task<Pong> RouteAsync(string from, Ping ping, CancellationToken stop)
     {
+        var fromRole = PeerRole(from);
         if (!Ready)
         {
             return Unavailable(ping);
@@ -41,7 +42,7 @@ internal sealed partial class ServerNode
         {
             if (ping.Storage)
             {
-                if (from != nameof(ProcessType.Base) || singlePoint is not DBMgrServerSinglePoint db)
+                if (fromRole != nameof(ProcessType.Base) || singlePoint is not DBMgrServerSinglePoint db)
                 {
                     throw new InvalidDataException("Storage probe did not use the dedicated link.");
                 }
@@ -61,9 +62,9 @@ internal sealed partial class ServerNode
 
         string? target = role switch
         {
-            nameof(ProcessType.Gate) when from == ServerPeerNames.Client => ping.Entry,
-            nameof(ProcessType.Base) when from == nameof(ProcessType.Gate) && ping.Storage => nameof(ProcessType.DBMgr),
-            nameof(ProcessType.Base) or nameof(ProcessType.Login) when from == nameof(ProcessType.Gate) => nameof(ProcessType.Router),
+            nameof(ProcessType.Gate) when fromRole == ServerPeerNames.Client => ping.Entry,
+            nameof(ProcessType.Base) when fromRole == nameof(ProcessType.Gate) && ping.Storage => nameof(ProcessType.DBMgr),
+            nameof(ProcessType.Base) or nameof(ProcessType.Login) when fromRole == nameof(ProcessType.Gate) => nameof(ProcessType.Router),
             nameof(ProcessType.Router) when !ping.Storage => owners.GetValueOrDefault(ping.EntityId),
             _ => throw new InvalidDataException($"No route from {from} through {role} to {ping.EntityId}.")
         };

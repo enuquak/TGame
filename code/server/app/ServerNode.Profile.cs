@@ -57,7 +57,7 @@ internal sealed partial class ServerNode
 
         if (role == nameof(ProcessType.Router))
         {
-            bool canAccessProfiles = from is nameof(ProcessType.Login) or nameof(ProcessType.Base) or nameof(ProcessType.Scene)
+            bool canAccessProfiles = PeerRole(from) is nameof(ProcessType.Login) or nameof(ProcessType.Base) or nameof(ProcessType.Scene)
                 or nameof(ProcessType.DBMgr) or nameof(ProcessType.Profile);
             if (!canAccessProfiles ||
                 (request.OperationCase != ProfileRequest.OperationOneofCase.Fetch && owners.GetValueOrDefault(subject) != from))
@@ -68,7 +68,7 @@ internal sealed partial class ServerNode
             return await ForwardProfileAsync(nameof(ProcessType.Profile), request, stop);
         }
 
-        if (singlePoint is not ProfileServerSinglePoint profile || from != nameof(ProcessType.Router))
+        if (singlePoint is not ProfileServerSinglePoint profile || PeerRole(from) != nameof(ProcessType.Router))
         {
             return Failure(Result.Rejected);
         }

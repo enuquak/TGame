@@ -1,14 +1,21 @@
 using System.Diagnostics;
+using System.Text.Json;
 using TGame;
 using TGame.ServerConsole;
 
 // Run against a disposable checkout so a developer's live servers are never stopped.
-if (args is not [var checkout] || !File.Exists(Path.Combine(checkout, ".console-check")))
+if (args is not [var checkout, ..] || args.Length > 2 || !File.Exists(Path.Combine(checkout, ".console-check")))
 {
     throw new ArgumentException("Expected a disposable checkout created by Test-ServerConsole.ps1.");
 }
 
 ConfigChecks.Run(checkout);
+GroupConfigChecks.Run(checkout);
+if (args.Length == 2 && args[1] == "--config-only")
+{
+    return;
+}
+
 LogChecks.Run(checkout);
 using var session = new ConsoleSession(checkout);
 session.Output += Console.WriteLine;
@@ -22,29 +29,29 @@ try
 
     await session.StartAsync();
     await UntilAsync("all SinglePoints ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
-    var pids = session.Instances.ToDictionary(i => i.Role, i => i.Pid);
+    var pids = session.Instances.ToDictionary(i => i.Name, i => i.Pid);
     using (var reopened = new ConsoleSession(checkout))
     {
         reopened.Refresh();
-        if (reopened.Instances.Any(i => i.Status != ServerStatus.Ready || pids[i.Role] != i.Pid))
+        if (reopened.Instances.Any(i => i.Status != ServerStatus.Ready || pids[i.Name] != i.Pid))
         {
             throw new InvalidOperationException("Reopening the console lost the active instance or its status.");
         }
     }
 
-    var selected = session.Instances.Single(i => i.Role == nameof(ProcessType.Base));
+    var selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
     await session.StopAsync([selected]);
     await UntilAsync("Base stopped, Gate still running with a missing link", () =>
         selected.Status == ServerStatus.Stopped &&
-        session.Instances.Single(i => i.Role == nameof(ProcessType.Gate)).Status == ServerStatus.Disconnected);
+        session.Instances.Single(i => i.Name == nameof(ProcessType.Gate)).Status == ServerStatus.Disconnected);
     await session.StartAsync();
     await UntilAsync("Base rejoined", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
-    if (selected.Pid == pids[nameof(ProcessType.Base)] || session.Instances.Any(i => i.Role != nameof(ProcessType.Base) && i.Pid != pids[i.Role]))
+    if (selected.Pid == pids[selected.Name] || session.Instances.Any(i => i.Name != selected.Name && i.Pid != pids[i.Name]))
     {
         throw new InvalidOperationException("Restoring Base disturbed another instance.");
     }
 
-    var gm = session.Instances.Single(i => i.Role == nameof(ProcessType.GM));
+    var gm = session.Instances.Single(i => i.Name == nameof(ProcessType.GM));
     await session.StopAsync([gm]);
     var originalToken = Environment.GetEnvironmentVariable(ServerEnvironment.GMToken);
     try
@@ -67,7 +74,7 @@ try
     // A compiler error must leave the running group and its PID associations intact.
     var broken = Path.Combine(checkout, "code/server/app/BrokenCheck.cs");
     await File.WriteAllTextAsync(broken, "#error ServerConsole.Check");
-    pids = session.Instances.ToDictionary(i => i.Role, i => i.Pid);
+    pids = session.Instances.ToDictionary(i => i.Name, i => i.Pid);
     bool rejected = false;
     try
     {
@@ -84,13 +91,36 @@ try
     }
 
     session.Refresh();
-    if (!rejected || session.Instances.Any(i => i.Status != ServerStatus.Ready || i.Pid != pids[i.Role]))
+    if (!rejected || session.Instances.Any(i => i.Status != ServerStatus.Ready || i.Pid != pids[i.Name]))
     {
         throw new InvalidOperationException("A failed build disrupted the running group.");
     }
 
+    var configuration = Path.Combine(checkout, ServerGroup.ConfigurationPath);
+    var counts = JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(configuration))!;
+    int expectedInstances = session.Instances.Count + 1;
+    counts[nameof(ProcessType.Login)]++;
+    File.WriteAllText(configuration, JsonSerializer.Serialize(counts));
+    bool instancesChanged = false;
+    session.InstancesChanged += () => instancesChanged = true;
+
     await session.BuildAsync(restart: true);
-    await UntilAsync("new group ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready && i.Pid != pids[i.Role]));
+    await UntilAsync("new group ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready &&
+        (!pids.TryGetValue(i.Name, out var oldPid) || i.Pid != oldPid)));
+    if (!instancesChanged || session.Instances.Count != expectedInstances)
+    {
+        throw new InvalidOperationException("Starting a new group did not apply the edited process counts.");
+    }
+
+    using (var reopened = new ConsoleSession(checkout))
+    {
+        reopened.Refresh();
+        if (reopened.Instances.Count != expectedInstances || reopened.Instances.Any(i => i.Status != ServerStatus.Ready))
+        {
+            throw new InvalidOperationException("Reopening lost the resized group's configuration snapshot.");
+        }
+    }
+
     Console.WriteLine($"PASS {session.Instances.Count} instances, export, selective stop, recovery, attach and build/restart.");
 }
 finally

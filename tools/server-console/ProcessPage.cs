@@ -6,7 +6,7 @@ namespace TGame.ServerConsole;
 internal sealed class ProcessPage(ServerInstance instance) : INotifyPropertyChanged
 {
     public ServerInstance Instance { get; } = instance;
-    public string Role => Instance.Role;
+    public string Role => Instance.Name;
     public int? Pid { get; private set; } = instance.Pid;
     public string Status { get; private set; } = instance.Status;
     public string PidLabel => $"PID {Pid?.ToString() ?? "—"}";
