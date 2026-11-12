@@ -15,14 +15,5 @@ internal static class Topology
         [nameof(ProcessType.Router)] = []
     };
 
-    public static readonly Dictionary<string, string> Entities = new()
-    {
-        [nameof(ProcessType.Login)] = "login-1",
-        [nameof(ProcessType.Base)] = "body-1",
-        [nameof(ProcessType.Scene)] = "soul-1",
-        [nameof(ProcessType.DBMgr)] = "db-probe-1",
-        [nameof(ProcessType.Profile)] = "profile-1"
-    };
-
     public static int Degree(string role) => Dials[role].Length + Dials.Values.Count(v => v.Contains(role));
 }
