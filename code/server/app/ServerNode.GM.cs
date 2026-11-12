@@ -1,0 +1,60 @@
+using TGame.Management;
+
+namespace TGame.Server;
+
+internal sealed partial class ServerNode
+{
+    internal Task<GmPingReply> GmPingAsync(GmPingRequest request, CancellationToken stop) =>
+        ForwardGmPingAsync(nameof(ProcessType.Router), request, stop);
+
+    private async Task<GmPingReply> RouteGmPingAsync(string from, GmPingRequest request, CancellationToken stop)
+    {
+        if (!Ready)
+        {
+            return GmUnavailable(request);
+        }
+
+        var expectedSender = role == nameof(ProcessType.Router) ? nameof(ProcessType.GM) : nameof(ProcessType.Router);
+        if (!Guid.TryParseExact(request.RequestId, "N", out _) || !Guid.TryParseExact(request.EntityId, "N", out _) || from != expectedSender)
+        {
+            throw new InvalidDataException("Invalid GM entity ping or ingress.");
+        }
+
+        if (localEntities.ContainsKey(request.EntityId))
+        {
+            return new GmPingReply { RequestId = request.RequestId, EntityId = request.EntityId, Responder = role };
+        }
+
+        if (role == nameof(ProcessType.Router) && owners.TryGetValue(request.EntityId, out var owner))
+        {
+            return await ForwardGmPingAsync(owner, request, stop);
+        }
+
+        return new GmPingReply { RequestId = request.RequestId, EntityId = request.EntityId, Status = GmPingReply.Types.Status.NotFound };
+    }
+
+    private async Task<GmPingReply> ForwardGmPingAsync(string peer, GmPingRequest request, CancellationToken stop)
+    {
+        if (!Ready || !links.TryGetValue(peer, out var link))
+        {
+            return GmUnavailable(request);
+        }
+
+        try
+        {
+            return await link.GmPingAsync(request, stop);
+        }
+        catch (Exception error) when (!stop.IsCancellationRequested && IsDeliveryFailure(error))
+        {
+            TraceLog.Event(ServerLogEvents.GMDeliveryFailed, role, peer, request.RequestId, request.EntityId, detail: error.Message);
+            return GmUnavailable(request);
+        }
+    }
+
+    private static GmPingReply GmUnavailable(GmPingRequest request) => new()
+    {
+        RequestId = request.RequestId,
+        EntityId = request.EntityId,
+        Status = GmPingReply.Types.Status.Unavailable
+    };
+}

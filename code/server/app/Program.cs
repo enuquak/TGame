@@ -38,7 +38,8 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     var processType = Enum.Parse<ProcessType>(role);
     var singlePoint = singlePoints.Create(processType);
 
-    var node = new ServerNode(role, singlePoint);
+    _ = ServerSettings.Current.Value;
+    var node = new ServerNode(role, singlePoint, ServerSettings.DiagnosticsEnabled());
     using var resources = singlePoint as IDisposable;
 
     var builder = WebApplication.CreateSlimBuilder();

@@ -17,14 +17,14 @@ internal sealed class ServiceRegistry(Guid run) : IAsyncDisposable
         }
     }
 
-    private const string Root = "/tgame/test";
     private const int SessionTimeoutMilliseconds = 10000;
-    private readonly ZooKeeper zk = new(TestStorage.Settings.Value.ZooKeeper, SessionTimeoutMilliseconds, new Changed());
+    private readonly string root = ServerSettings.Current.Value.DiscoveryRoot;
+    private readonly ZooKeeper zk = new(ServerSettings.Current.Value.ZooKeeper, SessionTimeoutMilliseconds, new Changed());
     private readonly string prefix = $"server-{run:N}-";
 
     public async Task RegisterAsync(string role, string address, bool consoleMode, CancellationToken stop)
     {
-        var path = $"{Root}/{prefix}{role}";
+        var path = $"{root}/{prefix}{role}";
         while (true)
         {
             try
@@ -45,13 +45,13 @@ internal sealed class ServiceRegistry(Guid run) : IAsyncDisposable
         }
 
         TraceLog.Event(ServerLogEvents.ZkRegister, role, detail: address);
-        var names = (await zk.getChildrenAsync(Root).WaitAsync(stop)).Children;
+        var names = (await zk.getChildrenAsync(root).WaitAsync(stop)).Children;
         TraceLog.Event(ServerLogEvents.ZkDiscover, role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(prefix + r))));
     }
 
     public async Task<string> ResolveAsync(string peer, CancellationToken stop)
     {
-        var path = $"{Root}/{prefix}{peer}";
+        var path = $"{root}/{prefix}{peer}";
         while (true)
         {
             try

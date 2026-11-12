@@ -1,4 +1,6 @@
 using TGame.Diagnostics;
+using TGame.Management;
+using Google.Protobuf;
 using TGame.Transport;
 using TGame.Profile;
 using System.Net.WebSockets;
@@ -16,6 +18,8 @@ const string LegacyProbeEntityId = "body-1";
 
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
 var stop = deadline.Token;
+await DiagnosticChecks.VerifyDisabledAsync();
+SettingsChecks.Run();
 
 foreach (var processType in Enum.GetValues<ProcessType>())
 {
@@ -86,7 +90,7 @@ router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
 
 var point = new WaitingSinglePoint();
-var gate = new ServerNode(nameof(ProcessType.Gate), point);
+var gate = new ServerNode(nameof(ProcessType.Gate), point, diagnosticsEnabled: true);
 var initialization = gate.InitializeAsync(stop);
 if (point.Started.Task.IsCompleted)
 {
@@ -238,10 +242,29 @@ await ExpectProfileRejected(nameof(ProcessType.GM), new ProfileRequest
     Fetch = neighborIds[nameof(ProcessType.Base)]
 });
 
-var missing = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = Guid.NewGuid().ToString("N"), Entry = nameof(ProcessType.Base) };
-baseRoute.Input.Writer.TryWrite(new Frame { Ping = missing });
-var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).Pong;
-if (notFound?.RequestId != missing.RequestId || notFound.Status != Pong.Types.Status.NotFound || !routes.Ready)
+var gmRoute = neighbors[nameof(ProcessType.GM)];
+var gmRequest = new GmPingRequest { RequestId = Guid.NewGuid().ToString("N"), EntityId = neighborIds[nameof(ProcessType.Base)] };
+gmRoute.Input.Writer.TryWrite(new Frame { GmPingRequest = gmRequest });
+var gmForwarded = (await baseRoute.Output.Reader.ReadAsync(stop)).GmPingRequest;
+if (gmForwarded?.RequestId != gmRequest.RequestId || gmForwarded.EntityId != gmRequest.EntityId)
+{
+    throw new Exception("GM must route its own protocol with diagnostics disabled.");
+}
+
+baseRoute.Input.Writer.TryWrite(new Frame
+{
+    GmPingReply = new GmPingReply { RequestId = gmRequest.RequestId, EntityId = gmRequest.EntityId, Responder = nameof(ProcessType.Base) }
+});
+var gmReply = (await gmRoute.Output.Reader.ReadAsync(stop)).GmPingReply;
+if (gmReply?.RequestId != gmRequest.RequestId || gmReply.Status != GmPingReply.Types.Status.Ok || gmReply.Responder != nameof(ProcessType.Base))
+{
+    throw new Exception("GM reply did not return independently of diagnostic traffic.");
+}
+
+var missing = new GmPingRequest { RequestId = Guid.NewGuid().ToString("N"), EntityId = Guid.NewGuid().ToString("N") };
+gmRoute.Input.Writer.TryWrite(new Frame { GmPingRequest = missing });
+var notFound = (await gmRoute.Output.Reader.ReadAsync(stop)).GmPingReply;
+if (notFound?.RequestId != missing.RequestId || notFound.Status != GmPingReply.Types.Status.NotFound || !routes.Ready)
 {
     throw new Exception("A missing entity interrupted a healthy stream.");
 }
@@ -252,8 +275,26 @@ foreach (var stream in neighbors.Values)
 }
 
 await routing.WaitAsync(stop);
-Console.WriteLine("PASS GUID-only initialization and registration, Profile routing and authorization, handshake retry, WSS/gRPC gating, cancellation, disconnect and missing entity");
+await ExpectDiagnosticsRejected(new Frame { DiagnosticRequest = ByteString.CopyFromUtf8("invalid diagnostic payload") });
+await ExpectDiagnosticsRejected(new Frame { DiagnosticReply = ByteString.CopyFromUtf8("invalid diagnostic payload") });
+Console.WriteLine("PASS configuration, disabled diagnostics, independent GM protocol, GUID-only initialization and registration, Profile routing and authorization, handshake retry, WSS/gRPC gating, cancellation, disconnect and missing entity");
 return 0;
+
+async Task ExpectDiagnosticsRejected(Frame frame)
+{
+    var normalNode = new ServerNode(nameof(ProcessType.Gate), new GateServerSinglePoint());
+    var stream = new FrameStream();
+    var opened = Open(normalNode, nameof(ProcessType.Login), stream);
+    stream.Input.Writer.TryWrite(frame);
+    try
+    {
+        await opened.WaitAsync(stop);
+        throw new Exception("Disabled diagnostics accepted a peer frame.");
+    }
+    catch (RpcException error) when (error.StatusCode == StatusCode.PermissionDenied)
+    {
+    }
+}
 
 async Task ExpectProfileRejected(string peer, ProfileRequest request)
 {
@@ -280,8 +321,8 @@ Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null
 async Task ExpectPong(Pong.Types.Status status)
 {
     var ping = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = point.State.EntityId, Entry = nameof(ProcessType.Gate) };
-    login.Input.Writer.TryWrite(new Frame { Ping = ping });
-    var response = (await login.Output.Reader.ReadAsync(stop)).Pong;
+    login.Input.Writer.TryWrite(new Frame { DiagnosticRequest = ping.ToByteString() });
+    var response = Pong.Parser.ParseFrom((await login.Output.Reader.ReadAsync(stop)).DiagnosticReply);
     if (response?.RequestId != ping.RequestId || response.Status != status)
     {
         throw new Exception($"Expected {status} for the Gate entity, got {response}.");

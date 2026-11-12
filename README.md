@@ -33,6 +33,14 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 自动化验收通过 `pwsh -NoProfile -File tools/scripts/powershell/Test-ServerConsole.ps1` 运行。请先启动测试隧道。脚本在 `build/console-check/` 中建立独立工作目录，验证起服、选关、补起、重新接管以及编译成功和失败时的重启行为。
 
+## 服务器环境与诊断开关
+
+服务端通过 `TGAME_SERVER_CONFIG` 显式选择 YAML 文件；未选择或配置不完整时拒绝启动。`ServerSettings` 读取数据库地址、数据库名、用户、凭据环境变量名、Redis 键前缀和 ZooKeeper 注册根路径，`StorageConnections` 只负责建立连接和健康检查。生产代码不再包含 `TestStorage` 或固定测试命名空间。
+
+[server.local.yaml](code/server/config/server.local.yaml) 仅描述当前本地开发环境，沿用 SSH 隧道和已有测试账号。控制台默认选择这份配置；设置 `TGAME_SERVER_CONFIG` 后使用指定环境。启动新一轮进程时将所选 YAML 保存到运行目录，重新打开控制台或补起进程仍复用本轮配置，不受后来环境变量或源文件变化影响。其它环境提供自己的 YAML 和对应凭据，不修改源码。ZooKeeper 的配置根路径须由环境部署预先创建。
+
+正常启动默认关闭诊断：Gate 不注册 `/probe`，内部流也拒绝诊断请求和回包。仅联通验收启动器显式设置 `TGAME_SERVER_DIAGNOSTICS=true`；控制台始终清除该变量。Profile 样例数据位于 `code/tests/fixtures/`，测试客户端构造实际 `ProfileRequest`；诊断服务端只校验并转发，不生成固定样例数据。GM、Profile 业务协议不依赖 Ping/Pong，关闭诊断不影响它们。
+
 ## Ping/Pong 联通验证
 
 在项目根目录运行以下命令。第一条启动云测试环境的 SSH 隧道，第二条构建共享协议、服务端和独立探测客户端，启动 Gate、GM、Login、Base、Scene、Router、DBMgr、Profile 各一个本地进程，再运行客户端完成验收。
@@ -42,7 +50,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 .\tools\scripts\Test-PingPong.bat
 ```
 
-需要仓库指定的 .NET SDK、PowerShell 7.4+、本机 ASP.NET Core 开发证书（可用 `dotnet dev-certs https` 创建）及 MongoDB、Redis 测试账号密码。设置 `TGAME_MONGO_TEST_PASSWORD`、`TGAME_REDIS_TEST_PASSWORD`，或使用本机 `.local/secrets/cloud.env` 中的 `MONGO_TEST_PASSWORD`、`REDIS_TEST_PASSWORD`。首次构建需还原 NuGet 包。每个进程监听随机回环端口，在 ZooKeeper 的 `/tgame/test` 下注册本轮专用临时节点并读取地址。测试客户端用同一条 WSS 连接发送二进制 Protobuf，并校验本机 Gate 证书指纹。
+需要仓库指定的 .NET SDK、PowerShell 7.4+、本机 ASP.NET Core 开发证书（可用 `dotnet dev-certs https` 创建）及 MongoDB、Redis 测试账号密码。设置 `TGAME_MONGO_PASSWORD`、`TGAME_REDIS_PASSWORD`，或使用本机 `.local/secrets/cloud.env` 中的 `MONGO_TEST_PASSWORD`、`REDIS_TEST_PASSWORD`。首次构建需还原 NuGet 包。验收脚本显式选择 `server.local.yaml` 并启用诊断。每个进程监听随机回环端口，在该配置指定的 ZooKeeper 根路径下注册本轮专用临时节点并读取地址。测试客户端用同一条 WSS 连接发送二进制 Protobuf，并校验本机 Gate 证书指纹。
 
 验收程序跑两轮常规探针，按请求 ID 核对每一跳的收发及复用的 9 条 gRPC 双向流。普通 DBMgr 消息走 Router，存盘探针走 Base 的专线并执行 MongoDB `ping`。协议源文件见 [pingpong.proto](code/shared/protocols/pingpong.proto)。
 
@@ -50,7 +58,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 正常初始化只登记 SinglePoint 自身生成的 EntityId。Router 只接受非空、无重复的 GUID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。联通脚本从本轮启动日志读取实际 EntityId 来生成测试用例，正式流程不再登记或依赖固定的测试 ID，旧版固定 ID 请求也不再接受。
 
-Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[测试存储地址](code/server/config/storage.test.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
+Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[本地环境配置](code/server/config/server.local.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
 
 服务进程直接写入 `logs/server/<进程类型>Server/`，例如 `logs/server/BaseServer/` 和 `logs/server/GMServer/`。每行是一条 JSON 事件，可按 `runId`、`pid`、请求 `id` 查询。每个实例使用 `<运行ID>-<PID>-yyyyMMddHH.log`，按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
 
@@ -60,13 +68,13 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 
 服务端入口为 `code/server/app/Program.cs`，只接受 `<角色> <运行目录>`。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 只引用 `code/shared/TGame.Shared.csproj`，不依赖服务端工程。它接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
 
-服务端工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。启动、节点、连接和服务注册使用 `TGame.Server` 命名空间；共享的日志格式、WebSocket 读帧与诊断数据分别属于 `TGame.Logging`、`TGame.Transport` 和 `TGame.Diagnostics`。通用连接服务与帧定义在 [transport.proto](code/shared/protocols/transport.proto)，Ping/Pong 消息保留在诊断协议中，消息分发集中在 `ServerNode.Messages.cs`。Profile 请求直接使用自身消息，不需要经过 Ping/Pong 包装。构建时统一生成到 `code/shared/generated/protocols/`。
+服务端工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。启动、节点、连接和服务注册使用 `TGame.Server` 命名空间；共享的日志格式、WebSocket 读帧与诊断消息分别属于 `TGame.Logging`、`TGame.Transport` 和 `TGame.Diagnostics`。通用连接服务与帧定义在 [transport.proto](code/shared/protocols/transport.proto)，帧只直接引用 Profile 和 GM 协议，诊断通道承载可选字节载荷；Ping/Pong 的解析和处理集中在 `app/diagnostics/`。正常消息分发集中在 `ServerNode.Messages.cs`。Profile 请求直接使用自身消息，不需要经过 Ping/Pong 包装。构建时统一生成到 `code/shared/generated/protocols/`。
 
 本次整理将内部 gRPC 服务改为 `tgame.transport.ServerLink`，服务发现临时节点前缀改为 `server-<运行ID>-`；同一轮进程须使用统一重新构建的版本，不能混用旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。Ping/Pong 验收脚本及历史日志目录继续保留测试名称。
 
 ### GM 管理入口
 
-本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的 32 位十六进制 EntityId。返回的 `requestId` 可关联 GM 审计和 gRPC 收发日志。
+本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的 32 位十六进制 EntityId。内部使用 [gm.proto](code/shared/protocols/gm.proto) 的 `GmPingRequest` / `GmPingReply`，不调用诊断 Ping/Pong。返回的 `requestId` 可关联 GM 审计和 `GM_PING_*`、`GM_PONG_*` 收发日志。
 
 自动验收默认生成一次性随机令牌。手动验收时先设置 `TGAME_GM_TOKEN`（至少 32 个字符的随机令牌）和 `TGAME_GM_OPERATOR`（该凭据对应的操作员），以 `-Hold` 运行脚本，从控制台取得 GM 地址。用 `Read-PingPongLog.ps1 -RunDirectory <本轮验收目录> -Role Scene -Event SINGLE_POINT_INIT` 读取目标 EntityId。在另一终端中使用相同令牌执行：
 

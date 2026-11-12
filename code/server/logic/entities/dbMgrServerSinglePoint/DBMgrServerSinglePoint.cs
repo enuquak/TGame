@@ -10,11 +10,11 @@ internal sealed class DBMgrServerSinglePoint : ServerSinglePoint, IDisposable
 
     protected override Task InitializeRoleAsync(CancellationToken stop)
     {
-        mongo = TestStorage.Mongo(TestStorage.Settings.Value.DbMgrMongo);
+        mongo = StorageConnections.Mongo(ServerSettings.Current.Value.DbMgrMongo);
         return PingAsync(stop);
     }
 
-    public Task PingAsync(CancellationToken stop) => TestStorage.PingAsync(mongo!.GetDatabase(TestStorage.DatabaseName), stop);
+    public Task PingAsync(CancellationToken stop) => StorageConnections.CheckMongoAsync(mongo!.GetDatabase(ServerSettings.Current.Value.MongoDatabase), stop);
 
     public void Dispose() => mongo?.Dispose();
 }

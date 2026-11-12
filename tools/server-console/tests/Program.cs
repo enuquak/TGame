@@ -10,7 +10,7 @@ if (args is not [var checkout] || !File.Exists(Path.Combine(checkout, ".console-
 
 ConfigChecks.Run(checkout);
 LogChecks.Run(checkout);
-using var session = new ConsoleSession(checkout);
+var session = new ConsoleSession(checkout);
 session.Output += Console.WriteLine;
 try
 {
@@ -33,12 +33,26 @@ try
     }
 
     var selected = session.Instances.Single(i => i.Role == nameof(ProcessType.Base));
-    await session.StopAsync([selected]);
-    await UntilAsync("Base stopped, Gate still running with a missing link", () =>
-        selected.Status == ServerStatus.Stopped &&
-        session.Instances.Single(i => i.Role == nameof(ProcessType.Gate)).Status == ServerStatus.Disconnected);
-    await session.StartAsync();
-    await UntilAsync("Base rejoined", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    var originalConfig = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
+    try
+    {
+        Environment.SetEnvironmentVariable(ServerEnvironment.Config, Path.Combine(checkout, "missing-new-environment.yaml"));
+        session.Dispose();
+        session = new ConsoleSession(checkout);
+        session.Output += Console.WriteLine;
+        selected = session.Instances.Single(i => i.Role == nameof(ProcessType.Base));
+        await session.StopAsync([selected]);
+        await UntilAsync("Base stopped, Gate still running with a missing link", () =>
+            selected.Status == ServerStatus.Stopped &&
+            session.Instances.Single(i => i.Role == nameof(ProcessType.Gate)).Status == ServerStatus.Disconnected);
+        await session.StartAsync();
+        await UntilAsync("Base rejoined with the original run configuration", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(ServerEnvironment.Config, originalConfig);
+    }
+
     if (selected.Pid == pids[nameof(ProcessType.Base)] || session.Instances.Any(i => i.Role != nameof(ProcessType.Base) && i.Pid != pids[i.Role]))
     {
         throw new InvalidOperationException("Restoring Base disturbed another instance.");
@@ -93,10 +107,18 @@ try
     await UntilAsync("new group ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready && i.Pid != pids[i.Role]));
     Console.WriteLine($"PASS {session.Instances.Count} instances, export, selective stop, recovery, attach and build/restart.");
 }
+catch (Exception error)
+{
+    Console.Error.WriteLine(error);
+    return 1;
+}
 finally
 {
     await session.StopAsync(session.Instances.ToArray());
+    session.Dispose();
 }
+
+return 0;
 
 async Task UntilAsync(string stage, Func<bool> condition)
 {

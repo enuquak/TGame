@@ -7,7 +7,7 @@ using TGame.Transport;
 
 namespace TGame.Server;
 
-internal sealed partial class ServerNode(string role, ServerSinglePoint singlePoint)
+internal sealed partial class ServerNode(string role, ServerSinglePoint singlePoint, bool diagnosticsEnabled = false)
 {
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
