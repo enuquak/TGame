@@ -6,6 +6,12 @@
 
 目录职责见 [项目文件结构](docs/项目文件结构.md)。Codex 日常开发可打开 `code/`；项目工具位于 `tools/`，策划源文件位于 `design/`。
 
+## VS Code 开发
+
+使用 VS Code 打开仓库根目录，并安装 C# 与 C# Dev Kit 扩展。工作区默认加载 [TGame.slnx](TGame.slnx)，仅包含正式的源码、测试与工具工程，避免自动发现 `build/` 下的临时测试副本。新增正式工程时，通过 `dotnet sln TGame.slnx add <工程路径>` 加入解决方案。
+
+若更新 .NET SDK 后出现 `CS0518`（连 `System.Object` 都无法识别），先执行 `dotnet build TGame.slnx` 检查真实编译结果；编译通过时，在命令面板执行 `Developer: Reload Window`，让 C# 扩展重新加载 SDK 和工程引用。
+
 ## 服务器控制台
 
 Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目录运行它。开发环境使用本机游戏进程及下文的数据库、ZooKeeper 隧道。打开窗口和查看已有日志可以离线进行。使用 `-Check` 可验证控制台能否加载。

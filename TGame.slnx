@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="code/server/app/TGame.Server.csproj" />
+  <Project Path="code/shared/TGame.Shared.csproj" />
+  <Project Path="code/tests/probe-client/TGame.ProbeClient.csproj" />
+  <Project Path="code/tests/singlepoint/TGame.SinglePointTests.csproj" />
+  <Project Path="tools/server-console/TGame.ServerConsole.csproj" />
+  <Project Path="tools/server-console/tests/ServerConsole.Check.csproj" />
+</Solution>
