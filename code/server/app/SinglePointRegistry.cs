@@ -22,8 +22,11 @@ internal sealed class SinglePointRegistry
                 continue;
             }
 
-            if (!Enum.IsDefined(label.Role) || !type.IsSubclassOf(typeof(ServerSinglePoint)) ||
-                type.IsAbstract || type.ContainsGenericParameters || type.GetConstructor(Type.EmptyTypes) == null)
+            if (!Enum.IsDefined(label.Role) ||
+                !type.IsSubclassOf(typeof(ServerSinglePoint)) ||
+                type.IsAbstract ||
+                type.ContainsGenericParameters ||
+                type.GetConstructor(Type.EmptyTypes) == null)
             {
                 throw new InvalidOperationException($"Invalid SinglePoint class {type.FullName} for {label.Role}. Expected a concrete ServerSinglePoint with a public parameterless constructor.");
             }
