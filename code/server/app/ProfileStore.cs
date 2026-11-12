@@ -5,6 +5,7 @@ using StackExchange.Redis;
 using TGame.Profile;
 using Result = TGame.Profile.ProfileReply.Types.Result;
 using TGame.Server.Logic;
+using TGame.Server.Storage;
 
 namespace TGame.Server;
 
@@ -52,7 +53,7 @@ internal sealed class ProfileStore : IDisposable
         var mongo = TestStorage.Mongo(settings.ProfileMongo);
         try
         {
-            await TestStorage.PingAsync(mongo.GetDatabase(TestStorage.DatabaseName), stop);
+            await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(TestStorage.DatabaseName), stop);
             var redis = await ConnectionMultiplexer.ConnectAsync(options);
             return new ProfileStore(mongo, redis);
         }

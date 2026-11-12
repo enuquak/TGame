@@ -200,13 +200,20 @@ internal sealed class ConsoleSession : IDisposable
         info.ArgumentList.Add(instance.Role);
         info.ArgumentList.Add(Path.Combine(sessions, id));
         info.Environment[ServerEnvironment.LogRoot] = logRoot;
-        if (instance.Role is nameof(ProcessType.DBMgr) or nameof(ProcessType.Profile))
+        if (instance.Role == nameof(ProcessType.DBMgr))
         {
-            info.Environment[ServerEnvironment.MongoTestPassword] = Password(MongoPasswordKey);
+            var password = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
+            if (string.IsNullOrWhiteSpace(password))
+            {
+                password = Password(MongoPasswordKey);
+            }
+
+            info.Environment[ServerEnvironment.DBMgrMongoPassword] = password;
         }
 
         if (instance.Role == nameof(ProcessType.Profile))
         {
+            info.Environment[ServerEnvironment.MongoTestPassword] = Password(MongoPasswordKey);
             info.Environment[ServerEnvironment.RedisTestPassword] = Password(RedisPasswordKey);
         }
 
@@ -244,7 +251,7 @@ internal sealed class ConsoleSession : IDisposable
     private ProcessStartInfo NewProcess(string exe)
     {
         var info = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var key in new[] { ServerEnvironment.GMToken, ServerEnvironment.GMOperator, ServerEnvironment.MongoTestPassword,
+        foreach (var key in new[] { ServerEnvironment.GMToken, ServerEnvironment.GMOperator, ServerEnvironment.DBMgrMongoPassword, ServerEnvironment.MongoTestPassword,
             ServerEnvironment.RedisTestPassword, MongoPasswordKey, RedisPasswordKey })
         {
             info.Environment.Remove(key);

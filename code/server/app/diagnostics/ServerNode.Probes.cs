@@ -46,7 +46,7 @@ internal sealed partial class ServerNode
                     throw new InvalidDataException("Storage probe did not use the dedicated link.");
                 }
 
-                await db.PingAsync(stop);
+                await db.CheckDatabaseConnectionAsync(stop);
                 TraceLog.Event(ServerLogEvents.MongoPong, role, ServerPeerNames.MongoDB, ping.RequestId, ping.EntityId);
             }
 

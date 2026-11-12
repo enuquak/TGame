@@ -66,6 +66,12 @@ try
         $password = $setting.Substring('MONGO_TEST_PASSWORD='.Length)
     }
 
+    $dbMgrPassword = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::DBMgrMongoPassword)
+    if ([string]::IsNullOrWhiteSpace($dbMgrPassword))
+    {
+        $dbMgrPassword = $password
+    }
+
     $redisPassword = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::RedisTestPassword)
     if (!$redisPassword)
     {
@@ -110,6 +116,9 @@ try
             Environment = @{
                 ([TGame.ServerEnvironment]::GMToken) = $null
                 ([TGame.ServerEnvironment]::GMOperator) = $null
+                ([TGame.ServerEnvironment]::DBMgrMongoPassword) = $null
+                ([TGame.ServerEnvironment]::MongoTestPassword) = $null
+                ([TGame.ServerEnvironment]::RedisTestPassword) = $null
                 ([TGame.ServerEnvironment]::LogRoot) = $serverRoot
             }
         }
@@ -122,7 +131,7 @@ try
 
         if ($role -eq $dbMgrRole)
         {
-            $launch.Environment[[TGame.ServerEnvironment]::MongoTestPassword] = $password
+            $launch.Environment[[TGame.ServerEnvironment]::DBMgrMongoPassword] = $dbMgrPassword
         }
 
         if ($role -eq $profileRole)

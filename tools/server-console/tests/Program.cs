@@ -64,6 +64,27 @@ try
     await session.StartAsync();
     await UntilAsync("GM role initialization recovered", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
 
+    var dbMgr = session.Instances.Single(i => i.Role == nameof(ProcessType.DBMgr));
+    await session.StopAsync([dbMgr]);
+    var originalMongoPassword = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
+    try
+    {
+        Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, "invalid-storage-check-password");
+        await session.StartAsync();
+        await UntilAsync("DBMgr database initialization failed", () => dbMgr.Status == ServerStatus.Failed && !dbMgr.Alive);
+        if (!HasEvent(dbMgr, ServerLogEvents.SinglePointFailed) || HasEvent(dbMgr, ServerLogEvents.SinglePointReady))
+        {
+            throw new InvalidOperationException("DBMgr reported readiness despite a failed database connection check.");
+        }
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, originalMongoPassword);
+    }
+
+    await session.StartAsync();
+    await UntilAsync("DBMgr database initialization recovered", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+
     // A compiler error must leave the running group and its PID associations intact.
     var broken = Path.Combine(checkout, "code/server/app/BrokenCheck.cs");
     await File.WriteAllTextAsync(broken, "#error ServerConsole.Check");

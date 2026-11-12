@@ -14,6 +14,8 @@ const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
 const string LegacyProbeEntityId = "body-1";
 
+await MongoStorageChecks.RunAsync();
+
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
 var stop = deadline.Token;
 

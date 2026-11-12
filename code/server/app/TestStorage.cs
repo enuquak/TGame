@@ -1,5 +1,5 @@
-using MongoDB.Bson;
 using MongoDB.Driver;
+using TGame.Server.Storage;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -12,15 +12,7 @@ internal sealed class TestStorage
 
     private const string ConfigDirectory = "config";
     private const string ConfigFileName = "storage.test.yaml";
-    private const string PingCommand = "ping";
-    private const string SuccessField = "ok";
-    private static readonly TimeSpan ServerSelectionTimeout = TimeSpan.FromSeconds(5);
-
-    public required string DbMgrMongo
-    {
-        get;
-        init;
-    }
+    private const int ServerSelectionTimeoutSeconds = 5;
 
     public required string ProfileMongo
     {
@@ -47,22 +39,20 @@ internal sealed class TestStorage
             .Build().Deserialize<TestStorage>(yaml);
     });
 
-    public static MongoClient Mongo(string endpoint) => new(new MongoClientSettings
+    public static MongoClient Mongo(string endpoint)
     {
-        Server = MongoServerAddress.Parse(endpoint),
-        Credential = MongoCredential.CreateCredential(DatabaseName, UserName, Password(ServerEnvironment.MongoTestPassword)),
-        ServerSelectionTimeout = ServerSelectionTimeout
-    });
+        var settings = new MongoStorageSettings
+        {
+            Endpoint = endpoint,
+            DatabaseName = DatabaseName,
+            AuthenticationDatabase = DatabaseName,
+            UserName = UserName,
+            ServerSelectionTimeoutSeconds = ServerSelectionTimeoutSeconds
+        };
+
+        return MongoStorage.CreateClient(settings, Password(ServerEnvironment.MongoTestPassword));
+    }
 
     public static string Password(string key) => Environment.GetEnvironmentVariable(key)
         ?? throw new InvalidOperationException($"Missing credential {key}.");
-
-    public static async Task PingAsync(IMongoDatabase database, CancellationToken stop)
-    {
-        var reply = await database.RunCommandAsync<BsonDocument>(new BsonDocument(PingCommand, 1), cancellationToken: stop);
-        if (reply[SuccessField].ToDouble() != 1)
-        {
-            throw new IOException("MongoDB ping failed.");
-        }
-    }
 }

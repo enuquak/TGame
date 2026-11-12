@@ -64,6 +64,14 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 
 本次整理将内部 gRPC 服务改为 `tgame.transport.ServerLink`，服务发现临时节点前缀改为 `server-<运行ID>-`；同一轮进程须使用统一重新构建的版本，不能混用旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。Ping/Pong 验收脚本及历史日志目录继续保留测试名称。
 
+### DBMgr 存储配置
+
+DBMgr 使用 [dbmgr-storage.yaml](code/server/config/dbmgr-storage.yaml) 配置 MongoDB 地址、业务数据库、认证数据库、用户名和服务器选择超时。构建和发布会把它复制到程序目录的 `config/` 下；仓库提供的是本机联调值，部署时替换为目标环境配置。密码只从 `TGAME_DBMGR_MONGO_PASSWORD` 读取，不写入配置文件。
+
+`MongoStorageSettings` 负责读取和校验配置，`MongoStorage` 负责创建连接及检查数据库响应。DBMgr 初始化会调用 `CheckDatabaseConnectionAsync`，检查成功后才标记为就绪；存储探针复用同一检查方法。DBMgr 不再读取 `TestStorage`、`storage.test.yaml` 或测试密码变量。
+
+手动启动 DBMgr 前须设置 `TGAME_DBMGR_MONGO_PASSWORD`。本机服务器控制台和联通验收脚本优先使用该变量；未设置时，由启动器将现有 MongoDB 联调凭据注入该变量。Profile 仍使用 `storage.test.yaml` 和 `TGAME_MONGO_TEST_PASSWORD`。
+
 ### GM 管理入口
 
 本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的 32 位十六进制 EntityId。返回的 `requestId` 可关联 GM 审计和 gRPC 收发日志。
