@@ -6,6 +6,8 @@
 
 目录职责见 [项目文件结构](docs/项目文件结构.md)。Codex 日常开发可打开 `code/`；项目工具位于 `tools/`，策划源文件位于 `design/`。
 
+跨机器继续阅读请先查看 [代码 Review 进度](docs/代码Review进度.md)，其中记录已读文件、下一步路线、分支差异和新机器准备步骤。
+
 ## VS Code 开发
 
 使用 VS Code 打开仓库根目录，并安装 C# 与 C# Dev Kit 扩展。工作区默认加载 [TGame.slnx](TGame.slnx)，仅包含正式的源码、测试与工具工程，避免自动发现 `build/` 下的临时测试副本。新增正式工程时，通过 `dotnet sln TGame.slnx add <工程路径>` 加入解决方案。

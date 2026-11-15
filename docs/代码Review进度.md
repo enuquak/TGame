@@ -1,0 +1,108 @@
+# 代码 Review 进度
+
+更新时间：2026-11-15（Asia/Shanghai）。
+
+## 换机器后的续读入口
+
+- 继续阅读的分支：`codex/server-review-snapshot`。
+- 本次进度记录基于代码提交 `4835f8d`，并包含后续的本交接文档。
+- 当前阶段：已读完服务器启动、角色初始化、服务发现和连接管理；下一阶段阅读消息收发与 Profile 请求处理。
+- 最近一次明确确认：用户于 2026-11-14 表示上一轮推荐的文件已经看完。随后推荐的消息处理文件尚未确认读完。
+- 下面的“已读”表示用户确认完成阅读，不表示这些文件已通过完整的正确性、安全或性能审查。
+
+## 已阅读
+
+- [x] [Program.cs](../code/server/app/Program.cs)：启动参数、宿主配置、角色创建、初始化与注册、任务监督、退出清理。
+- [x] [ServerSinglePoint.cs](../code/server/logic/entities/ServerSinglePoint.cs)：公共初始化流程、等待连接、角色初始化与就绪标记。
+- [x] [DBMgrServerSinglePoint.cs](../code/server/logic/entities/dbMgrServerSinglePoint/DBMgrServerSinglePoint.cs)：具体角色的初始化与资源释放。
+- [x] [SinglePointRegistry.cs](../code/server/app/SinglePointRegistry.cs)：通过角色标注收集、校验并创建业务类型。
+- [x] [Topology.cs](../code/server/app/Topology.cs)：角色之间主动发起连接的关系。
+- [x] [ServiceRegistry.cs](../code/server/app/ServiceRegistry.cs)：向 ZooKeeper 注册地址、发现其他角色、关闭注册连接。
+- [x] [ServerNode.cs](../code/server/app/ServerNode.cs)：建立与维持连接、握手、连接状态和节点就绪条件。
+
+## 下一步阅读顺序
+
+建议沿一次 Profile 摘要查询，跟踪请求发出、Router 转发、Profile 处理和响应返回。先读短小的协议与入口文件，再重点阅读 `PeerLink.cs`。
+
+| 状态 | 文件 | 阅读目标 |
+| --- | --- | --- |
+| 待确认 | [transport.proto](../code/shared/protocols/transport.proto) | 理解 Frame、oneof 与双向流 Connect。 |
+| 待确认 | [profile.proto](../code/shared/protocols/profile.proto) | 理解请求 ID、发布/查询/撤回操作及响应结果。 |
+| 待确认 | [LinkService.cs](../code/server/app/LinkService.cs) | 理解 gRPC 连接入口、来源检查和向 ServerNode 转交连接。 |
+| 待确认 | [PeerLink.cs](../code/server/app/PeerLink.cs) | 按 CallAsync、WriteAsync、Receive、Close 阅读请求等待、响应匹配、超时与断线。 |
+| 待确认 | [ServerNode.Messages.cs](../code/server/app/ServerNode.Messages.cs) | 理解请求进入队列、响应直接唤醒等待者，以及消息分发。 |
+| 待确认 | [PeerLink.Profile.cs](../code/server/app/PeerLink.Profile.cs) | 理解业务消息如何包装为 Frame，以及响应实体校验。 |
+| 待确认 | [ServerNode.Profile.cs](../code/server/app/ServerNode.Profile.cs) | 理解调用入口、Router 转发、来源/实体归属校验和存储调用。 |
+| 待确认 | [ProfileStore.cs](../code/server/app/ProfileStore.cs) | 理解 Redis 查询、MongoDB 读取、缓存回填、更新与删除。 |
+| 待确认 | [SinglePoint 测试 Program.cs](../code/tests/singlepoint/Program.cs) | 找到 ProfileRequest 用例，对照发送请求、模拟回包和异步调用完成的过程。 |
+
+阅读 `PeerLink.cs` 时，重点回答：
+
+1. 为什么 `waiting` 保存 `requestId → TaskCompletionSource<Frame>`？
+2. 谁调用 `TrySetResult`，让发送方的 `await reply.Task` 继续执行？
+3. 请求超时、响应迟到、连接断开时，等待中的调用分别如何结束？
+4. 为什么响应直接交给等待者，而请求先进入处理队列？
+
+`PeerLink.cs` 与 `PeerLink.Profile.cs` 中的 `partial class PeerLink` 是同一个类的不同部分；`ServerNode` 的多个文件也是如此。生成协议源码用于辅助跳转，日常阅读和修改以手写 `.proto` 为准。
+
+## 已讨论的 C# 与项目概念
+
+- 用户有其他语言基础，C# 从接近零开始；继续采用逐段解释、对应代码示例、说明类型与执行顺序的方式。
+- 各角色运行同一个 `TGame.Server` 程序，通过启动参数选择角色；各进程拥有独立内存。
+- 操作系统进程先启动并执行 Program；`await app.StartAsync()` 启动 Web 宿主，业务就绪还需要初始化与连接完成。
+- 异步方法调用时即可开始执行，保存 `Task` 后可以稍后等待；没有 `await` 不等于没有开始，也不等于自动创建新线程。
+- `using var` 在作用域退出时同步释放；`await using var` 在退出时等待异步释放，并非异步构造。
+- `CancellationTokenSource` 发出取消请求，`CancellationToken` 交给操作观察；关联取消与超时属于协作式取消。
+- `peer => ...` 是 Lambda 表达式；`Select` 描述转换，`ToList` 枚举并收集结果；`Task.WhenAll` 等待任务完成。
+- 已解释 FirstLinks 的首次连接完成含义、非控制台模式的启动超时检查，以及 WatchStopAsync 轮询停止标记。
+
+以上概念说明对应当时阅读版本；切换其他功能分支后，应先核对该分支的实际实现。
+
+## 分支交接
+
+本地存在几条尚未整合的开发路线，本次分别上传，保持各自的提交历史。
+
+| 分支 | 本次上传前的代码提交 | 用途 |
+| --- | --- | --- |
+| `codex/server-review-snapshot` | `4835f8d` | 本次对话续读入口，包含 VS Code 工程加载修复、探针实体解耦、DBMgr 配置拆分、多条件换行规范；本次再加入阅读进度。 |
+| `codex/multiline-or-format` | `4835f8d` | 上传前主工作区所处的代码分支。 |
+| `codex/remove-test-coupling` | `86c5e88` | 另一工作区中的诊断隔离、环境配置外置改动。 |
+| `codex/server-group-counts` | `f9fcfb1` | 另一工作区中的实例数量配置、完整连接等待及历史日志校验改动。 |
+| `codex/local-main-snapshot-20261115` | `26b88a4` | 本次上传时本地 main 的快照；该历史包含已在本地完成的实例数量分支合并。 |
+
+这些分支尚未汇总为同一个版本。继续本次阅读使用 `codex/server-review-snapshot`；查看其他功能时再切换对应分支。本次不合并或推送远端 `main`，后续整合仍需用户明确安排。
+
+其他已有 `codex/*` 事项分支也一并上传，保留原有名称，便于定位提交。
+
+## 新机器准备
+
+新克隆仓库时直接选择续读分支：
+
+```powershell
+git clone --branch codex/server-review-snapshot https://github.com/enuquak/TGame.git
+cd TGame
+```
+
+已有克隆、尚无该本地分支时：
+
+```powershell
+git fetch origin
+git switch --track origin/codex/server-review-snapshot
+```
+
+安装符合 [global.json](../global.json) 的 .NET SDK，VS Code 安装 C# 与 C# Dev Kit 扩展，并打开仓库根目录。工作区默认选择 [TGame.slnx](../TGame.slnx)。完整解决方案包含 Windows WPF 控制台，建议在 Windows 构建：
+
+```powershell
+dotnet build TGame.slnx
+code .
+```
+
+仅构建服务端时，可以执行 `dotnet build code/server/app/TGame.Server.csproj`。若命令行编译通过、编辑器仍出现基础类型无法识别，执行 `Developer: Reload Window`，并确认当前解决方案为 `TGame.slnx`。
+
+生成文件、构建产物、运行日志以及本机凭据按 `.gitignore` 保留在本机，不属于 Git 交接内容。阅读源码和构建无需运行云端联通验收；需要实际启动时，按 [服务器连接说明](服务器连接.md) 在新机器配置自己的 SSH 访问和环境隧道。Windows 脚本使用 PowerShell 7。
+
+## 持续待办与规范
+
+- [整合日志系统](TODO.md) 仍是待办，本次只交接进度。
+- 编码偏好以 [项目协作规范](../code/agents/项目协作规范.md) 为准：完整花括号、逻辑段落空行、early return、业务标识引用常量/枚举、复杂表达式拆分、多条件 `||` 换行，以及安全前提下的变量声明排序。
+- 用户确认读完下一批文件后，再更新本文件的阅读状态。
