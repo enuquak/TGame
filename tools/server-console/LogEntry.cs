@@ -36,7 +36,7 @@ internal sealed record LogEntry(long Number, string Raw, string Time, string Eve
                     var parts = new List<string>();
                     foreach (var field in root.EnumerateObject())
                     {
-                        if (field.Name is ServerLogFields.Time or ServerLogFields.Event or ServerLogFields.Role or ServerLogFields.Pid or ServerLogFields.RunId ||
+                        if (field.Name is ServerLogFields.Time or ServerLogFields.Event or ServerLogFields.Role or ServerLogFields.Pid ||
                             field.Value.ValueKind == JsonValueKind.Null)
                         {
                             continue;

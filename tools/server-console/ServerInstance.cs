@@ -31,7 +31,6 @@ internal sealed class ServerInstance(string role) : IDisposable
     private Process? process;
     private string runDir = "";
     private string logDir = "";
-    private string runId = "";
     private long startedUtcTicks;
     private RollingLog? log;
     private bool initializing, initialized, connected, failed;
@@ -59,7 +58,6 @@ internal sealed class ServerInstance(string role) : IDisposable
     {
         Reset();
         runDir = directory;
-        runId = Path.GetFileName(directory);
         logDir = Path.Combine(logRoot, Role + "Server");
         var exe = Path.Combine(snapshot, ExecutableName);
         var saved = File.Exists(IdentityPath)
@@ -80,7 +78,7 @@ internal sealed class ServerInstance(string role) : IDisposable
 
         if (Pid != null)
         {
-            log = new RollingLog(logDir, $"{runId}-{Pid}-");
+            log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
         }
 
         Refresh();
@@ -146,8 +144,8 @@ internal sealed class ServerInstance(string role) : IDisposable
         Reset();
         process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{Role} 启动失败。");
         Pid = process.Id;
-        log = new RollingLog(logDir, $"{runId}-{Pid}-");
         startedUtcTicks = process.StartTime.ToUniversalTime().Ticks;
+        log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
         Save(new Identity(process.Id, startedUtcTicks));
         File.Delete(LaunchMarker);
         Status = ServerStatus.Starting;
@@ -222,7 +220,7 @@ internal sealed class ServerInstance(string role) : IDisposable
         {
             using var document = JsonDocument.Parse(line);
             var row = document.RootElement;
-            if (row.GetProperty(ServerLogFields.RunId).GetString() != runId || row.GetProperty(ServerLogFields.Role).GetString() != Role ||
+            if (row.GetProperty(ServerLogFields.Role).GetString() != Role ||
                 row.GetProperty(ServerLogFields.Pid).GetInt32() != Pid)
             {
                 return;

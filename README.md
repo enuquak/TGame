@@ -44,7 +44,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 .\tools\scripts\Test-PingPong.bat
 ```
 
-需要仓库指定的 .NET SDK、PowerShell 7.4+、本机 ASP.NET Core 开发证书（可用 `dotnet dev-certs https` 创建）及 MongoDB、Redis 测试账号密码。设置 `TGAME_MONGO_TEST_PASSWORD`、`TGAME_REDIS_TEST_PASSWORD`，或使用本机 `.local/secrets/cloud.env` 中的 `MONGO_TEST_PASSWORD`、`REDIS_TEST_PASSWORD`。首次构建需还原 NuGet 包。每个进程监听随机回环端口，在 ZooKeeper 的 `/tgame/test` 下注册本轮专用临时节点并读取地址。测试客户端用同一条 WSS 连接发送二进制 Protobuf，并校验本机 Gate 证书指纹。
+需要仓库指定的 .NET SDK、PowerShell 7.4+、本机 ASP.NET Core 开发证书（可用 `dotnet dev-certs https` 创建）及 MongoDB、Redis 测试账号密码。设置 `TGAME_MONGO_TEST_PASSWORD`、`TGAME_REDIS_TEST_PASSWORD`，或使用本机 `.local/secrets/cloud.env` 中的 `MONGO_TEST_PASSWORD`、`REDIS_TEST_PASSWORD`。首次构建需还原 NuGet 包。每个进程监听随机回环端口，在 ZooKeeper 注册固定临时节点 `/tgame/test/server-<角色>` 并读取其他角色的地址。同名节点已存在时直接起服失败，保留原节点，不等待或覆盖；控制台模式遵循同一规则。测试客户端用同一条 WSS 连接发送二进制 Protobuf，并校验本机 Gate 证书指纹。
 
 验收程序跑两轮常规探针，按请求 ID 核对每一跳的收发及复用的 9 条 gRPC 双向流。普通 DBMgr 消息走 Router，存盘探针走 Base 的专线并执行 MongoDB `ping`。协议源文件见 [pingpong.proto](code/shared/protocols/pingpong.proto)。
 
@@ -54,19 +54,19 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[测试存储地址](code/server/config/storage.test.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
 
-服务进程直接写入 `logs/server/<进程类型>Server/`，例如 `logs/server/BaseServer/` 和 `logs/server/GMServer/`。每行是一条 JSON 事件，可按 `runId`、`pid`、请求 `id` 查询。每个实例使用 `<运行ID>-<PID>-yyyyMMddHH.log`，按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
+服务进程直接写入 `logs/server/<进程类型>Server/`，例如 `logs/server/BaseServer/` 和 `logs/server/GMServer/`。每行是一条 JSON 事件，可按 `pid`、角色、时间和请求 `id` 查询，不再包含 `runId`。每个实例使用 `<PID>-<进程启动UTC ticks>-yyyyMMddHH.log`，用启动时间区分复用的 PID。按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
 
-验收材料在 `logs/tools/pingpong/<运行ID>/`。`result.log` 汇总链路和协议验证结果，`server-logs.json` 定位本轮服务日志，`Client.log` 是测试客户端输出。服务进程的致命异常以 `PROCESS_FAILED` 记录，启动器捕获的原始标准错误保存在验收目录的 `<角色>.stderr.log`。成功末行为 `PASS processes=8 grpc_links=9 wss_sessions=1 rounds=2 pong=25 mongo_ping=2 gm_http=5`。失败返回非零退出码。已有旧版验收目录仍可通过 `Test-PingPongLogs.ps1 -RunDirectory <目录>` 复核。
+验收材料在 `logs/tools/pingpong/<UTC时间目录>/`。`result.log` 汇总链路和协议验证结果，`server-logs.json` 按角色保存 PID 与进程启动时间以定位本轮服务日志，`Client.log` 是测试客户端输出。服务进程的致命异常以 `PROCESS_FAILED` 记录，启动器捕获的原始标准错误保存在验收目录的 `<角色>.stderr.log`。成功末行为 `PASS processes=8 grpc_links=9 wss_sessions=1 rounds=2 pong=25 mongo_ping=2 gm_http=5`。失败返回非零退出码。日志清单格式随本次修改更新，旧版清单需使用对应版本的验收脚本复核。
 
 默认在验收后停止本轮进程；传入 `-Hold` 可保留进程到按回车时。自动化使用 `pwsh -NoProfile -File ./tools/scripts/powershell/Test-PingPong.ps1`。测试覆盖固定八个实例的启动发现、消息路径、GM 指令和 Profile 摘要读写，动态扩缩容及玩家完整存盘属于后续验证范围。
 
-服务端入口为 `code/server/app/Program.cs`，只接受 `<角色> <运行目录>`。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 只引用 `code/shared/TGame.Shared.csproj`，不依赖服务端工程。它接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
+服务端入口为 `code/server/app/Program.cs`，只接受 `<角色> <运行目录>`。运行目录用于停止标记等控制文件，名称不再要求是 GUID，也不参与服务发现。控制台按 UTC 时间建立工作目录和程序快照目录。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 只引用 `code/shared/TGame.Shared.csproj`，不依赖服务端工程。它接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
 
 服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类、业务节点 `GameServerNode`、Profile 和诊断处理位于 `code/server/logic/`；宿主负责提供业务类型集合、组装节点并按两个阶段启动服务。引擎可以单独构建，不引用宿主或业务实现。
 
 共享的日志格式、WebSocket 读帧与诊断数据分别属于 `TGame.Logging`、`TGame.Transport` 和 `TGame.Diagnostics`。连接服务与帧定义在 [transport.proto](code/shared/protocols/transport.proto)，消息分发集中在 `logic/node/GameServerNode.Messages.cs`。Profile 请求直接使用自身消息，不需要经过 Ping/Pong 包装。当前共享 Frame 仍包含诊断和 Profile 消息，构建时统一生成到 `code/shared/generated/protocols/`。
 
-本次整理将内部 gRPC 服务改为 `tgame.transport.ServerLink`，服务发现临时节点前缀改为 `server-<运行ID>-`；同一轮进程须使用统一重新构建的版本，不能混用旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。Ping/Pong 验收脚本及历史日志目录继续保留测试名称。
+内部 gRPC 服务为 `tgame.transport.ServerLink`，服务发现采用固定的 `server-<角色>` 节点；各进程须使用统一重新构建的版本，不能混用仍带运行 ID 的旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。强制终止后若 ZooKeeper 会话尚未过期，新进程会起服失败，待旧节点消失后再启动。可运行 `dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --registry` 检查节点冲突与正常退出后的重新注册；该检查需要 ZooKeeper 隧道。Ping/Pong 验收脚本及历史日志目录继续保留测试名称。
 
 ### DBMgr 存储配置
 

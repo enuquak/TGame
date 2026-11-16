@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -13,9 +14,10 @@ internal sealed class ConsoleSession : IDisposable
     private const string DefaultGmOperator = "local-console";
     private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
     private const string RedisPasswordKey = "REDIS_TEST_PASSWORD";
+    private const string SessionDirectoryFormat = "yyyyMMdd-HHmmss-fffffff";
 
     private readonly string root, sessions, logRoot;
-    private string? runId;
+    private string? sessionName;
     private bool busy;
     public ConsoleProject ProjectSettings
     {
@@ -50,7 +52,8 @@ internal sealed class ConsoleSession : IDisposable
         }
 
         var saved = File.ReadAllText(current).Trim();
-        if (!Guid.TryParseExact(saved, "N", out _) || !File.Exists(Path.Combine(sessions, saved, ServerRunFiles.ConsoleMode)))
+        bool validDirectoryName = saved.Length > 0 && saved.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+        if (!validDirectoryName || !File.Exists(Path.Combine(sessions, saved, ServerRunFiles.ConsoleMode)))
         {
             throw new InvalidDataException("控制台当前会话记录无效。");
         }
@@ -77,7 +80,7 @@ internal sealed class ConsoleSession : IDisposable
 
         if (missing.Length != Instances.Count)
         {
-            Launch(missing, runId!);
+            Launch(missing, sessionName!);
             return;
         }
 
@@ -121,16 +124,16 @@ internal sealed class ConsoleSession : IDisposable
         }
     }
 
-    private string Snapshot(string id) => Path.Combine(root, "build", "server-console", "runs", id);
+    private string Snapshot(string name) => Path.Combine(root, "build", "server-console", "runs", name);
 
     private async Task StartNewRun()
     {
-        var id = Guid.NewGuid().ToString("N");
-        var snapshot = Snapshot(id);
-        var runDir = Directory.CreateDirectory(Path.Combine(sessions, id)).FullName;
+        var name = DateTime.UtcNow.ToString(SessionDirectoryFormat, CultureInfo.InvariantCulture);
+        var snapshot = Snapshot(name);
+        var runDir = Directory.CreateDirectory(Path.Combine(sessions, name)).FullName;
         File.WriteAllText(Path.Combine(runDir, ServerRunFiles.ConsoleMode), "");
         // Prepare credentials and a complete copy before asking healthy processes to shut down.
-        var starts = Instances.Select(i => StartInfo(i, id)).ToArray();
+        var starts = Instances.Select(i => StartInfo(i, name)).ToArray();
         await Task.Run(() =>
         {
             var source = Path.Combine(root, "build", "bin", "TGame.Server", "debug");
@@ -147,11 +150,11 @@ internal sealed class ConsoleSession : IDisposable
             }
         });
         await Task.WhenAll(Instances.Select(i => i.StopAsync(Report)));
-        var previous = runId;
+        var previous = sessionName;
         var current = Path.Combine(sessions, "current");
-        File.WriteAllText(current + ".tmp", id);
+        File.WriteAllText(current + ".tmp", name);
         File.Move(current + ".tmp", current, true);
-        Open(id);
+        Open(name);
         for (int i = 0; i < Instances.Count; i++)
         {
             Launch(Instances[i], starts[i]);
@@ -170,18 +173,18 @@ internal sealed class ConsoleSession : IDisposable
         }
     }
 
-    private void Open(string id)
+    private void Open(string name)
     {
-        runId = id;
+        sessionName = name;
         foreach (var instance in Instances)
         {
-            instance.Open(Path.Combine(sessions, id), logRoot, Snapshot(id));
+            instance.Open(Path.Combine(sessions, name), logRoot, Snapshot(name));
         }
     }
 
-    private void Launch(ServerInstance[] missing, string id)
+    private void Launch(ServerInstance[] missing, string name)
     {
-        var starts = missing.Select(i => StartInfo(i, id)).ToArray();
+        var starts = missing.Select(i => StartInfo(i, name)).ToArray();
         for (int i = 0; i < missing.Length; i++)
         {
             Launch(missing[i], starts[i]);
@@ -194,11 +197,11 @@ internal sealed class ConsoleSession : IDisposable
         Report($"已启动 {instance.Role} · PID {instance.Pid}");
     }
 
-    private ProcessStartInfo StartInfo(ServerInstance instance, string id)
+    private ProcessStartInfo StartInfo(ServerInstance instance, string name)
     {
-        var info = NewProcess(Path.Combine(Snapshot(id), instance.ExecutableName));
+        var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
         info.ArgumentList.Add(instance.Role);
-        info.ArgumentList.Add(Path.Combine(sessions, id));
+        info.ArgumentList.Add(Path.Combine(sessions, name));
         info.Environment[ServerEnvironment.LogRoot] = logRoot;
         if (instance.Role == nameof(ProcessType.DBMgr))
         {

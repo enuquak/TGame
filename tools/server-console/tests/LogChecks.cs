@@ -30,15 +30,14 @@ internal static class LogChecks
         {
             var identity = Path.Combine(run, ProcessName + ".json");
             long ticks = child.StartTime.ToUniversalTime().Ticks;
-            string prefix = Path.Combine(logs, $"{id}-{child.Id}-2026110712");
+            string prefix = Path.Combine(logs, $"{child.Id}-{ticks}-2026110712");
 
             var options = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-            string Row(string ev, string detail = "", int? pid = null, string? runId = null, long? time = null) =>
+            string Row(string ev, string detail = "", int? pid = null, string? role = null, long? time = null) =>
                 JsonSerializer.Serialize(new
                 {
-                    runId = runId ?? id,
                     pid = pid ?? child.Id,
-                    role = ProcessName,
+                    role = role ?? ProcessName,
                     time = new DateTimeOffset(time ?? DateTime.UtcNow.Ticks, TimeSpan.Zero),
                     ev,
                     detail
@@ -51,8 +50,9 @@ internal static class LogChecks
             SaveIdentity(ticks);
             File.WriteAllLines(prefix + ".log", [
                 Row(ServerLogEvents.ProcessFailed, time: ticks - 1), Row(ServerLogEvents.ProcessFailed, pid: 1),
-                Row(ServerLogEvents.ProcessFailed, runId: Guid.NewGuid().ToString("N")), Row(ServerLogEvents.SinglePointInit), Row(ServerLogEvents.LinksReady)
+                Row(ServerLogEvents.ProcessFailed, role: nameof(ProcessType.Router)), Row(ServerLogEvents.SinglePointInit), Row(ServerLogEvents.LinksReady)
             ]);
+            File.WriteAllText(Path.Combine(logs, $"{child.Id}-{ticks - 1}-2026110712.log"), Row(ServerLogEvents.ProcessFailed) + "\n");
             using var item = new ServerInstance(ProcessName);
             item.Open(run, run, run);
             Check(item.Alive && item.LineCount == 2 && item.Status == ServerStatus.Initializing, "validated identity and initialization");

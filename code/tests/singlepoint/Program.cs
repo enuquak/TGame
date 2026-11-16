@@ -14,6 +14,20 @@ const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
 const string LegacyProbeEntityId = "body-1";
 
+if (args is ["--registry"])
+{
+    try
+    {
+        await ServiceRegistryChecks.RunAsync(TestStorage.Settings.Value.ZooKeeper);
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error);
+        return 1;
+    }
+}
+
 await SinglePointChecks.RunAsync();
 
 var engineAssembly = typeof(Topology).Assembly;

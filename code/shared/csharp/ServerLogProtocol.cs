@@ -47,7 +47,6 @@ public static class ServerLogFields
     public const string Event = "ev";
     public const string Role = "role";
     public const string Pid = "pid";
-    public const string RunId = "runId";
     public const string Peer = "peer";
     public const string Id = "id";
     public const string Entity = "entity";
