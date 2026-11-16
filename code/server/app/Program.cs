@@ -4,6 +4,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using TGame;
 using TGame.Server;
+using TGame.Server.Engine;
 using TGame.Server.Logic;
 
 const int ProcessArgumentCount = 2;
@@ -38,7 +39,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     var processType = Enum.Parse<ProcessType>(role);
     var singlePoint = singlePoints.Create(processType);
 
-    var node = new ServerNode(role, singlePoint);
+    var node = new GameServerNode(role, singlePoint);
     using var resources = singlePoint as IDisposable;
 
     var builder = WebApplication.CreateSlimBuilder();
@@ -61,7 +62,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
         }
     }));
     builder.Services.AddGrpc();
-    builder.Services.AddSingleton(node);
+    builder.Services.AddSingleton<ServerNode>(node);
 
     await using var app = builder.Build();
     if (processType == ProcessType.Gate)
@@ -88,7 +89,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     try
     {
         var initialization = node.InitializeAsync(stop);
-        await using var registry = new ServiceRegistry(runId);
+        await using var registry = new ServiceRegistry(runId, TestStorage.Settings.Value.ZooKeeper);
         using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
         registrationTimeout.CancelAfter(TimeSpan.FromSeconds(StartupTimeoutSeconds));
         var registration = registry.RegisterAsync(role, address, consoleMode, registrationTimeout.Token);

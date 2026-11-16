@@ -2,12 +2,11 @@ using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Grpc.Core;
 using Grpc.Net.Client;
-using TGame.Server.Logic;
 using TGame.Transport;
 
-namespace TGame.Server;
+namespace TGame.Server.Engine;
 
-internal sealed partial class ServerNode(string role, ServerSinglePoint singlePoint)
+public abstract class ServerNode(string role)
 {
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
@@ -16,21 +15,19 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
     private readonly object linkChanges = new();
     private readonly HashSet<string> sessions = [];
     private readonly TaskCompletionSource firstLinks = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly ConcurrentDictionary<string, byte> localEntities = new();
-    private readonly ConcurrentDictionary<string, string> owners = new();
-    private readonly ConcurrentDictionary<string, PeerLink> links = new();
+    protected readonly ConcurrentDictionary<string, byte> localEntities = new();
+    protected readonly ConcurrentDictionary<string, string> owners = new();
+    protected readonly ConcurrentDictionary<string, PeerLink> links = new();
 
     public Task FirstLinks => firstLinks.Task;
     public string Role => role;
-    public bool Ready => singlePoint.Initialized && linksReady;
+    public bool Ready => Initialized && linksReady;
 
-    public Task InitializeAsync(CancellationToken stop) => singlePoint.InitializeAsync(role, id =>
-    {
-        if (!localEntities.TryAdd(id, 0))
-        {
-            throw new InvalidOperationException($"Duplicate local entity {id}.");
-        }
-    }, firstLinks.Task, stop);
+    protected abstract bool Initialized { get; }
+
+    protected abstract void ReceiveFrame(Frame frame, PeerLink link, ChannelWriter<Frame> requests);
+
+    protected abstract Task ServeFrameAsync(Frame frame, string peer, string id, PeerLink link, CancellationToken stop);
 
     public async Task MaintainLinkAsync(string peer, ServiceRegistry registry, bool reconnect, CancellationToken stop)
     {
@@ -197,6 +194,6 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
         }
     }
 
-    private static bool IsDeliveryFailure(Exception error) =>
+    protected static bool IsDeliveryFailure(Exception error) =>
         error is IOException or RpcException or TimeoutException or InvalidOperationException or OperationCanceledException;
 }

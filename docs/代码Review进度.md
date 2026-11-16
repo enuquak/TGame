@@ -1,11 +1,11 @@
 # 代码 Review 进度
 
-更新时间：2026-11-15（Asia/Shanghai）。
+更新时间：2026-11-17（Asia/Shanghai）。
 
 ## 换机器后的续读入口
 
-- 继续阅读的分支：`codex/server-review-snapshot`。
-- 本次进度记录基于代码提交 `4835f8d`，并包含后续的本交接文档。
+- 继续阅读的分支：`codex/server-engine-boundary`；原交接快照保留在 `codex/server-review-snapshot`。
+- 原阅读进度基于代码提交 `4835f8d`。本次按用户要求将进程拓扑与连接管理迁入引擎，具体 SinglePoint 保留在业务层，以下链接已随迁移更新；不据此增加“已读”状态。
 - 当前阶段：已读完服务器启动、角色初始化、服务发现和连接管理；下一阶段阅读消息收发与 Profile 请求处理。
 - 最近一次明确确认：用户于 2026-11-14 表示上一轮推荐的文件已经看完。随后推荐的消息处理文件尚未确认读完。
 - 下面的“已读”表示用户确认完成阅读，不表示这些文件已通过完整的正确性、安全或性能审查。
@@ -16,9 +16,9 @@
 - [x] [ServerSinglePoint.cs](../code/server/logic/entities/ServerSinglePoint.cs)：公共初始化流程、等待连接、角色初始化与就绪标记。
 - [x] [DBMgrServerSinglePoint.cs](../code/server/logic/entities/dbMgrServerSinglePoint/DBMgrServerSinglePoint.cs)：具体角色的初始化与资源释放。
 - [x] [SinglePointRegistry.cs](../code/server/app/SinglePointRegistry.cs)：通过角色标注收集、校验并创建业务类型。
-- [x] [Topology.cs](../code/server/app/Topology.cs)：角色之间主动发起连接的关系。
-- [x] [ServiceRegistry.cs](../code/server/app/ServiceRegistry.cs)：向 ZooKeeper 注册地址、发现其他角色、关闭注册连接。
-- [x] [ServerNode.cs](../code/server/app/ServerNode.cs)：建立与维持连接、握手、连接状态和节点就绪条件。
+- [x] [Topology.cs](../code/server/engine/Topology.cs)：角色之间主动发起连接的关系。
+- [x] [ServiceRegistry.cs](../code/server/engine/ServiceRegistry.cs)：向 ZooKeeper 注册地址、发现其他角色、关闭注册连接。
+- [x] [ServerNode.cs](../code/server/engine/ServerNode.cs)：建立与维持连接、握手、连接状态和节点就绪条件；现为引擎基类。
 
 ## 下一步阅读顺序
 
@@ -28,12 +28,13 @@
 | --- | --- | --- |
 | 待确认 | [transport.proto](../code/shared/protocols/transport.proto) | 理解 Frame、oneof 与双向流 Connect。 |
 | 待确认 | [profile.proto](../code/shared/protocols/profile.proto) | 理解请求 ID、发布/查询/撤回操作及响应结果。 |
-| 待确认 | [LinkService.cs](../code/server/app/LinkService.cs) | 理解 gRPC 连接入口、来源检查和向 ServerNode 转交连接。 |
-| 待确认 | [PeerLink.cs](../code/server/app/PeerLink.cs) | 按 CallAsync、WriteAsync、Receive、Close 阅读请求等待、响应匹配、超时与断线。 |
-| 待确认 | [ServerNode.Messages.cs](../code/server/app/ServerNode.Messages.cs) | 理解请求进入队列、响应直接唤醒等待者，以及消息分发。 |
-| 待确认 | [PeerLink.Profile.cs](../code/server/app/PeerLink.Profile.cs) | 理解业务消息如何包装为 Frame，以及响应实体校验。 |
-| 待确认 | [ServerNode.Profile.cs](../code/server/app/ServerNode.Profile.cs) | 理解调用入口、Router 转发、来源/实体归属校验和存储调用。 |
-| 待确认 | [ProfileStore.cs](../code/server/app/ProfileStore.cs) | 理解 Redis 查询、MongoDB 读取、缓存回填、更新与删除。 |
+| 待确认 | [LinkService.cs](../code/server/engine/LinkService.cs) | 理解 gRPC 连接入口、来源检查和向 ServerNode 转交连接。 |
+| 待确认 | [PeerLink.cs](../code/server/engine/PeerLink.cs) | 按 CallAsync、WriteAsync、Receive、Close 阅读请求等待、响应匹配、超时与断线。 |
+| 待确认 | [GameServerNode.cs](../code/server/logic/node/GameServerNode.cs) | 理解业务节点如何继承引擎节点，并接入 SinglePoint 初始化。 |
+| 待确认 | [GameServerNode.Messages.cs](../code/server/logic/node/GameServerNode.Messages.cs) | 理解请求进入队列、响应直接唤醒等待者，以及消息分发。 |
+| 待确认 | [PeerLink.Profile.cs](../code/server/logic/node/PeerLink.Profile.cs) | 理解业务扩展方法如何包装 Frame，以及响应实体校验。 |
+| 待确认 | [GameServerNode.Profile.cs](../code/server/logic/node/GameServerNode.Profile.cs) | 理解调用入口、Router 转发、来源/实体归属校验和存储调用。 |
+| 待确认 | [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs) | 理解 Redis 查询、MongoDB 读取、缓存回填、更新与删除。 |
 | 待确认 | [SinglePoint 测试 Program.cs](../code/tests/singlepoint/Program.cs) | 找到 ProfileRequest 用例，对照发送请求、模拟回包和异步调用完成的过程。 |
 
 阅读 `PeerLink.cs` 时，重点回答：
@@ -43,7 +44,7 @@
 3. 请求超时、响应迟到、连接断开时，等待中的调用分别如何结束？
 4. 为什么响应直接交给等待者，而请求先进入处理队列？
 
-`PeerLink.cs` 与 `PeerLink.Profile.cs` 中的 `partial class PeerLink` 是同一个类的不同部分；`ServerNode` 的多个文件也是如此。生成协议源码用于辅助跳转，日常阅读和修改以手写 `.proto` 为准。
+引擎 `ServerNode` 是基类，业务 `GameServerNode` 继承它；`GameServerNode` 的多个 partial 文件是同一个业务类的不同部分。引擎 `PeerLink` 与业务 `PeerLinkMessages` 已分开，`PeerLink.Profile.cs` 和 `PeerLink.Probes.cs` 提供业务扩展方法，不再是引擎连接类的 partial。生成协议源码用于辅助跳转，日常阅读和修改以手写 `.proto` 为准。
 
 ## 已讨论的 C# 与项目概念
 
@@ -70,13 +71,15 @@
 | `codex/server-group-counts` | `f9fcfb1` | 另一工作区中的实例数量配置、完整连接等待及历史日志校验改动。 |
 | `codex/local-main-snapshot-20261115` | `26b88a4` | 本次上传时本地 main 的快照；该历史包含已在本地完成的实例数量分支合并。 |
 
-这些分支尚未汇总为同一个版本。继续本次阅读使用 `codex/server-review-snapshot`；查看其他功能时再切换对应分支。本次不合并或推送远端 `main`，后续整合仍需用户明确安排。
+这些分支尚未汇总为同一个版本。原交接版本使用 `codex/server-review-snapshot`；本次引擎分层在其基础上的 `codex/server-engine-boundary` 继续。查看其他功能时再切换对应分支。本次不合并或推送远端 `main`，后续整合仍需用户明确安排。
 
 其他已有 `codex/*` 事项分支也一并上传，保留原有名称，便于定位提交。
 
 ## 新机器准备
 
-新克隆仓库时直接选择续读分支：
+以下命令获取已上传的原交接快照。本次 `codex/server-engine-boundary` 尚未推送，新机器需待该分支上传后再切换到它。
+
+新克隆仓库时选择原交接分支：
 
 ```powershell
 git clone --branch codex/server-review-snapshot https://github.com/enuquak/TGame.git

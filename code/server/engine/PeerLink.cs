@@ -2,16 +2,20 @@ using System.Collections.Concurrent;
 using Grpc.Core;
 using TGame.Transport;
 
-namespace TGame.Server;
+namespace TGame.Server.Engine;
 
-internal sealed partial class PeerLink(string role, string peer, string id, IAsyncStreamWriter<Frame> output)
+public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWriter<Frame> output)
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(12);
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<Frame>> waiting = new();
     private readonly SemaphoreSlim writer = new(1);
 
-    private async Task WriteAsync(Frame frame, CancellationToken stop)
+    public string Role => role;
+    public string Peer => peer;
+    public string Id => id;
+
+    public async Task WriteAsync(Frame frame, CancellationToken stop)
     {
         await writer.WaitAsync(stop);
         try
@@ -24,7 +28,7 @@ internal sealed partial class PeerLink(string role, string peer, string id, IAsy
         }
     }
 
-    private async Task<Frame> CallAsync(Frame frame, string requestId, string entity, string ev, CancellationToken stop)
+    public async Task<Frame> CallAsync(Frame frame, string requestId, string entity, string ev, CancellationToken stop)
     {
         var reply = new TaskCompletionSource<Frame>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!waiting.TryAdd(requestId, reply))

@@ -3,7 +3,7 @@ using TGame.Server.Storage;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
-namespace TGame.Server;
+namespace TGame.Server.Logic;
 
 internal sealed class TestStorage
 {

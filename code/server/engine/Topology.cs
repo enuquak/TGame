@@ -1,6 +1,6 @@
-namespace TGame.Server;
+namespace TGame.Server.Engine;
 
-internal static class Topology
+public static class Topology
 {
     // One local instance per role. Each pair opens one stream.
     public static readonly Dictionary<string, string[]> Dials = new()

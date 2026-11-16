@@ -2,12 +2,12 @@ using System.Net.WebSockets;
 using Google.Protobuf;
 using TGame.Diagnostics;
 using TGame.Profile;
-using TGame.Server.Logic;
+using TGame.Server.Engine;
 using TGame.Transport;
 
-namespace TGame.Server;
+namespace TGame.Server.Logic;
 
-internal sealed partial class ServerNode
+internal sealed partial class GameServerNode
 {
     private const string ProbePath = "/probe";
 
@@ -29,10 +29,11 @@ internal sealed partial class ServerNode
             return await RouteGmPingAsync(from, ping, stop);
         }
 
-        var gateLocal = ping.Entry == nameof(ProcessType.Gate) && role == nameof(ProcessType.Gate) && ping.EntityId == singlePoint.State.EntityId;
-        if (!Guid.TryParseExact(ping.RequestId, "N", out _) || (!gateLocal && ping.Entry is not (nameof(ProcessType.Base) or nameof(ProcessType.Login)))
-            || !Guid.TryParseExact(ping.EntityId, "N", out _)
-            || (ping.Storage && ping.Entry != nameof(ProcessType.Base)))
+        var gateLocal = ping.Entry == nameof(ProcessType.Gate) && Role == nameof(ProcessType.Gate) && ping.EntityId == singlePoint.State.EntityId;
+        if (!Guid.TryParseExact(ping.RequestId, "N", out _) ||
+            (!gateLocal && ping.Entry is not (nameof(ProcessType.Base) or nameof(ProcessType.Login))) ||
+            !Guid.TryParseExact(ping.EntityId, "N", out _) ||
+            (ping.Storage && ping.Entry != nameof(ProcessType.Base)))
         {
             throw new InvalidDataException("Invalid ping.");
         }
@@ -47,10 +48,10 @@ internal sealed partial class ServerNode
                 }
 
                 await db.CheckDatabaseConnectionAsync(stop);
-                TraceLog.Event(ServerLogEvents.MongoPong, role, ServerPeerNames.MongoDB, ping.RequestId, ping.EntityId);
+                TraceLog.Event(ServerLogEvents.MongoPong, Role, ServerPeerNames.MongoDB, ping.RequestId, ping.EntityId);
             }
 
-            var result = new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = role };
+            var result = new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = Role };
             if (ping.ProfileProbe != Ping.Types.ProfileProbe.None)
             {
                 result.ProfileReply = await RunProfileProbeAsync(ping, stop);
@@ -59,13 +60,13 @@ internal sealed partial class ServerNode
             return result;
         }
 
-        string? target = role switch
+        string? target = Role switch
         {
             nameof(ProcessType.Gate) when from == ServerPeerNames.Client => ping.Entry,
             nameof(ProcessType.Base) when from == nameof(ProcessType.Gate) && ping.Storage => nameof(ProcessType.DBMgr),
             nameof(ProcessType.Base) or nameof(ProcessType.Login) when from == nameof(ProcessType.Gate) => nameof(ProcessType.Router),
             nameof(ProcessType.Router) when !ping.Storage => owners.GetValueOrDefault(ping.EntityId),
-            _ => throw new InvalidDataException($"No route from {from} through {role} to {ping.EntityId}.")
+            _ => throw new InvalidDataException($"No route from {from} through {Role} to {ping.EntityId}.")
         };
 
         if (target == null)
@@ -98,7 +99,7 @@ internal sealed partial class ServerNode
         }
         catch (Exception error) when (!stop.IsCancellationRequested && IsDeliveryFailure(error))
         {
-            TraceLog.Event(ping.Entry == nameof(ProcessType.GM) ? ServerLogEvents.GMDeliveryFailed : ServerLogEvents.PingDeliveryFailed, role, peer,
+            TraceLog.Event(ping.Entry == nameof(ProcessType.GM) ? ServerLogEvents.GMDeliveryFailed : ServerLogEvents.PingDeliveryFailed, Role, peer,
                 ping.RequestId, ping.EntityId, detail: error.GetType().Name);
         }
 
@@ -119,11 +120,11 @@ internal sealed partial class ServerNode
         while (await WebSocketFrames.ReadAsync(ws, context.RequestAborted) is { } bytes)
         {
             var ping = Ping.Parser.ParseFrom(bytes);
-            TraceLog.Event(ServerLogEvents.PingRx, role, ServerPeerNames.Client, ping.RequestId, ping.EntityId, link);
+            TraceLog.Event(ServerLogEvents.PingRx, Role, ServerPeerNames.Client, ping.RequestId, ping.EntityId, link);
 
             var pong = await RouteAsync(ServerPeerNames.Client, ping, context.RequestAborted);
             await ws.SendAsync(pong.ToByteArray().AsMemory(), WebSocketMessageType.Binary, true, context.RequestAborted);
-            TraceLog.Event(ServerLogEvents.PongTx, role, ServerPeerNames.Client, pong.RequestId, pong.EntityId, link);
+            TraceLog.Event(ServerLogEvents.PongTx, Role, ServerPeerNames.Client, pong.RequestId, pong.EntityId, link);
         }
 
         await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted);
@@ -133,7 +134,7 @@ internal sealed partial class ServerNode
     private Task<ProfileReply> RunProfileProbeAsync(Ping ping, CancellationToken stop)
     {
         var request = new ProfileRequest { RequestId = ping.RequestId };
-        bool ownProbe = role == nameof(ProcessType.Base) && ping.EntityId == singlePoint.State.EntityId && ping.ProfileSubject == ping.EntityId;
+        bool ownProbe = Role == nameof(ProcessType.Base) && ping.EntityId == singlePoint.State.EntityId && ping.ProfileSubject == ping.EntityId;
 
         switch (ping.ProfileProbe)
         {
@@ -145,7 +146,7 @@ internal sealed partial class ServerNode
                 request.Withdraw = ping.EntityId;
                 break;
 
-            case Ping.Types.ProfileProbe.Fetch when role is nameof(ProcessType.Login) or nameof(ProcessType.Scene) && Guid.TryParseExact(ping.ProfileSubject, "N", out _):
+            case Ping.Types.ProfileProbe.Fetch when Role is nameof(ProcessType.Login) or nameof(ProcessType.Scene) && Guid.TryParseExact(ping.ProfileSubject, "N", out _):
                 request.Fetch = ping.ProfileSubject;
                 break;
 

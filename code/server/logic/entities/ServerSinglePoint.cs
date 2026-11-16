@@ -1,5 +1,5 @@
 using TGame.Server.Model;
-using TGame.Server;
+using TGame.Server.Engine;
 
 namespace TGame.Server.Logic;
 

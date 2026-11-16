@@ -2,9 +2,9 @@ using System.Text;
 using System.Net;
 using org.apache.zookeeper;
 
-namespace TGame.Server;
+namespace TGame.Server.Engine;
 
-internal sealed class ServiceRegistry(Guid run) : IAsyncDisposable
+public sealed class ServiceRegistry(Guid run, string endpoint) : IAsyncDisposable
 {
     private sealed class Changed : Watcher
     {
@@ -19,7 +19,7 @@ internal sealed class ServiceRegistry(Guid run) : IAsyncDisposable
 
     private const string Root = "/tgame/test";
     private const int SessionTimeoutMilliseconds = 10000;
-    private readonly ZooKeeper zk = new(TestStorage.Settings.Value.ZooKeeper, SessionTimeoutMilliseconds, new Changed());
+    private readonly ZooKeeper zk = new(endpoint, SessionTimeoutMilliseconds, new Changed());
     private readonly string prefix = $"server-{run:N}-";
 
     public async Task RegisterAsync(string role, string address, bool consoleMode, CancellationToken stop)

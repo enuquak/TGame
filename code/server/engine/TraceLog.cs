@@ -3,9 +3,9 @@ using Serilog;
 using Serilog.Core;
 using Serilog.Debugging;
 
-namespace TGame.Server;
+namespace TGame.Server.Engine;
 
-internal static class TraceLog
+public static class TraceLog
 {
     private const long FileSizeLimit = 10 * 1024 * 1024;
     private static Logger? serverLog;

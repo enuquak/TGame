@@ -1,5 +1,3 @@
-using TGame.Server;
-
 namespace TGame.Server.Logic;
 
 [SinglePointFor(ProcessType.Profile)]

@@ -2,9 +2,9 @@ using TGame.Diagnostics;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
-using TGame.Server.Logic;
+using TGame.Server.Engine;
 
-namespace TGame.Server;
+namespace TGame.Server.Logic;
 
 internal static class GMHttp
 {
@@ -14,7 +14,7 @@ internal static class GMHttp
     private const string NoStoreCacheControl = "no-store";
     private const string UnauthenticatedActor = "unauthenticated";
 
-    public static void Map(WebApplication app, ServerNode node, GMServerSinglePoint gm)
+    public static void Map(WebApplication app, GameServerNode node, GMServerSinglePoint gm)
     {
         app.MapPost(PingRoute, async (HttpContext http, string entityId) =>
         {

@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="code/server/app/TGame.Server.csproj" />
+  <Project Path="code/server/engine/TGame.Server.Engine.csproj" />
   <Project Path="code/shared/TGame.Shared.csproj" />
   <Project Path="code/tests/probe-client/TGame.ProbeClient.csproj" />
   <Project Path="code/tests/singlepoint/TGame.SinglePointTests.csproj" />
