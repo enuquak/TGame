@@ -28,7 +28,7 @@
 
 - [x] [Program.cs](../code/server/app/Program.cs)：启动参数、宿主配置、角色创建、初始化与注册、任务监督、退出清理。
 - [x] [ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：旧版公共初始化已读；当前移入引擎并作为默认实现，复用引擎身份，不再负责等待连接，变更待复读。
-- [x] [DBMgrServerSinglePoint.cs](../code/server/logic/entities/dbMgrServerSinglePoint/DBMgrServerSinglePoint.cs)：具体角色的初始化与资源释放。
+- [x] [DBMgrServerSinglePoint.cs](../code/server/logic/entities/SinglePoint/DBMgrServerSinglePoint.cs)：具体角色的初始化与资源释放。
 - [x] [SinglePointRegistry.cs](../code/server/engine/SinglePointRegistry.cs)：旧版标注注册已读；当前移入引擎，缺少业务实现时创建默认类，变更待复读。
 - [x] [Topology.cs](../code/server/engine/Topology.cs)：角色之间主动发起连接的关系。
 - [x] [ServiceRegistry.cs](../code/server/engine/ServiceRegistry.cs)：向 ZooKeeper 注册地址、发现其他角色、关闭注册连接。
