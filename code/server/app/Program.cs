@@ -40,14 +40,13 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     var role = process.Role;
     var processType = process.Type;
     var settings = ServerSettings.Current.Value;
-    bool diagnosticsEnabled = ServerSettings.DiagnosticsEnabled();
 
     var builder = WebApplication.CreateSlimBuilder();
     var messages = new RpcDispatcher();
     var idOptions = IdGeneratorOptions.Load(Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName), settings.ZooKeeper);
     await using var idGenerator = await SnowflakeIdGenerator.CreateAsync(idOptions);
-    using var node = new GameServerNode(process.Name, group, messages, idGenerator, diagnosticsEnabled);
-    ServerMessages.Register(messages, node, diagnosticsEnabled);
+    using var node = new GameServerNode(process.Name, group, messages, idGenerator);
+    ServerMessages.Register(messages, node);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
@@ -71,11 +70,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     builder.Services.AddSingleton<IIdGenerator>(idGenerator);
 
     await using var app = builder.Build();
-    if (processType == ProcessType.Gate)
-    {
-        node.MapDiagnostics(app);
-    }
-    else
+    if (processType != ProcessType.Gate)
     {
         app.MapGrpcService<LinkService>();
     }

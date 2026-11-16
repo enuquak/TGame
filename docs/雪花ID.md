@@ -30,9 +30,9 @@ string requestId = idGenerator.GenId().ToString(CultureInfo.InvariantCulture);
 
 [id-generator.json](../code/server/config/id-generator.json) 声明编号根路径及连接/会话超时。ZooKeeper 地址继续由统一的 ServerSettings 配置提供，ID 生成和服务发现共用该地址。
 
-已接入请求 ID、实体 ID、连接 ID、Redis 缓存占用标记和验收请求。PowerShell 验收脚本通过探测客户端 `--ids <ID配置文件> <服务器配置文件> <数量>` 批量调用相同生成器，不复制算法。
+已接入请求 ID、实体 ID、连接 ID 和 Redis 缓存占用标记。ID 算法及 ZooKeeper 分配检查位于 `code/tests/singlepoint/IdGeneratorChecks.cs`。
 
-当前分支已移除运行 ID；控制台和验收目录沿用时间目录名，不重新引入运行批次 ID。请求、实体和连接 ID 已统一为十进制文本，升级时需要同时更新服务器、验收客户端并重启整组进程。本次不改写存量数据库文档。测试用临时目录由系统临时目录 API 创建，不属于业务 ID。
+当前分支已移除运行 ID；控制台和验收目录沿用时间目录名，不重新引入运行批次 ID。请求、实体和连接 ID 已统一为十进制文本，升级时需要统一更新服务器并重启整组进程。本次不改写存量数据库文档。测试用临时目录由系统临时目录 API 创建，不属于业务 ID。
 
 ## 验证
 
@@ -41,7 +41,6 @@ dotnet build TGame.slnx
 dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj
 $env:TGAME_SERVER_CONFIG = (Resolve-Path code/server/config/server.local.yaml).Path
 dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --id-zookeeper code/server/config/id-generator.json
-pwsh -NoProfile -File tools/scripts/powershell/Test-PingPong.ps1
 pwsh -NoProfile -File tools/scripts/powershell/Test-ServerConsole.ps1
 ```
 

@@ -64,7 +64,7 @@
 3. 请求超时、响应迟到、连接断开时，等待中的调用分别如何结束？
 4. 为什么响应直接交给等待者，而请求先进入处理队列？
 
-引擎 `ServerNode` 是基类，业务 `GameServerNode` 继承它；`GameServerNode` 的多个 partial 文件是同一个业务类的不同部分。引擎 `PeerLink` 与业务 `PeerLinkMessages` 已分开，`PeerLink.Profile.cs` 和 `PeerLink.Probes.cs` 提供业务扩展方法，不再是引擎连接类的 partial。生成协议源码用于辅助跳转，日常阅读和修改以手写 `.proto` 为准。
+引擎 `ServerNode` 是基类，业务 `GameServerNode` 继承它；`GameServerNode` 的多个 partial 文件是同一个业务类的不同部分。引擎 `PeerLink` 与业务 `PeerLinkMessages` 已分开，`PeerLink.Profile.cs` 提供业务扩展方法，不再是引擎连接类的 partial。生成协议源码用于辅助跳转，日常阅读和修改以手写 `.proto` 为准。
 
 ## 已讨论的 C# 与项目概念
 

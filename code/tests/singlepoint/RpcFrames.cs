@@ -1,14 +1,11 @@
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
-using TGame.Diagnostics;
 using TGame.Profile;
 using TGame.Transport;
 
 internal static class RpcFrames
 {
-    public static Frame Request(Ping message) => Request(message, message.RequestId);
     public static Frame Request(ProfileRequest message) => Request(message, message.RequestId);
-    public static Frame Reply(Pong message) => Reply(message, message.RequestId);
     public static Frame Reply(ProfileReply message) => Reply(message, message.RequestId);
 
     public static Frame Request(IMessage message, string requestId) =>

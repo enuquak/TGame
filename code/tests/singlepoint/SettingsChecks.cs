@@ -6,7 +6,6 @@ internal static class SettingsChecks
     public static void Run()
     {
         var path = Path.Combine(Path.GetTempPath(), $"tgame-settings-{TestIds.Generator.GenId()}.yaml");
-        var previous = Environment.GetEnvironmentVariable(ServerEnvironment.Diagnostics);
         try
         {
             const string yaml = """
@@ -44,32 +43,9 @@ internal static class SettingsChecks
                 {
                 }
             }
-
-            Environment.SetEnvironmentVariable(ServerEnvironment.Diagnostics, null);
-            if (ServerSettings.DiagnosticsEnabled())
-            {
-                throw new Exception("Diagnostics must be disabled by default.");
-            }
-
-            Environment.SetEnvironmentVariable(ServerEnvironment.Diagnostics, "true");
-            if (!ServerSettings.DiagnosticsEnabled())
-            {
-                throw new Exception("Explicit diagnostic opt-in was ignored.");
-            }
-
-            Environment.SetEnvironmentVariable(ServerEnvironment.Diagnostics, "invalid");
-            try
-            {
-                ServerSettings.DiagnosticsEnabled();
-                throw new Exception("Invalid diagnostic opt-in was silently accepted.");
-            }
-            catch (InvalidOperationException)
-            {
-            }
         }
         finally
         {
-            Environment.SetEnvironmentVariable(ServerEnvironment.Diagnostics, previous);
             File.Delete(path);
         }
     }

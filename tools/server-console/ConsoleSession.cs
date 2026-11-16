@@ -333,7 +333,7 @@ internal sealed class ConsoleSession : IDisposable
     {
         var info = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
         foreach (var key in new[] { ServerEnvironment.DBMgrMongoPassword, ServerEnvironment.MongoPassword,
-            ServerEnvironment.RedisPassword, ServerEnvironment.Diagnostics, MongoPasswordKey, RedisPasswordKey })
+            ServerEnvironment.RedisPassword, MongoPasswordKey, RedisPasswordKey })
         {
             info.Environment.Remove(key);
         }

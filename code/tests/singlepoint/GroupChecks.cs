@@ -1,3 +1,4 @@
+using StringValue = Google.Protobuf.WellKnownTypes.StringValue;
 using Grpc.Core;
 using TGame;
 using TGame.Server.Engine;
@@ -311,23 +312,24 @@ internal static class GroupChecks
         }
 
         var thirdBase = ServerProcess.FormatName(nameof(ProcessType.Base), 3);
-        var caller = streams[ServerProcess.FormatName(nameof(ProcessType.Login), 2)];
+        var secondLogin = ServerProcess.FormatName(nameof(ProcessType.Login), 2);
+        var caller = streams[secondLogin];
         var receiver = streams[thirdBase];
-        var ping = new TGame.Diagnostics.Ping
-        {
-            RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = ids[thirdBase], Entry = nameof(ProcessType.Login)
-        };
-        caller.Input.Writer.TryWrite(RpcFrames.Request(ping));
-        if ((await receiver.Output.Reader.ReadAsync(stop)).ReadRequest<TGame.Diagnostics.Ping>().RequestId != ping.RequestId)
+        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var routed = RpcFrames.Request(new StringValue { Value = requestId }, requestId);
+        routed.Request.SourceProcess = secondLogin;
+        routed.Request.EntityId = ids[thirdBase];
+        routed.Request.DeadlineUnixMs = DateTimeOffset.UtcNow.Add(PeerLink.RequestTimeout).ToUnixTimeMilliseconds();
+        caller.Input.Writer.TryWrite(routed);
+        var received = await receiver.Output.Reader.ReadAsync(stop);
+        if (received.Request.RequestId != requestId || received.ReadRequest<StringValue>().Value != requestId)
         {
             throw new Exception("Router did not deliver to the exact third Base instance.");
         }
 
-        receiver.Input.Writer.TryWrite(RpcFrames.Reply(new TGame.Diagnostics.Pong
-        {
-            RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = nameof(ProcessType.Base)
-        }));
-        if ((await caller.Output.Reader.ReadAsync(stop)).ReadReply<TGame.Diagnostics.Pong>().RequestId != ping.RequestId)
+        receiver.Input.Writer.TryWrite(RpcFrames.Reply(new StringValue { Value = thirdBase }, requestId));
+        var response = await caller.Output.Reader.ReadAsync(stop);
+        if (response.Reply.RequestId != requestId || response.ReadReply<StringValue>().Value != thirdBase)
         {
             throw new Exception("Router did not return the reply to the second Login instance.");
         }

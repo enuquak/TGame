@@ -28,63 +28,52 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 | 范围 | 保存位置 | 内容 |
 | --- | --- | --- |
 | 项目 | [控制台配置](tools/server-console/project.json) | `environmentName` 是左栏显示的环境名称。`commands` 决定可用命令和显示顺序。可选值为 `Start`、`Stop`、`ExportProtobuf`、`Build`、`BuildAndRestart`。 |
-| 项目 | [服务端进程数量](code/server/config/processes.json) | 服务器、控制台和联通验收共用的类型与实例数量；新运行组保存配置快照。 |
+| 项目 | [服务端进程数量](code/server/config/processes.json) | 服务器和控制台共用的类型与实例数量；新运行组保存配置快照。 |
 | 用户 | `%LOCALAPPDATA%\TGame\ServerConsole\<工作目录标识>\user.json` | 关闭窗口时保存尺寸、最大化状态、当前页签，以及各进程的搜索词、仅匹配行和跟踪最新选项。每个 Windows 账户和工作目录分别保存。 |
 
 项目配置随 Git 提交，下次打开控制台时生效。个人设置在本机自动生成。测试凭据继续取自环境变量或 `.local/secrets/cloud.env`，实际进程状态由控制台从运行实例和日志重新读取。
 
 自动化验收通过 `pwsh -NoProfile -File tools/scripts/powershell/Test-ServerConsole.ps1` 运行。请先启动测试隧道。脚本在 `build/console-check/` 中建立独立工作目录，验证起服、选关、补起、重新接管以及编译成功和失败时的重启行为。
 
-## 服务器环境与诊断开关
+## 服务器环境
 
 服务端通过 `TGAME_SERVER_CONFIG` 显式选择 YAML 文件；未选择或配置不完整时拒绝启动。`ServerSettings` 读取 Profile 数据库地址、数据库名、用户、凭据环境变量名、Redis 键前缀和 ZooKeeper 注册根路径。DBMgr 继续使用下文说明的独立存储配置。
 
 [server.local.yaml](code/server/config/server.local.yaml) 描述当前本地开发环境，沿用 SSH 隧道和已有联调账号。控制台默认选择这份配置；设置 `TGAME_SERVER_CONFIG` 后使用指定环境。启动新一组进程时，控制台将所选 YAML 保存为运行目录中的 `server.yaml`；重新接管或补起进程时复用这份快照，不受后来环境变量或源文件变化影响。其它环境提供自己的 YAML 和对应凭据，ZooKeeper 注册根路径须预先创建。
 
-诊断默认关闭：Gate 不注册 `/probe`，内部 RPC 不注册诊断处理器。联通验收启动器显式设置 `TGAME_SERVER_DIAGNOSTICS=true`，控制台启动子进程时清除该变量。Profile 样例数据位于 `code/tests/fixtures/`，测试客户端构造实际 `ProfileRequest`，诊断服务端负责校验和转发。GM、Profile 使用各自的业务协议，关闭诊断后仍可正常注册和分发。
+## 服务器运行与验证
 
-## Ping/Pong 联通验证
-
-在项目根目录运行以下命令。第一条启动云测试环境的 SSH 隧道，第二条构建共享协议、服务端和独立探测客户端，按数量配置启动本组实例（默认 Gate、GM、Login、Base、Scene、Router、DBMgr、Profile 各一个），再运行客户端完成验收。
+Probe Ping/Pong、`/probe` 入口和专用验收工具已移除。通用 RPC、消息队列和 Profile 就绪检查可在本机运行：
 
 ```powershell
-.\tools\scripts\Start-EnvironmentTunnel.bat
-.\tools\scripts\Test-PingPong.bat
+dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --engine
 ```
 
-需要仓库指定的 .NET SDK、PowerShell 7.4+、本机 ASP.NET Core 开发证书（可用 `dotnet dev-certs https` 创建）及 MongoDB、Redis 测试账号密码。设置 `TGAME_MONGO_PASSWORD`、`TGAME_REDIS_PASSWORD`，或使用本机 `.local/secrets/cloud.env` 中的 `MONGO_TEST_PASSWORD`、`REDIS_TEST_PASSWORD`。首次构建需还原 NuGet 包。每个进程监听随机回环端口，在 ZooKeeper 注册固定临时节点 `/tgame/test/server-<实例名>` 并读取其他实例的地址。同名节点已存在时直接起服失败，保留原节点，不等待或覆盖；控制台模式遵循同一规则。测试客户端用同一条 WSS 连接发送二进制 Protobuf，并校验本机 Gate 证书指纹。
+这项检查不启动服务器组，也不连接数据库或 ZooKeeper。Profile 存储联调与控制台整组验收按需单独运行。
 
-验收程序跑两轮常规探针，按请求 ID 核对每一跳的收发及复用的 gRPC 双向流（默认配置为 9 条）。普通 DBMgr 消息走 Router，存盘探针走 Base 的专线并执行 MongoDB `ping`。协议源文件见 [pingpong.proto](code/shared/protocols/pingpong.proto)。
+每个服务进程先完成引擎初始化（监听、ZooKeeper 注册和首次拓扑连接），再按 `SinglePointFor` 标注创建并初始化本进程的 SinglePoint。业务实现可选；没有注册实现的角色使用引擎 `ServerSinglePoint` 默认类。目前 DBMgr 和 Profile 提供业务子类，其余角色使用默认类。`SINGLE_POINT_INIT` 与 `SINGLE_POINT_READY` 记录初始化的开始与成功，均带实际类名和 EntityId。`LINKS_READY` 单独记录所有预期实例连接齐备。
 
-每个服务进程先完成引擎初始化（监听、ZooKeeper 注册和首次拓扑连接），再按 `SinglePointFor` 标注创建并初始化本进程的 SinglePoint。业务实现可选；没有注册实现的角色使用引擎 `ServerSinglePoint` 默认类。目前 DBMgr、Profile 和 GM 提供业务子类，其余角色使用默认类。`SINGLE_POINT_INIT` 与 `SINGLE_POINT_READY` 记录初始化的开始与成功，均带实际类名和 EntityId。`LINKS_READY` 单独记录所有预期实例连接齐备。每种类型的首个实例收到定向探针；所有实例核对拓扑连接，以及在全部 Router 实例的位置登记。
-
-引擎提前生成并登记本进程的 EntityId，随后创建的 SinglePoint 复用同一份身份。Router 只接受非空、无重复的 雪花 ID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。联通脚本从本轮启动日志读取实际 EntityId 来生成测试用例，正式流程不再登记或依赖固定的测试 ID，旧版固定 ID 请求也不再接受。
-
-Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[本地环境配置](code/server/config/server.local.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
+引擎提前生成并登记本进程的 EntityId，随后创建的 SinglePoint 复用同一份身份。Router 只接受非空、无重复的 雪花 ID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。正式流程不登记或依赖固定的测试 ID。
 
 服务进程直接写入 `logs/server/<实例名称>Server/`，例如 `logs/server/Base1Server/` 和 `logs/server/GM1Server/`。每行是一条 JSON 事件，可按 `pid`、角色、时间和请求 `id` 查询，不再包含 `runId`。每个实例使用 `<PID>-<进程启动UTC ticks>-yyyyMMddHH.log`，用启动时间区分复用的 PID。按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
 
-验收材料在 `logs/tools/pingpong/<UTC时间目录>/`。`result.log` 汇总链路和协议验证结果，`server-logs.json` 按实例保存 PID 与进程启动时间以定位本轮服务日志，`Client.log` 是测试客户端输出。服务进程的致命异常以 `PROCESS_FAILED` 记录，启动器捕获的原始标准错误保存在验收目录的 `<实例名>.stderr.log`。成功末行为 `PASS processes=8 grpc_links=9 wss_sessions=1 rounds=2 pong=25 mongo_ping=2`。失败返回非零退出码。日志清单格式随本次修改更新，旧版清单需使用对应版本的验收脚本复核。
+服务端入口为 `code/server/app/Program.cs`，只接受 `<实例名> <运行目录>`，运行目录名称不要求 GUID；例如 `Base2 <运行目录>`；实例类型与预期数量从运行目录中的 `processes.json` 快照读取。
 
-默认在验收后停止本轮进程；传入 `-Hold` 可保留进程到按回车时。自动化使用 `pwsh -NoProfile -File ./tools/scripts/powershell/Test-PingPong.ps1`，可通过 `-Configuration <路径>` 指定数量配置。测试覆盖配置中全部实例的启动发现和拓扑连接，并验证消息路径和 Profile 摘要读写；运行中动态扩缩容及玩家完整存盘属于后续验证范围。
-
-服务端入口为 `code/server/app/Program.cs`，只接受 `<实例名> <运行目录>`，运行目录名称不要求 GUID；例如 `Base2 <运行目录>`；实例类型与预期数量从运行目录中的 `processes.json` 快照读取。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 引用引擎项目以复用雪花 ID 生成器，并通过引擎引用共享协议，不依赖服务端宿主项目。常规联通入口接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
-
-服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类、业务节点 `GameServerNode`、Profile 和诊断处理位于 `code/server/logic/`；宿主负责提供业务类型集合、组装节点并按两个阶段启动服务。引擎可以单独构建，不引用宿主或业务实现。GM 进程使用引擎默认 SinglePoint，保留与 Router 的拓扑连接。
+服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类、业务节点 `GameServerNode`、Profile 处理位于 `code/server/logic/`；宿主负责提供业务类型集合、组装节点并按两个阶段启动服务。引擎可以单独构建，不引用宿主或业务实现。GM 进程使用引擎默认 SinglePoint，保留与 Router 的拓扑连接。
 
 唯一 ID 统一调用引擎的 `idGenerator.GenId()`，使用雪花算法；ZooKeeper 自动分配进程编号，引擎与业务共用生成器。请求、实体、连接和缓存占用标记均已接入，详见[雪花 ID](docs/雪花ID.md)。
 
-共享的日志格式与 WebSocket 读帧分别属于 `TGame.Logging`、`TGame.Transport`，探针数据放在 `code/tests/fixtures/`。连接服务与通用 RPC 帧定义在 [transport.proto](code/shared/protocols/transport.proto)，请求与响应通过 Protobuf `Any` 承载。`RpcDispatcher` 根据消息类型分发，`logic/messages/ServerMessages.cs` 注册 Profile 和可选诊断处理器。协议构建时生成到 `code/shared/generated/protocols/`。
+共享日志 JSON 格式属于 `TGame.Logging`。连接服务与通用 RPC 帧定义在 [transport.proto](code/shared/protocols/transport.proto)，请求与响应通过 Protobuf `Any` 承载。`RpcDispatcher` 根据消息类型分发，`logic/messages/ServerMessages.cs` 注册 Profile 处理器。协议构建时生成到 `code/shared/generated/protocols/`。
 
-内部 gRPC 服务为 `tgame.transport.ServerLink`，服务发现采用固定的 `server-<实例名>` 节点；各进程须使用统一重新构建的版本，不能混用仍带运行 ID 的旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。强制终止后若 ZooKeeper 会话尚未过期，新进程会起服失败，待旧节点消失后再启动。可运行 `dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --registry` 检查节点冲突与正常退出后的重新注册；该检查需要 ZooKeeper 隧道。Ping/Pong 验收脚本及历史日志目录继续保留测试名称。
+内部 gRPC 服务为 `tgame.transport.ServerLink`，服务发现采用固定的 `server-<实例名>` 节点；各进程须使用统一重新构建的版本，不能混用仍带运行 ID 的旧构建。控制台的“编译并重启”会统一构建、启动各角色。强制终止后若 ZooKeeper 会话尚未过期，新进程会起服失败，待旧节点消失后再启动。可运行 `dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --registry` 检查节点冲突与正常退出后的重新注册；该检查需要 ZooKeeper 隧道。
 
 ### DBMgr 存储配置
 
 DBMgr 使用 [dbmgr-storage.yaml](code/server/config/dbmgr-storage.yaml) 配置 MongoDB 地址、业务数据库、认证数据库、用户名和服务器选择超时。构建和发布会把它复制到程序目录的 `config/` 下；仓库提供的是本机联调值，部署时替换为目标环境配置。密码只从 `TGAME_DBMGR_MONGO_PASSWORD` 读取，不写入配置文件。
 
-`MongoStorageSettings` 负责读取和校验配置，`MongoStorage` 负责创建连接及检查数据库响应。DBMgr 初始化会调用 `CheckDatabaseConnectionAsync`，检查成功后才标记为就绪；存储探针复用同一检查方法。DBMgr 不再读取 `TestStorage`、`storage.test.yaml` 或测试密码变量。
+`MongoStorageSettings` 负责读取和校验配置，`MongoStorage` 负责创建连接及检查数据库响应。DBMgr 初始化会调用 `CheckDatabaseConnectionAsync`，检查成功后才标记为就绪。DBMgr 不再读取 `TestStorage`、`storage.test.yaml` 或测试密码变量。
 
-手动启动 DBMgr 前须设置 `TGAME_DBMGR_MONGO_PASSWORD`。本机服务器控制台和联通验收脚本优先使用该变量；未设置时，由启动器将现有 MongoDB 联调凭据注入该变量。Profile 使用 `TGAME_SERVER_CONFIG` 指定的环境配置，凭据变量名由该配置声明；本地配置使用 `TGAME_MONGO_PASSWORD` 和 `TGAME_REDIS_PASSWORD`。
+手动启动 DBMgr 前须设置 `TGAME_DBMGR_MONGO_PASSWORD`。本机服务器控制台优先使用该变量；未设置时，由启动器将现有 MongoDB 联调凭据注入该变量。Profile 使用 `TGAME_SERVER_CONFIG` 指定的环境配置，凭据变量名由该配置声明；本地配置使用 `TGAME_MONGO_PASSWORD` 和 `TGAME_REDIS_PASSWORD`。
 
 ## 云服务器连接
 

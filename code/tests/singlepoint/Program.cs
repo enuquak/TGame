@@ -1,11 +1,8 @@
-using TGame.Diagnostics;
+using Empty = Google.Protobuf.WellKnownTypes.Empty;
 using TGame.Transport;
 using TGame.Profile;
-using System.Net.WebSockets;
 using System.Threading.Channels;
 using Grpc.Core;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Features;
 using TGame;
 using TGame.Server;
 using TGame.Server.Engine;
@@ -13,7 +10,7 @@ using TGame.Server.Logic;
 
 const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
-const string LegacyProbeEntityId = "body-1";
+const string InvalidEntityId = "body-1";
 
 if (args is ["--routing"])
 {
@@ -62,7 +59,6 @@ if (args is ["--registry"])
 }
 
 SettingsChecks.Run();
-await DiagnosticChecks.VerifyDisabledAsync();
 RpcChecks.CheckTransportBoundary();
 await SinglePointChecks.RunAsync();
 
@@ -130,7 +126,7 @@ var profileCall = loginNode.CallProfileAsync(profileRequest, stop);
 var profileFrame = await router.Output.Reader.ReadAsync(stop);
 if (profileFrame.ReadRequest<ProfileRequest>()?.RequestId != profileRequest.RequestId || profileFrame.ReadRequest<ProfileRequest>().Fetch != profileRequest.Fetch)
 {
-    throw new Exception("Profile requests must use their own transport message without a Ping wrapper.");
+    throw new Exception("Profile request payload changed during transport.");
 }
 
 router.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
@@ -141,7 +137,7 @@ router.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
     }));
 if ((await profileCall.WaitAsync(stop)).Result != ProfileReply.Types.Result.Missing)
 {
-    throw new Exception("Profile reply was not delivered independently of Ping/Pong.");
+    throw new Exception("Profile reply was not delivered to its caller.");
 }
 
 retry.Input.Writer.Complete();
@@ -173,7 +169,7 @@ if (gate.Ready || gate.SinglePoint is not null)
     throw new Exception("Engine readiness must not create or initialize a business SinglePoint.");
 }
 
-await ExpectPong(Pong.Types.Status.Unavailable);
+await ExpectProfileResult(ProfileReply.Types.Result.Unavailable);
 var initialization = gate.InitializeSinglePointAsync(business, stop);
 var point = gate.SinglePoint as WaitingSinglePoint ?? throw new Exception("The registered business SinglePoint was not selected.");
 await point.Started.Task.WaitAsync(stop);
@@ -182,18 +178,15 @@ if (!ReferenceEquals(point.State, gate.State))
     throw new Exception("SinglePoint initialization replaced the identity already registered by the engine.");
 }
 
-var context = new DefaultHttpContext();
-context.Features.Set<IHttpWebSocketFeature>(new WebSocketUpgrade());
-await gate.WebSocketAsync(context);
-if (context.Response.StatusCode != StatusCodes.Status503ServiceUnavailable)
-{
-    throw new Exception("Gate accepted traffic during role initialization.");
-}
-
-await ExpectPong(Pong.Types.Status.Unavailable);
+await ExpectProfileResult(ProfileReply.Types.Result.Unavailable);
 point.Release.SetResult();
 await initialization.WaitAsync(stop);
-await ExpectPong(Pong.Types.Status.Ok);
+if (!gate.Ready)
+{
+    throw new Exception("Gate remained unavailable after role initialization.");
+}
+
+await ExpectProfileResult(ProfileReply.Types.Result.Rejected);
 login.Input.Writer.Complete();
 basePeer.Input.Writer.Complete();
 await streams.WaitAsync(stop);
@@ -258,7 +251,7 @@ if (!failedPoint.Disposed)
 
 using var routes = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
 var duplicateEntityId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
-string[][] invalidRegistrations = [[], [LegacyProbeEntityId], [duplicateEntityId, duplicateEntityId]];
+string[][] invalidRegistrations = [[], [InvalidEntityId], [duplicateEntityId, duplicateEntityId]];
 foreach (var ids in invalidRegistrations)
 {
     try
@@ -311,8 +304,8 @@ var publish = new ProfileRequest
     Publish = new EntitySummary
     {
         EntityId = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)],
-        DisplayName = ProfileProbeData.DisplayName,
-        Title = ProfileProbeData.Title
+        DisplayName = "TGame profile",
+        Title = "Profile check"
     }
 };
 baseRoute.Input.Writer.TryWrite(RpcFrames.Request(publish));
@@ -346,7 +339,7 @@ await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), new ProfileRequest
 {
     RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
-    Fetch = LegacyProbeEntityId
+    Fetch = InvalidEntityId
 });
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.GM), 1), new ProfileRequest
 {
@@ -354,10 +347,13 @@ await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.GM), 1),
     Fetch = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)]
 });
 
-var missing = new Ping { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), Entry = nameof(ProcessType.Base) };
-baseRoute.Input.Writer.TryWrite(RpcFrames.Request(missing));
-var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).ReadReply<Pong>();
-if (notFound?.RequestId != missing.RequestId || notFound.Status != Pong.Types.Status.NotFound || !routes.Ready)
+var missing = RpcFrames.Request(new Empty(), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture));
+missing.Request.SourceProcess = ServerProcess.FormatName(nameof(ProcessType.Base), 1);
+missing.Request.EntityId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+missing.Request.DeadlineUnixMs = DateTimeOffset.UtcNow.Add(PeerLink.RequestTimeout).ToUnixTimeMilliseconds();
+baseRoute.Input.Writer.TryWrite(missing);
+var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).Reply;
+if (notFound.RequestId != missing.Request.RequestId || notFound.Error?.StatusCode != (int)StatusCode.NotFound || !routes.Ready)
 {
     throw new Exception("A missing entity interrupted a healthy stream.");
 }
@@ -369,7 +365,7 @@ foreach (var stream in neighbors.Values)
 
 await routing.WaitAsync(stop);
 await GroupChecks.RunAsync(stop);
-Console.WriteLine("PASS engine-first initialization, optional business construction, failure disposal, Profile routing, handshake retry, WSS/gRPC gating, cancellation and disconnect.");
+Console.WriteLine("PASS engine-first initialization, optional business construction, failure disposal, Profile routing, handshake retry, readiness gating, cancellation and disconnect.");
 return 0;
 
 async Task ExpectProfileRejected(string peer, ProfileRequest request)
@@ -394,14 +390,18 @@ Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null
     return node.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), ids ?? [], stream, stream, stop);
 }
 
-async Task ExpectPong(Pong.Types.Status status)
+async Task ExpectProfileResult(ProfileReply.Types.Result result)
 {
-    var ping = new Ping { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = gate.State.EntityId, Entry = nameof(ProcessType.Gate) };
-    login.Input.Writer.TryWrite(RpcFrames.Request(ping));
-    var response = (await login.Output.Reader.ReadAsync(stop)).ReadReply<Pong>();
-    if (response?.RequestId != ping.RequestId || response.Status != status)
+    var request = new ProfileRequest
     {
-        throw new Exception($"Expected {status} for the Gate entity, got {response}.");
+        RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Fetch = gate.State.EntityId
+    };
+    login.Input.Writer.TryWrite(RpcFrames.Request(request));
+    var response = (await login.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>();
+    if (response.RequestId != request.RequestId || response.Result != result)
+    {
+        throw new Exception($"Expected {result} for the Profile request, got {response}.");
     }
 }
 
@@ -453,11 +453,4 @@ sealed class FrameStream : IAsyncStreamReader<Frame>, IAsyncStreamWriter<Frame>
         Current = await Input.Reader.ReadAsync(stop);
         return true;
     }
-}
-
-sealed class WebSocketUpgrade : IHttpWebSocketFeature
-{
-    public bool IsWebSocketRequest => true;
-    public Task<WebSocket> AcceptAsync(WebSocketAcceptContext context) =>
-        throw new Exception("WebSocket was accepted during role initialization.");
 }

@@ -1,7 +1,6 @@
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using TGame;
-using TGame.Diagnostics;
 using TGame.Profile;
 using TGame.Server.Engine;
 using TGame.Server.Logic;
@@ -12,9 +11,9 @@ internal static class MessageDispatchChecks
     public static async Task RunAsync(CancellationToken stop)
     {
         await VerifyNestedDispatchAsync(stop);
-        await VerifyDiagnosticRegistrationAsync(stop);
+        await VerifyProfileReadinessAsync(stop);
         await VerifyQueueLimitAsync(stop);
-        Console.WriteLine("PASS nested RPC dispatch, optional diagnostic handlers and bounded request queues.");
+        Console.WriteLine("PASS nested RPC dispatch, Profile readiness and bounded request queues.");
     }
 
     private static async Task VerifyNestedDispatchAsync(CancellationToken stop)
@@ -72,37 +71,19 @@ internal static class MessageDispatchChecks
         }
     }
 
-    private static async Task VerifyDiagnosticRegistrationAsync(CancellationToken stop)
+    private static async Task VerifyProfileReadinessAsync(CancellationToken stop)
     {
         var messages = new RpcDispatcher();
         var stream = new FrameStream();
         var link = new PeerLink(nameof(ProcessType.Gate), ServerProcess.FormatName(nameof(ProcessType.Login), 1), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), stream);
         using var node = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
         ServerMessages.Register(messages, node);
-        var ping = new Ping { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = node.State.EntityId };
-        try
-        {
-            await messages.DispatchAsync(RpcFrames.Request(ping).Request, ServerProcess.FormatName(nameof(ProcessType.Login), 1), link, stop);
-            throw new Exception("Normal startup registered a diagnostic RPC handler.");
-        }
-        catch (RpcException error) when (error.StatusCode == StatusCode.Unimplemented)
-        {
-        }
-
         var profile = new ProfileRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), Fetch = node.State.EntityId };
         await messages.DispatchAsync(RpcFrames.Request(profile).Request, ServerProcess.FormatName(nameof(ProcessType.Login), 1), link, stop);
         var profileFrame = await stream.Output.Reader.ReadAsync(stop);
         if (profileFrame.ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Unavailable)
         {
-            throw new Exception("Disabling diagnostics changed the Profile handler or its readiness check.");
-        }
-
-        DiagnosticMessages.Register(messages, node);
-        await messages.DispatchAsync(RpcFrames.Request(ping).Request, ServerProcess.FormatName(nameof(ProcessType.Login), 1), link, stop);
-        var diagnosticFrame = await stream.Output.Reader.ReadAsync(stop);
-        if (diagnosticFrame.ReadReply<Pong>().Status != Pong.Types.Status.Unavailable)
-        {
-            throw new Exception("Explicit diagnostic registration did not retain business readiness checks.");
+            throw new Exception("Profile accepted a request before the node was ready.");
         }
     }
 

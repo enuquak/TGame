@@ -57,22 +57,6 @@ internal sealed class ServerSettings
         return Load(path);
     });
 
-    public static bool DiagnosticsEnabled()
-    {
-        var value = Environment.GetEnvironmentVariable(ServerEnvironment.Diagnostics);
-        if (string.IsNullOrEmpty(value))
-        {
-            return false;
-        }
-
-        if (!bool.TryParse(value, out bool enabled))
-        {
-            throw new InvalidOperationException($"{ServerEnvironment.Diagnostics} must be true or false.");
-        }
-
-        return enabled;
-    }
-
     public static ServerSettings Load(string path)
     {
         var yaml = File.ReadAllText(path);

@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../fixtures/ProfileProbeData.cs" Link="ProfileProbeData.cs" />
     <ProjectReference Include="../../server/app/TGame.Server.csproj" />
   </ItemGroup>
 </Project>
