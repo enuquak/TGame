@@ -35,6 +35,14 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 自动化验收通过 `pwsh -NoProfile -File tools/scripts/powershell/Test-ServerConsole.ps1` 运行。请先启动测试隧道。脚本在 `build/console-check/` 中建立独立工作目录，验证起服、选关、补起、重新接管以及编译成功和失败时的重启行为。
 
+## 服务器环境与诊断开关
+
+服务端通过 `TGAME_SERVER_CONFIG` 显式选择 YAML 文件；未选择或配置不完整时拒绝启动。`ServerSettings` 读取 Profile 数据库地址、数据库名、用户、凭据环境变量名、Redis 键前缀和 ZooKeeper 注册根路径。DBMgr 继续使用下文说明的独立存储配置。
+
+[server.local.yaml](code/server/config/server.local.yaml) 描述当前本地开发环境，沿用 SSH 隧道和已有联调账号。控制台默认选择这份配置；设置 `TGAME_SERVER_CONFIG` 后使用指定环境。启动新一组进程时，控制台将所选 YAML 保存为运行目录中的 `server.yaml`；重新接管或补起进程时复用这份快照，不受后来环境变量或源文件变化影响。其它环境提供自己的 YAML 和对应凭据，ZooKeeper 注册根路径须预先创建。
+
+诊断默认关闭：Gate 不注册 `/probe`，内部 RPC 不注册诊断处理器。联通验收启动器显式设置 `TGAME_SERVER_DIAGNOSTICS=true`，控制台启动子进程时清除该变量。Profile 样例数据位于 `code/tests/fixtures/`，测试客户端构造实际 `ProfileRequest`，诊断服务端负责校验和转发。GM、Profile 使用各自的业务协议，关闭诊断后仍可正常注册和分发。
+
 ## Ping/Pong 联通验证
 
 在项目根目录运行以下命令。第一条启动云测试环境的 SSH 隧道，第二条构建共享协议、服务端和独立探测客户端，按数量配置启动本组实例（默认 Gate、GM、Login、Base、Scene、Router、DBMgr、Profile 各一个），再运行客户端完成验收。
@@ -60,9 +68,7 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 
 默认在验收后停止本轮进程；传入 `-Hold` 可保留进程到按回车时。自动化使用 `pwsh -NoProfile -File ./tools/scripts/powershell/Test-PingPong.ps1`，可通过 `-Configuration <路径>` 指定数量配置。测试覆盖配置中全部实例的启动发现和拓扑连接，并验证消息路径、GM 指令和 Profile 摘要读写；运行中动态扩缩容及玩家完整存盘属于后续验证范围。
 
-服务端入口为 `code/server/app/Program.cs`，只接受 `<实例名> <运行目录>`，运行目录名称不要求 GUID；例如 `Base2 <运行目录>`；实例类型与预期数量从运行目录中的 `processes.json` 快照读取。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 只引用 `code/shared/TGame.Shared.csproj`，不依赖服务端工程。它接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
-
-环境配置通过 `TGAME_SERVER_CONFIG` 显式选择，见 [server.local.yaml](code/server/config/server.local.yaml)；控制台为新运行组保存环境配置快照。诊断端点默认关闭，联通验收脚本设置 `TGAME_SERVER_DIAGNOSTICS=true` 后才启用 Ping/Pong。
+服务端入口为 `code/server/app/Program.cs`，只接受 `<实例名> <运行目录>`，运行目录名称不要求 GUID；例如 `Base2 <运行目录>`；实例类型与预期数量从运行目录中的 `processes.json` 快照读取。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 引用引擎项目以复用雪花 ID 生成器，并通过引擎引用共享协议，不依赖服务端宿主项目。常规联通入口接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
 
 服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类、业务节点 `GameServerNode`、Profile 和诊断处理位于 `code/server/logic/`；宿主负责提供业务类型集合、组装节点并按两个阶段启动服务。引擎可以单独构建，不引用宿主或业务实现。
 
@@ -82,7 +88,7 @@ DBMgr 使用 [dbmgr-storage.yaml](code/server/config/dbmgr-storage.yaml) 配置 
 
 ### GM 管理入口
 
-本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的 十进制雪花 EntityId。返回的 `requestId` 可关联 GM 审计和 gRPC 收发日志。
+本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的十进制雪花 EntityId。内部使用 [gm.proto](code/shared/protocols/gm.proto) 的 `GmPingRequest` / `GmPingReply`，不依赖诊断 Ping/Pong。返回的 `requestId` 可关联 GM 审计和 `GM_PING_*`、`GM_PONG_*` 收发日志。
 
 自动验收默认生成一次性随机令牌。手动验收时先设置 `TGAME_GM_TOKEN`（至少 32 个字符的随机令牌）和 `TGAME_GM_OPERATOR`（该凭据对应的操作员），以 `-Hold` 运行脚本，从控制台取得 GM 地址。用 `Read-PingPongLog.ps1 -RunDirectory <本轮验收目录> -Role Scene1 -Event SINGLE_POINT_INIT` 读取目标 EntityId。在另一终端中使用相同令牌执行：
 
