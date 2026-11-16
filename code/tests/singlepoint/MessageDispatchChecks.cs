@@ -21,9 +21,9 @@ internal static class MessageDispatchChecks
     private static async Task VerifyNestedDispatchAsync(CancellationToken stop)
     {
         var messages = new RpcDispatcher();
-        var requestId = Guid.NewGuid().ToString("N");
-        var entityId = Guid.NewGuid().ToString("N");
-        var linkId = Guid.NewGuid().ToString("N");
+        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var entityId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var linkId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         messages.Register<StringValue>(request => request.Value, async (peer, request, link, token) =>
         {
@@ -43,7 +43,7 @@ internal static class MessageDispatchChecks
         });
 
         var stream = new FrameStream();
-        using var node = new GameServerNode(nameof(ProcessType.Gate), messages);
+        using var node = new GameServerNode(nameof(ProcessType.Gate), messages, TestIds.Generator);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         stream.Input.Writer.TryWrite(new Frame { Hello = nameof(ProcessType.Login) });
         var running = node.RunLinkAsync(nameof(ProcessType.Login), linkId, [], stream, stream, lifetime.Token);
@@ -84,10 +84,10 @@ internal static class MessageDispatchChecks
     {
         var messages = new RpcDispatcher();
         var stream = new FrameStream();
-        var link = new PeerLink(nameof(ProcessType.Gate), nameof(ProcessType.Login), Guid.NewGuid().ToString("N"), stream);
-        using var node = new GameServerNode(nameof(ProcessType.Gate), messages);
+        var link = new PeerLink(nameof(ProcessType.Gate), nameof(ProcessType.Login), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), stream);
+        using var node = new GameServerNode(nameof(ProcessType.Gate), messages, TestIds.Generator);
         ServerMessages.Register(messages, node);
-        var ping = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = node.State.EntityId };
+        var ping = new Ping { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = node.State.EntityId };
         try
         {
             await messages.DispatchAsync(RpcFrames.Request(ping).Request, nameof(ProcessType.Login), link, stop);
@@ -97,7 +97,7 @@ internal static class MessageDispatchChecks
         {
         }
 
-        var profile = new ProfileRequest { RequestId = Guid.NewGuid().ToString("N"), Fetch = node.State.EntityId };
+        var profile = new ProfileRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), Fetch = node.State.EntityId };
         await messages.DispatchAsync(RpcFrames.Request(profile).Request, nameof(ProcessType.Login), link, stop);
         var profileFrame = await stream.Output.Reader.ReadAsync(stop);
         if (profileFrame.ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Unavailable)
@@ -105,7 +105,7 @@ internal static class MessageDispatchChecks
             throw new Exception("Disabling diagnostics changed the Profile handler or its readiness check.");
         }
 
-        var gm = new GmPingRequest { RequestId = Guid.NewGuid().ToString("N"), EntityId = node.State.EntityId };
+        var gm = new GmPingRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = node.State.EntityId };
         await messages.DispatchAsync(RpcFrames.Request(gm, gm.RequestId).Request, nameof(ProcessType.Router), link, stop);
         var gmFrame = await stream.Output.Reader.ReadAsync(stop);
         if (gmFrame.ReadReply<GmPingReply>().Status != GmPingReply.Types.Status.Unavailable)
@@ -135,15 +135,15 @@ internal static class MessageDispatchChecks
             return release.Task.WaitAsync(token);
         });
 
-        using var node = new GameServerNode(nameof(ProcessType.Gate), messages);
+        using var node = new GameServerNode(nameof(ProcessType.Gate), messages, TestIds.Generator);
         stream.Input.Writer.TryWrite(new Frame { Hello = nameof(ProcessType.Login) });
-        var running = node.RunLinkAsync(nameof(ProcessType.Login), Guid.NewGuid().ToString("N"), [], stream, stream, stop);
-        var id = Guid.NewGuid().ToString("N");
+        var running = node.RunLinkAsync(nameof(ProcessType.Login), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
+        var id = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
         stream.Input.Writer.TryWrite(RpcFrames.Request(new StringValue { Value = id }, id));
         await started.Task.WaitAsync(stop);
         for (int i = 0; i < RequestCount; i++)
         {
-            id = Guid.NewGuid().ToString("N");
+            id = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
             stream.Input.Writer.TryWrite(RpcFrames.Request(new StringValue { Value = id }, id));
         }
 

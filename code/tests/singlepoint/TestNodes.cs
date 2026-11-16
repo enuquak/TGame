@@ -6,7 +6,7 @@ internal static class TestNodes
     public static GameServerNode Create(string role, bool diagnosticsEnabled = true)
     {
         var messages = new RpcDispatcher();
-        var node = new GameServerNode(role, messages, diagnosticsEnabled);
+        var node = new GameServerNode(role, messages, TestIds.Generator, diagnosticsEnabled);
         ServerMessages.Register(messages, node, diagnosticsEnabled);
         return node;
     }

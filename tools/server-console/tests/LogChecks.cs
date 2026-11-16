@@ -14,7 +14,8 @@ internal static class LogChecks
     // A private executable waiting on stdin supplies a real image path, PID and creation time.
     public static void Run(string checkout)
     {
-        var id = Guid.NewGuid().ToString("N");
+        var idGenerator = new TGame.Server.Engine.SnowflakeIdGenerator(0, TimeProvider.System);
+        var id = idGenerator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
         var run = Directory.CreateDirectory(Path.Combine(checkout, "build", "log-check", id)).FullName;
         var logs = Directory.CreateDirectory(Path.Combine(run, ProcessName + "Server")).FullName;
         var exe = Path.Combine(run, ProcessName + "Server.exe");

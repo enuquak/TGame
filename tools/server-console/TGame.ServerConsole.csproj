@@ -11,6 +11,6 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ServerConsole.Check" />
-    <Compile Include="../../code/shared/csharp/*.cs" LinkBase="Shared" />
+    <ProjectReference Include="../../code/server/engine/TGame.Server.Engine.csproj" />
   </ItemGroup>
 </Project>

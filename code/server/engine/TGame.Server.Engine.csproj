@@ -5,6 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="TGame.SinglePointTests" />
+    <InternalsVisibleTo Include="ServerConsole.Check" />
     <ProjectReference Include="../../shared/TGame.Shared.csproj" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.85.0" />
     <PackageReference Include="Serilog" Version="4.4.0" />

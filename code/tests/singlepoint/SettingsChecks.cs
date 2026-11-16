@@ -5,7 +5,7 @@ internal static class SettingsChecks
 {
     public static void Run()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"tgame-settings-{Guid.NewGuid():N}.yaml");
+        var path = Path.Combine(Path.GetTempPath(), $"tgame-settings-{TestIds.Generator.GenId()}.yaml");
         var previous = Environment.GetEnvironmentVariable(ServerEnvironment.Diagnostics);
         try
         {

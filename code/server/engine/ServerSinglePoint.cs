@@ -3,13 +3,16 @@ namespace TGame.Server.Engine;
 public class ServerSinglePoint
 {
     public SinglePointState State { get; private set; } = null!;
+    public IIdGenerator IdGenerator { get; private set; } = null!;
 
     public bool Initialized => Volatile.Read(ref initialized);
     private bool initialized;
 
-    public async Task InitializeAsync(string role, SinglePointState state, CancellationToken stop)
+    public async Task InitializeAsync(string role, SinglePointState state, IIdGenerator idGenerator, CancellationToken stop)
     {
+        ArgumentNullException.ThrowIfNull(idGenerator);
         State = state;
+        IdGenerator = idGenerator;
         TraceLog.Event(ServerLogEvents.SinglePointInit, role, entity: State.EntityId, detail: GetType().Name);
 
         try

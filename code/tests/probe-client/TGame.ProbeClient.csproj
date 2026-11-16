@@ -7,6 +7,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../fixtures/ProfileProbeData.cs" Link="ProfileProbeData.cs" />
-    <ProjectReference Include="../../shared/TGame.Shared.csproj" />
+    <ProjectReference Include="../../server/engine/TGame.Server.Engine.csproj" />
+    <Compile Include="../../server/app/ServerSettings.cs" Link="ServerSettings.cs" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 </Project>

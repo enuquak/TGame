@@ -15,6 +15,13 @@ const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
 const string LegacyProbeEntityId = "body-1";
 
+await IdGeneratorChecks.RunAsync();
+if (args is ["--id-zookeeper", var idConfig])
+{
+    await IdGeneratorChecks.RunZooKeeperAsync(idConfig, ServerSettings.Current.Value.ZooKeeper);
+    return 0;
+}
+
 if (args is ["--registry"])
 {
     try
@@ -91,7 +98,7 @@ if (!loginNode.Ready || loginNode.SinglePoint?.GetType() != typeof(ServerSingleP
     throw new Exception("A connected role with no business SinglePoint did not become ready.");
 }
 
-var profileRequest = new ProfileRequest { RequestId = Guid.NewGuid().ToString("N"), Fetch = Guid.NewGuid().ToString("N") };
+var profileRequest = new ProfileRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), Fetch = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture) };
 var profileCall = loginNode.CallProfileAsync(profileRequest, stop);
 var profileFrame = await router.Output.Reader.ReadAsync(stop);
 if (profileFrame.ReadRequest<ProfileRequest>()?.RequestId != profileRequest.RequestId || profileFrame.ReadRequest<ProfileRequest>().Fetch != profileRequest.Fetch)
@@ -170,7 +177,7 @@ if (gate.Ready)
 
 var cancelling = new WaitingSinglePoint();
 using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
-var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), new SinglePointState(), cancel.Token);
+var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), new SinglePointState(TestIds.Generator), TestIds.Generator, cancel.Token);
 await cancelling.Started.Task.WaitAsync(stop);
 cancel.Cancel();
 try
@@ -223,7 +230,7 @@ if (!failedPoint.Disposed)
 }
 
 using var routes = TestNodes.Create(nameof(ProcessType.Router));
-var duplicateEntityId = Guid.NewGuid().ToString("N");
+var duplicateEntityId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
 string[][] invalidRegistrations = [[], [LegacyProbeEntityId], [duplicateEntityId, duplicateEntityId]];
 foreach (var ids in invalidRegistrations)
 {
@@ -247,7 +254,7 @@ foreach (var pair in Topology.Dials)
     }
 
     neighbors.Add(pair.Key, new FrameStream());
-    neighborIds.Add(pair.Key, Guid.NewGuid().ToString("N"));
+    neighborIds.Add(pair.Key, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture));
 }
 
 var routeTasks = new List<Task>();
@@ -272,7 +279,7 @@ var baseRoute = neighbors[nameof(ProcessType.Base)];
 var profileRoute = neighbors[nameof(ProcessType.Profile)];
 var publish = new ProfileRequest
 {
-    RequestId = Guid.NewGuid().ToString("N"),
+    RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
     Publish = new EntitySummary
     {
         EntityId = neighborIds[nameof(ProcessType.Base)],
@@ -300,26 +307,26 @@ if (published?.RequestId != publish.RequestId || published.EntityId != publish.P
 }
 
 var foreignPublish = publish.Clone();
-foreignPublish.RequestId = Guid.NewGuid().ToString("N");
+foreignPublish.RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
 foreignPublish.Publish.EntityId = neighborIds[nameof(ProcessType.Scene)];
 await ExpectProfileRejected(nameof(ProcessType.Base), foreignPublish);
 await ExpectProfileRejected(nameof(ProcessType.Base), new ProfileRequest
 {
-    RequestId = Guid.NewGuid().ToString("N"),
+    RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
     Withdraw = neighborIds[nameof(ProcessType.Scene)]
 });
 await ExpectProfileRejected(nameof(ProcessType.Base), new ProfileRequest
 {
-    RequestId = Guid.NewGuid().ToString("N"),
+    RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
     Fetch = LegacyProbeEntityId
 });
 await ExpectProfileRejected(nameof(ProcessType.GM), new ProfileRequest
 {
-    RequestId = Guid.NewGuid().ToString("N"),
+    RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
     Fetch = neighborIds[nameof(ProcessType.Base)]
 });
 
-var missing = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = Guid.NewGuid().ToString("N"), Entry = nameof(ProcessType.Base) };
+var missing = new Ping { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), Entry = nameof(ProcessType.Base) };
 baseRoute.Input.Writer.TryWrite(RpcFrames.Request(missing));
 var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).ReadReply<Pong>();
 if (notFound?.RequestId != missing.RequestId || notFound.Status != Pong.Types.Status.NotFound || !routes.Ready)
@@ -355,12 +362,12 @@ async Task ExpectProfileRejected(string peer, ProfileRequest request)
 Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null)
 {
     stream.Input.Writer.TryWrite(new Frame { Hello = peer });
-    return node.RunLinkAsync(peer, Guid.NewGuid().ToString("N"), ids ?? [], stream, stream, stop);
+    return node.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), ids ?? [], stream, stream, stop);
 }
 
 async Task ExpectPong(Pong.Types.Status status)
 {
-    var ping = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = gate.State.EntityId, Entry = nameof(ProcessType.Gate) };
+    var ping = new Ping { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = gate.State.EntityId, Entry = nameof(ProcessType.Gate) };
     login.Input.Writer.TryWrite(RpcFrames.Request(ping));
     var response = (await login.Output.Reader.ReadAsync(stop)).ReadReply<Pong>();
     if (response?.RequestId != ping.RequestId || response.Status != status)
