@@ -25,12 +25,6 @@ public static class ServerLogEvents
     public const string PingDeliveryFailed = "PING_DELIVERY_FAILED";
     public const string UnmatchedReply = "UNMATCHED_REPLY";
     public const string MongoPong = "MONGO_PONG";
-    public const string GMPingTx = "GM_PING_TX";
-    public const string GMPingRx = "GM_PING_RX";
-    public const string GMPongTx = "GM_PONG_TX";
-    public const string GMPongRx = "GM_PONG_RX";
-    public const string GMCommand = "GM_COMMAND";
-    public const string GMDeliveryFailed = "GM_DELIVERY_FAILED";
     public const string ProfileRequestTx = "PROFILE_REQUEST_TX";
     public const string ProfileRequestRx = "PROFILE_REQUEST_RX";
     public const string ProfileReplyTx = "PROFILE_REPLY_TX";

@@ -1,18 +1,15 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Security.Cryptography;
 
 namespace TGame.ServerConsole;
 
 internal sealed class ConsoleSession : IDisposable
 {
-    private const int GmTokenByteCount = 32;
     private const string Project = "code/server/app/TGame.Server.csproj";
     private const string ProtocolProject = "code/shared/TGame.Shared.csproj";
     private const string RunConfigurationFile = "server.yaml";
     private const string LocalCredentialsMarker = "local-credentials";
-    private const string DefaultGmOperator = "local-console";
     private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
     private const string RedisPasswordKey = "REDIS_TEST_PASSWORD";
     private const string SessionDirectoryFormat = "yyyyMMdd-HHmmss-fffffff";
@@ -311,15 +308,6 @@ internal sealed class ConsoleSession : IDisposable
             }
         }
 
-        if (instance.Role == nameof(ProcessType.GM))
-        {
-            var token = Environment.GetEnvironmentVariable(ServerEnvironment.GMToken);
-            info.Environment[ServerEnvironment.GMToken] = string.IsNullOrEmpty(token)
-                ? Convert.ToHexString(RandomNumberGenerator.GetBytes(GmTokenByteCount)) : token;
-            var actor = Environment.GetEnvironmentVariable(ServerEnvironment.GMOperator);
-            info.Environment[ServerEnvironment.GMOperator] = string.IsNullOrEmpty(actor) ? DefaultGmOperator : actor;
-        }
-
         return info;
     }
 
@@ -344,7 +332,7 @@ internal sealed class ConsoleSession : IDisposable
     private ProcessStartInfo NewProcess(string exe)
     {
         var info = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var key in new[] { ServerEnvironment.GMToken, ServerEnvironment.GMOperator, ServerEnvironment.DBMgrMongoPassword, ServerEnvironment.MongoPassword,
+        foreach (var key in new[] { ServerEnvironment.DBMgrMongoPassword, ServerEnvironment.MongoPassword,
             ServerEnvironment.RedisPassword, ServerEnvironment.Diagnostics, MongoPasswordKey, RedisPasswordKey })
         {
             info.Environment.Remove(key);

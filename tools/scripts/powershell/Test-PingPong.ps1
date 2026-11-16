@@ -7,8 +7,6 @@ $ErrorActionPreference = 'Stop'
 
 $startupTimeoutSeconds = 60
 $readyIntervalMilliseconds = 150
-$gmTokenBytes = 32
-$gmRequestTimeoutSeconds = 20
 $stopTimeoutMilliseconds = 5000
 $caseJsonDepth = 4
 
@@ -104,18 +102,6 @@ try
         $redisPassword = $setting.Substring('REDIS_TEST_PASSWORD='.Length)
     }
 
-    $gmToken = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::GMToken)
-    if (!$gmToken)
-    {
-        $gmToken = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes($gmTokenBytes))
-    }
-
-    $gmActor = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::GMOperator)
-    if (!$gmActor)
-    {
-        $gmActor = 'local-smoke'
-    }
-
     if (!$Configuration)
     {
         $Configuration = Join-Path $root 'code/server/config/processes.json'
@@ -146,8 +132,6 @@ try
             WorkingDirectory = $root
             RedirectStandardError = "$runDir/$role.stderr.log"
             Environment = @{
-                ([TGame.ServerEnvironment]::GMToken) = $null
-                ([TGame.ServerEnvironment]::GMOperator) = $null
                 ([TGame.ServerEnvironment]::DBMgrMongoPassword) = $null
                 ([TGame.ServerEnvironment]::MongoPassword) = $null
                 ([TGame.ServerEnvironment]::RedisPassword) = $null
@@ -155,12 +139,6 @@ try
                 ([TGame.ServerEnvironment]::Config) = (Join-Path $root 'code/server/config/server.local.yaml')
                 ([TGame.ServerEnvironment]::Diagnostics) = 'true'
             }
-        }
-
-        if ($processRole -eq $gmRole)
-        {
-            $launch.Environment[[TGame.ServerEnvironment]::GMToken] = $gmToken
-            $launch.Environment[[TGame.ServerEnvironment]::GMOperator] = $gmActor
         }
 
         if ($processRole -eq $dbMgrRole)
@@ -307,79 +285,6 @@ try
         throw "Client failed. See Client.err.log."
     }
 
-    $gmListen = & $readLog $runDir ([TGame.ServerProcess]::FormatName($gmRole, 1)) -Event ([TGame.ServerLogEvents]::Listen)
-    $gmUri = [uri]$gmListen.detail
-    if ($gmUri.Host -ne '127.0.0.1' -or $gmUri.Scheme -ne 'http')
-    {
-        throw 'Unexpected GM HTTP endpoint.'
-    }
-
-    $unknownId = (New-TestId)
-    $checks = @(foreach ($check in 'missing-token','wrong-token','invalid-id','unknown-id','delivered')
-        {
-            $target = $pointIds[$sceneRole]
-            $headers = @{
-                Authorization = "Bearer $gmToken"
-            }
-
-            $expected = switch ($check)
-            {
-                'missing-token'
-                {
-                    $headers = @{}
-                    [int][Net.HttpStatusCode]::Unauthorized
-                }
-
-                'wrong-token'
-                {
-                    $headers.Authorization = 'Bearer wrong'
-                    [int][Net.HttpStatusCode]::Unauthorized
-                }
-
-                'invalid-id'
-                {
-                    $target = 'invalid'
-                    [int][Net.HttpStatusCode]::BadRequest
-                }
-
-                'unknown-id'
-                {
-                    $target = $unknownId
-                    [int][Net.HttpStatusCode]::NotFound
-                }
-
-                'delivered'
-                {
-                    [int][Net.HttpStatusCode]::OK
-                }
-            }
-
-            $response = Invoke-WebRequest -Method Post -Uri "$($gmUri.AbsoluteUri)gm/commands/ping/$target" -Headers $headers -NoProxy -MaximumRedirection 0 -TimeoutSec $gmRequestTimeoutSeconds -SkipHttpErrorCheck
-            $body = $response.Content | ConvertFrom-Json
-            if ($response.StatusCode -ne $expected -or ![TGame.IdText]::IsValid($body.requestId) -or
-                $response.Headers['X-Request-Id'][0] -cne $body.requestId -or
-                ($expected -eq [int][Net.HttpStatusCode]::OK -and ($body.entityId -cne $target -or $body.responder -cne $sceneRole)))
-            {
-                throw "GM HTTP check failed: $check, status=$($response.StatusCode)."
-            }
-
-            [pscustomobject]@{
-                Check = $check
-                Id = $body.requestId
-                Entity = $body.entityId
-                Status = $expected
-                Actor = $(if ($expected -eq [int][Net.HttpStatusCode]::Unauthorized)
-                    {
-                        'unauthenticated'
-                    }
-                    else
-                    {
-                        $gmActor
-                    })
-            }
-        })
-    $checks | ConvertTo-Json -AsArray | Set-Content -LiteralPath "$runDir/gm-checks.json" -Encoding utf8
-
     foreach ($child in $children.Values)
     {
         if ($child.HasExited)
@@ -391,7 +296,7 @@ try
     & "$PSScriptRoot/Test-PingPongLogs.ps1" -RunDirectory $runDir -RequireLifecycle | Tee-Object -FilePath "$runDir/result.log"
     if ($Hold)
     {
-        Read-Host "Servers are running. GM HTTP $gmUri ; press Enter to stop" | Out-Null
+        Read-Host "Servers are running; press Enter to stop" | Out-Null
     }
 }
 catch

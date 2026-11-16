@@ -2,7 +2,6 @@ using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using TGame;
 using TGame.Diagnostics;
-using TGame.Management;
 using TGame.Profile;
 using TGame.Server.Engine;
 using TGame.Server.Logic;
@@ -96,14 +95,6 @@ internal static class MessageDispatchChecks
         if (profileFrame.ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Unavailable)
         {
             throw new Exception("Disabling diagnostics changed the Profile handler or its readiness check.");
-        }
-
-        var gm = new GmPingRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = node.State.EntityId };
-        await messages.DispatchAsync(RpcFrames.Request(gm, gm.RequestId).Request, ServerProcess.FormatName(nameof(ProcessType.Router), 1), link, stop);
-        var gmFrame = await stream.Output.Reader.ReadAsync(stop);
-        if (gmFrame.ReadReply<GmPingReply>().Status != GmPingReply.Types.Status.Unavailable)
-        {
-            throw new Exception("Disabling diagnostics changed the GM handler or its readiness check.");
         }
 
         DiagnosticMessages.Register(messages, node);

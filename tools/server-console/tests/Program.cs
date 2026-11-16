@@ -79,26 +79,6 @@ try
         throw new InvalidOperationException("Restarting the Router instance retained its old PID.");
     }
 
-    var gm = session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.GM), 1));
-    await session.StopAsync([gm]);
-    var originalToken = Environment.GetEnvironmentVariable(ServerEnvironment.GMToken);
-    try
-    {
-        Environment.SetEnvironmentVariable(ServerEnvironment.GMToken, "invalid");
-        await session.StartAsync();
-        await UntilAsync("GM role initialization failed", () => gm.Status == ServerStatus.Failed && !gm.Alive);
-        if (!HasEvent(gm, ServerLogEvents.LinksReady) || !HasEvent(gm, ServerLogEvents.SinglePointFailed) || HasEvent(gm, ServerLogEvents.SinglePointReady))
-        {
-            throw new InvalidOperationException("GM reported readiness despite an invalid credential.");
-        }
-    }
-    finally
-    {
-        Environment.SetEnvironmentVariable(ServerEnvironment.GMToken, originalToken);
-    }
-    await session.StartAsync();
-    await UntilAsync("GM role initialization recovered", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
-
     var dbMgr = session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.DBMgr), 1));
     await session.StopAsync([dbMgr]);
     var originalMongoPassword = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);

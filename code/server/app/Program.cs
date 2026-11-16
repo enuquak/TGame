@@ -52,7 +52,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
     {
-        if (certificate is not null || processType == ProcessType.GM)
+        if (certificate is not null)
         {
             listen.Protocols = HttpProtocols.Http1;
         }
@@ -74,10 +74,6 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     if (processType == ProcessType.Gate)
     {
         node.MapDiagnostics(app);
-    }
-    else if (processType == ProcessType.GM)
-    {
-        GMHttp.Map(app, node);
     }
     else
     {
