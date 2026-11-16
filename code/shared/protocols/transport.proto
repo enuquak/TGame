@@ -9,20 +9,35 @@ message Frame {
   reserved "ping", "pong", "profile_request", "profile_reply";
 
   oneof body {
-    string hello = 3;     // Exchanges instance names before serving requests.
+    string hello = 3;     // Exchanges process instance names before serving requests.
     RpcRequest request = 6;
     RpcReply reply = 7;
   }
+
+  // Present on Hello frames for callable processes; Gate has no RPC target.
+  string single_point_id = 8;
 }
 
 message RpcRequest {
   string request_id = 1;
   google.protobuf.Any payload = 2;
+  oneof target {
+    string entity_id = 3;
+    string single_point_type = 4; // Canonical ProcessType name, resolved by Router.
+  }
+  string source_process = 5;
+  int64 deadline_unix_ms = 6;
 }
 
 message RpcReply {
   string request_id = 1;
   google.protobuf.Any payload = 2;
+  RpcError error = 3; // Exactly one of payload/error must be present.
+}
+
+message RpcError {
+  int32 status_code = 1; // gRPC status code, excluding OK.
+  string detail = 2;
 }
 
 service ServerLink {

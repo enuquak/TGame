@@ -11,8 +11,6 @@
     <PackageReference Include="Grpc.Tools" Version="2.85.0" PrivateAssets="All" />
     <Protobuf Include="protocols/transport.proto" ProtoRoot="protocols"
               OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'generated', 'protocols'))" GrpcServices="Both" />
-    <Protobuf Include="protocols/pingpong.proto" ProtoRoot="protocols"
-              OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'generated', 'protocols'))" GrpcServices="None" />
     <Protobuf Include="protocols/profile.proto" ProtoRoot="protocols"
               OutputDir="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'generated', 'protocols'))" GrpcServices="None" />
   </ItemGroup>

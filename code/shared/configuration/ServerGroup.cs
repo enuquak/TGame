@@ -17,7 +17,7 @@ public sealed record ServerProcess(ProcessType Type, int Number)
             throw new ArgumentOutOfRangeException(nameof(number));
         }
 
-        return number == 1 ? role : role + number;
+        return role + number;
     }
 }
 
@@ -100,8 +100,10 @@ public sealed class ServerGroup
                     throw new InvalidDataException($"Unknown process type {property.Name} in {path}.");
                 }
 
-                if (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetInt32(out int count) ||
-                    count < 0 || !counts.TryAdd(type, count))
+                if (property.Value.ValueKind != JsonValueKind.Number ||
+                    !property.Value.TryGetInt32(out int count) ||
+                    count < 0 ||
+                    !counts.TryAdd(type, count))
                 {
                     throw new InvalidDataException($"Invalid or repeated count for {property.Name} in {path}.");
                 }

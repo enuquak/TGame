@@ -1,20 +1,21 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
-using System.Security.Cryptography;
 
 namespace TGame.ServerConsole;
 
 internal sealed class ConsoleSession : IDisposable
 {
-    private const int GmTokenByteCount = 32;
     private const string Project = "code/server/app/TGame.Server.csproj";
     private const string ProtocolProject = "code/shared/TGame.Shared.csproj";
-    private const string DefaultGmOperator = "local-console";
+    private const string RunConfigurationFile = "server.yaml";
+    private const string LocalCredentialsMarker = "local-credentials";
     private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
     private const string RedisPasswordKey = "REDIS_TEST_PASSWORD";
+    private const string SessionDirectoryFormat = "yyyyMMdd-HHmmss-fffffff";
 
     private readonly string root, sessions, logRoot;
-    private string? runId;
+    private string? sessionName;
     private bool busy;
     public ConsoleProject ProjectSettings
     {
@@ -44,12 +45,20 @@ internal sealed class ConsoleSession : IDisposable
         }
 
         var saved = File.ReadAllText(current).Trim();
-        if (!Guid.TryParseExact(saved, "N", out _) || !File.Exists(Path.Combine(sessions, saved, ServerRunFiles.ConsoleMode)))
+        bool validDirectoryName = saved.Length > 0 && saved.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+        if (!validDirectoryName || !File.Exists(Path.Combine(sessions, saved, ServerRunFiles.ConsoleMode)))
         {
             throw new InvalidDataException("控制台当前会话记录无效。");
         }
 
-        var group = LoadRunGroup(saved);
+        if (HasLegacyRun(saved))
+        {
+            var configured = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
+            Instances = CreateInstances(configured);
+            return;
+        }
+
+        var group = ServerGroup.Load(Path.Combine(sessions, saved, ServerGroup.FileName));
         Instances = CreateInstances(group);
         Open(saved);
     }
@@ -57,25 +66,31 @@ internal sealed class ConsoleSession : IDisposable
     private static ServerInstance[] CreateInstances(ServerGroup group) =>
         group.Processes.Select(process => new ServerInstance(process.Role, process.Number)).ToArray();
 
-    private ServerGroup LoadRunGroup(string id)
+    private bool HasLegacyRun(string id)
     {
-        var path = Path.Combine(sessions, id, ServerGroup.FileName);
-        if (File.Exists(path))
-        {
-            return ServerGroup.Load(path);
-        }
-
-        // Before count configuration, each saved role apphost represented exactly one instance.
-        var counts = new Dictionary<ProcessType, int>();
+        bool legacy = false;
         foreach (var type in Enum.GetValues<ProcessType>())
         {
-            var executable = Path.Combine(Snapshot(id), type + "Server.exe");
-            counts.Add(type, File.Exists(executable) ? 1 : 0);
+            var legacyExecutable = Path.Combine(Snapshot(id), type + "Server.exe");
+            if (!File.Exists(legacyExecutable))
+            {
+                continue;
+            }
+
+            legacy = true;
+            foreach (var candidate in Process.GetProcessesByName(type + "Server"))
+            {
+                using (candidate)
+                {
+                    if (!candidate.HasExited && string.Equals(candidate.MainModule?.FileName, legacyExecutable, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidDataException("该运行组使用旧的无编号实例名，请先用旧版控制台停止整组，再创建新的运行组。");
+                    }
+                }
+            }
         }
 
-        var group = new ServerGroup(counts);
-        group.Save(path);
-        return group;
+        return legacy;
     }
 
     public void Refresh()
@@ -97,7 +112,7 @@ internal sealed class ConsoleSession : IDisposable
 
         if (missing.Length != Instances.Count)
         {
-            Launch(missing, runId!);
+            Launch(missing, sessionName!);
             return;
         }
 
@@ -141,7 +156,7 @@ internal sealed class ConsoleSession : IDisposable
         }
     }
 
-    private string Snapshot(string id) => Path.Combine(root, "build", "server-console", "runs", id);
+    private string Snapshot(string name) => Path.Combine(root, "build", "server-console", "runs", name);
 
     private async Task StartNewRun()
     {
@@ -154,13 +169,14 @@ internal sealed class ConsoleSession : IDisposable
             nextInstances = CreateInstances(group);
         }
 
-        var id = Guid.NewGuid().ToString("N");
-        var snapshot = Snapshot(id);
-        var runDir = Directory.CreateDirectory(Path.Combine(sessions, id)).FullName;
+        var name = DateTime.UtcNow.ToString(SessionDirectoryFormat, CultureInfo.InvariantCulture);
+        var snapshot = Snapshot(name);
+        var runDir = Directory.CreateDirectory(Path.Combine(sessions, name)).FullName;
         File.WriteAllText(Path.Combine(runDir, ServerRunFiles.ConsoleMode), "");
         group.Save(Path.Combine(runDir, ServerGroup.FileName));
+        SaveRunConfiguration(runDir);
         // Prepare credentials and a complete copy before asking healthy processes to shut down.
-        var starts = nextInstances.Select(i => StartInfo(i, id)).ToArray();
+        var starts = nextInstances.Select(i => StartInfo(i, name)).ToArray();
         await Task.Run(() =>
         {
             var source = Path.Combine(root, "build", "bin", "TGame.Server", "debug");
@@ -187,11 +203,11 @@ internal sealed class ConsoleSession : IDisposable
             Instances = nextInstances;
         }
 
-        var previous = runId;
+        var previous = sessionName;
         var current = Path.Combine(sessions, "current");
-        File.WriteAllText(current + ".tmp", id);
+        File.WriteAllText(current + ".tmp", name);
         File.Move(current + ".tmp", current, true);
-        Open(id);
+        Open(name);
         if (changed)
         {
             InstancesChanged?.Invoke();
@@ -215,18 +231,34 @@ internal sealed class ConsoleSession : IDisposable
         }
     }
 
-    private void Open(string id)
+    private void SaveRunConfiguration(string runDir)
     {
-        runId = id;
-        foreach (var instance in Instances)
+        var source = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
+        bool localConfig = string.IsNullOrWhiteSpace(source);
+        if (localConfig)
         {
-            instance.Open(Path.Combine(sessions, id), logRoot, Snapshot(id));
+            source = Path.Combine(root, "build", "bin", "TGame.Server", "debug", "config", "server.local.yaml");
+        }
+
+        File.Copy(Path.GetFullPath(source!, root), Path.Combine(runDir, RunConfigurationFile));
+        if (localConfig)
+        {
+            File.WriteAllText(Path.Combine(runDir, LocalCredentialsMarker), "");
         }
     }
 
-    private void Launch(ServerInstance[] missing, string id)
+    private void Open(string name)
     {
-        var starts = missing.Select(i => StartInfo(i, id)).ToArray();
+        sessionName = name;
+        foreach (var instance in Instances)
+        {
+            instance.Open(Path.Combine(sessions, name), logRoot, Snapshot(name));
+        }
+    }
+
+    private void Launch(ServerInstance[] missing, string name)
+    {
+        var starts = missing.Select(i => StartInfo(i, name)).ToArray();
         for (int i = 0; i < missing.Length; i++)
         {
             Launch(missing[i], starts[i]);
@@ -239,37 +271,48 @@ internal sealed class ConsoleSession : IDisposable
         Report($"已启动 {instance.Name} · PID {instance.Pid}");
     }
 
-    private ProcessStartInfo StartInfo(ServerInstance instance, string id)
+    private ProcessStartInfo StartInfo(ServerInstance instance, string name)
     {
-        var info = NewProcess(Path.Combine(Snapshot(id), instance.ExecutableName));
+        var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
         info.ArgumentList.Add(instance.Name);
-        info.ArgumentList.Add(Path.Combine(sessions, id));
-        info.Environment[ServerEnvironment.LogRoot] = logRoot;
-        if (instance.Role is nameof(ProcessType.DBMgr) or nameof(ProcessType.Profile))
+        var runDir = Path.Combine(sessions, name);
+        var config = Path.Combine(runDir, RunConfigurationFile);
+        if (!File.Exists(config))
         {
-            info.Environment[ServerEnvironment.MongoTestPassword] = Password(MongoPasswordKey);
+            throw new InvalidOperationException("当前运行缺少环境配置快照，请选择环境后编译并重启。");
+        }
+
+        bool localConfig = File.Exists(Path.Combine(runDir, LocalCredentialsMarker));
+        info.ArgumentList.Add(runDir);
+        info.Environment[ServerEnvironment.Config] = config;
+        info.Environment[ServerEnvironment.LogRoot] = logRoot;
+        if (instance.Role == nameof(ProcessType.DBMgr))
+        {
+            var password = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
+            if (string.IsNullOrWhiteSpace(password))
+            {
+                password = Password(ServerEnvironment.MongoPassword, MongoPasswordKey);
+            }
+
+            info.Environment[ServerEnvironment.DBMgrMongoPassword] = password;
         }
 
         if (instance.Role == nameof(ProcessType.Profile))
         {
-            info.Environment[ServerEnvironment.RedisTestPassword] = Password(RedisPasswordKey);
-        }
-
-        if (instance.Role == nameof(ProcessType.GM))
-        {
-            var token = Environment.GetEnvironmentVariable(ServerEnvironment.GMToken);
-            info.Environment[ServerEnvironment.GMToken] = string.IsNullOrEmpty(token)
-                ? Convert.ToHexString(RandomNumberGenerator.GetBytes(GmTokenByteCount)) : token;
-            var actor = Environment.GetEnvironmentVariable(ServerEnvironment.GMOperator);
-            info.Environment[ServerEnvironment.GMOperator] = string.IsNullOrEmpty(actor) ? DefaultGmOperator : actor;
+            info.Environment[ServerEnvironment.MongoPassword] = Environment.GetEnvironmentVariable(ServerEnvironment.MongoPassword);
+            info.Environment[ServerEnvironment.RedisPassword] = Environment.GetEnvironmentVariable(ServerEnvironment.RedisPassword);
+            if (localConfig)
+            {
+                info.Environment[ServerEnvironment.MongoPassword] = Password(ServerEnvironment.MongoPassword, MongoPasswordKey);
+                info.Environment[ServerEnvironment.RedisPassword] = Password(ServerEnvironment.RedisPassword, RedisPasswordKey);
+            }
         }
 
         return info;
     }
 
-    private string Password(string key)
+    private string Password(string envKey, string key)
     {
-        var envKey = "TGAME_" + key;
         if (Environment.GetEnvironmentVariable(envKey) is { Length: > 0 } password)
         {
             return password;
@@ -289,8 +332,8 @@ internal sealed class ConsoleSession : IDisposable
     private ProcessStartInfo NewProcess(string exe)
     {
         var info = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var key in new[] { ServerEnvironment.GMToken, ServerEnvironment.GMOperator, ServerEnvironment.MongoTestPassword,
-            ServerEnvironment.RedisTestPassword, MongoPasswordKey, RedisPasswordKey })
+        foreach (var key in new[] { ServerEnvironment.DBMgrMongoPassword, ServerEnvironment.MongoPassword,
+            ServerEnvironment.RedisPassword, MongoPasswordKey, RedisPasswordKey })
         {
             info.Environment.Remove(key);
         }

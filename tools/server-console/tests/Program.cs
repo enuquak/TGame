@@ -13,11 +13,11 @@ ConfigChecks.Run(checkout);
 GroupConfigChecks.Run(checkout);
 if (args.Length == 2 && args[1] == "--config-only")
 {
-    return;
+    return 0;
 }
 
 LogChecks.Run(checkout);
-using var session = new ConsoleSession(checkout);
+var session = new ConsoleSession(checkout);
 session.Output += Console.WriteLine;
 try
 {
@@ -29,6 +29,7 @@ try
 
     await session.StartAsync();
     await UntilAsync("all SinglePoints ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    await CheckDuplicateRegistrationAsync();
     var pids = session.Instances.ToDictionary(i => i.Name, i => i.Pid);
     using (var reopened = new ConsoleSession(checkout))
     {
@@ -40,36 +41,64 @@ try
     }
 
     var selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
-    await session.StopAsync([selected]);
-    await UntilAsync("Base stopped, Gate still running with a missing link", () =>
-        selected.Status == ServerStatus.Stopped &&
-        session.Instances.Single(i => i.Name == nameof(ProcessType.Gate)).Status == ServerStatus.Disconnected);
-    await session.StartAsync();
-    await UntilAsync("Base rejoined", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    var originalConfig = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
+    try
+    {
+        Environment.SetEnvironmentVariable(ServerEnvironment.Config, Path.Combine(checkout, "missing-new-environment.yaml"));
+        session.Dispose();
+        session = new ConsoleSession(checkout);
+        session.Output += Console.WriteLine;
+        selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
+        await session.StopAsync([selected]);
+        await UntilAsync("Base stopped, Gate still running with a missing link", () =>
+            selected.Status == ServerStatus.Stopped &&
+            session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.Gate), 1)).Status == ServerStatus.Disconnected);
+        await session.StartAsync();
+        await UntilAsync("Base rejoined with the original run configuration", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(ServerEnvironment.Config, originalConfig);
+    }
+
     if (selected.Pid == pids[selected.Name] || session.Instances.Any(i => i.Name != selected.Name && i.Pid != pids[i.Name]))
     {
         throw new InvalidOperationException("Restoring Base disturbed another instance.");
     }
 
-    var gm = session.Instances.Single(i => i.Name == nameof(ProcessType.GM));
-    await session.StopAsync([gm]);
-    var originalToken = Environment.GetEnvironmentVariable(ServerEnvironment.GMToken);
+    var router = session.Instances.Last(i => i.Role == nameof(ProcessType.Router));
+    var routerPid = router.Pid;
+    await session.StopAsync([router]);
+    await UntilAsync("Router stopped and every Base has an incomplete topology", () =>
+        router.Status == ServerStatus.Stopped &&
+        session.Instances.Where(i => i.Role == nameof(ProcessType.Base)).All(i => i.Status == ServerStatus.Disconnected));
+    await session.StartAsync();
+    await UntilAsync("Router rejoined", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    if (router.Pid == routerPid)
+    {
+        throw new InvalidOperationException("Restarting the Router instance retained its old PID.");
+    }
+
+    var dbMgr = session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.DBMgr), 1));
+    await session.StopAsync([dbMgr]);
+    var originalMongoPassword = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
     try
     {
-        Environment.SetEnvironmentVariable(ServerEnvironment.GMToken, "invalid");
+        Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, "invalid-storage-check-password");
         await session.StartAsync();
-        await UntilAsync("GM role initialization failed", () => gm.Status == ServerStatus.Failed && !gm.Alive);
-        if (!HasEvent(gm, ServerLogEvents.LinksReady) || !HasEvent(gm, ServerLogEvents.SinglePointFailed) || HasEvent(gm, ServerLogEvents.SinglePointReady))
+        await UntilAsync("DBMgr database initialization failed", () => dbMgr.Status == ServerStatus.Failed && !dbMgr.Alive);
+        if (!HasEvent(dbMgr, ServerLogEvents.SinglePointFailed) || HasEvent(dbMgr, ServerLogEvents.SinglePointReady))
         {
-            throw new InvalidOperationException("GM reported readiness despite an invalid credential.");
+            throw new InvalidOperationException("DBMgr reported readiness despite a failed database connection check.");
         }
     }
     finally
     {
-        Environment.SetEnvironmentVariable(ServerEnvironment.GMToken, originalToken);
+        Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, originalMongoPassword);
     }
+
     await session.StartAsync();
-    await UntilAsync("GM role initialization recovered", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    await UntilAsync("DBMgr database initialization recovered", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
 
     // A compiler error must leave the running group and its PID associations intact.
     var broken = Path.Combine(checkout, "code/server/app/BrokenCheck.cs");
@@ -123,10 +152,18 @@ try
 
     Console.WriteLine($"PASS {session.Instances.Count} instances, export, selective stop, recovery, attach and build/restart.");
 }
+catch (Exception error)
+{
+    Console.Error.WriteLine(error);
+    return 1;
+}
 finally
 {
     await session.StopAsync(session.Instances.ToArray());
+    session.Dispose();
 }
+
+return 0;
 
 async Task UntilAsync(string stage, Func<bool> condition)
 {
@@ -159,3 +196,60 @@ async Task UntilAsync(string stage, Func<bool> condition)
 
 static bool HasEvent(ServerInstance instance, string name) =>
     instance.Lines.Any(line => line.Contains($"\"{ServerLogFields.Event}\":\"{name}\"", StringComparison.Ordinal));
+
+async Task CheckDuplicateRegistrationAsync()
+{
+    const int DuplicateExitTimeoutSeconds = 10;
+    var role = nameof(ProcessType.Router);
+    var name = ServerProcess.FormatName(role, 1);
+    var router = session.Instances.Single(i => i.Name == name);
+    using var original = Process.GetProcessById(router.Pid!.Value);
+    var directory = Directory.CreateDirectory(Path.Combine(checkout, "duplicate-registration")).FullName;
+    File.Copy(Path.Combine(checkout, ServerGroup.ConfigurationPath), Path.Combine(directory, ServerGroup.FileName), true);
+    foreach (bool consoleMode in new[] { false, true })
+    {
+        if (consoleMode)
+        {
+            File.WriteAllText(Path.Combine(directory, ServerRunFiles.ConsoleMode), "");
+        }
+
+        var info = new ProcessStartInfo(original.MainModule!.FileName)
+        {
+            WorkingDirectory = checkout,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true
+        };
+        info.ArgumentList.Add(name);
+        info.ArgumentList.Add(directory);
+        info.Environment[ServerEnvironment.LogRoot] = Path.Combine(directory, "logs");
+        info.Environment[ServerEnvironment.Config] = Path.Combine(Path.GetDirectoryName(original.MainModule!.FileName)!, "config", "server.local.yaml");
+
+        using var duplicate = Process.Start(info)!;
+        var error = duplicate.StandardError.ReadToEndAsync();
+        try
+        {
+            await duplicate.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(DuplicateExitTimeoutSeconds));
+            if (duplicate.ExitCode != 1 || !(await error).Contains($"ZooKeeper node '/tgame/test/server-{name}' already exists."))
+            {
+                throw new InvalidOperationException("Duplicate startup must report the occupied path and exit with code 1 in both modes.");
+            }
+        }
+        finally
+        {
+            if (!duplicate.HasExited)
+            {
+                duplicate.Kill();
+                await duplicate.WaitForExitAsync();
+            }
+        }
+    }
+
+    session.Refresh();
+    if (original.HasExited || router.Status != ServerStatus.Ready)
+    {
+        throw new InvalidOperationException("A rejected duplicate disrupted the existing Router.");
+    }
+
+    Console.WriteLine("PASS duplicate Router startup fails in console and non-console modes without disturbing the owner.");
+}

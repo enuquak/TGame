@@ -3,9 +3,9 @@
 param([string]$Configuration)
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Import-ServerTypes.ps1')
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
-$checkout = Join-Path $root "build/console-check/$([guid]::NewGuid().ToString('N'))"
-$null = New-Item -ItemType Directory -Path $checkout
+$checkout = [IO.Directory]::CreateTempSubdirectory('tgame-console-check-').FullName
 $null = New-Item -ItemType File -Path "$checkout/.console-check"
 $dotnet = "$env:ProgramFiles/dotnet/dotnet.exe"
 if (!(Test-Path -LiteralPath $dotnet))
@@ -18,7 +18,7 @@ Push-Location -LiteralPath $root
 
 try
 {
-    $files = @(git ls-files --cached --others --exclude-standard -- 'code/server' 'code/shared' 'code/tests/singlepoint' 'code/Directory.Build.props' 'global.json' 'tools/server-console/project.json')
+    $files = @(git ls-files --cached --others --exclude-standard -- 'code/server' 'code/shared' 'code/tests/singlepoint' 'code/tests/fixtures' 'code/Directory.Build.props' 'global.json' 'tools/server-console/project.json')
     if ($LASTEXITCODE -ne 0)
     {
         throw 'Unable to list server inputs.'
@@ -36,9 +36,14 @@ try
         Copy-Item -LiteralPath $Configuration -Destination (Join-Path $checkout 'code/server/config/processes.json') -Force
     }
 
-    foreach ($key in 'MONGO_TEST_PASSWORD','REDIS_TEST_PASSWORD')
+    $credentials = @{
+        ([TGame.ServerEnvironment]::MongoPassword) = 'MONGO_TEST_PASSWORD'
+        ([TGame.ServerEnvironment]::RedisPassword) = 'REDIS_TEST_PASSWORD'
+    }
+    foreach ($variable in $credentials.Keys)
     {
-        if ([Environment]::GetEnvironmentVariable("TGAME_$key"))
+        $key = $credentials[$variable]
+        if ([Environment]::GetEnvironmentVariable($variable))
         {
             continue
         }
@@ -47,11 +52,11 @@ try
             Where-Object { $_.StartsWith("$key=") } | Select-Object -First 1
         if (!$line)
         {
-            throw "Missing TGAME_$key."
+            throw "Missing $variable."
         }
 
-        [Environment]::SetEnvironmentVariable("TGAME_$key", $line.Substring($key.Length + 1))
-        $addedEnvironment += "TGAME_$key"
+        [Environment]::SetEnvironmentVariable($variable, $line.Substring($key.Length + 1))
+        $addedEnvironment += $variable
     }
 
     & $dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- $checkout

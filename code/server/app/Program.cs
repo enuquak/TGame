@@ -4,6 +4,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using TGame;
 using TGame.Server;
+using TGame.Server.Engine;
 using TGame.Server.Logic;
 
 const int ProcessArgumentCount = 2;
@@ -18,14 +19,13 @@ if (args.Length != ProcessArgumentCount)
 }
 
 var runDir = Path.GetFullPath(args[1]);
-var runId = Guid.ParseExact(Path.GetFileName(runDir), "N");
 var group = ServerGroup.Load(Path.Combine(runDir, ServerGroup.FileName));
 var process = group.GetProcess(args[0]);
 var role = process.Role;
-using var serverLog = TraceLog.OpenServer(process, runId);
+using var serverLog = TraceLog.OpenServer(process);
 try
 {
-    await RunServerAsync(process, group, runId, runDir);
+    await RunServerAsync(process, group, runDir);
 }
 catch (Exception error)
 {
@@ -34,22 +34,24 @@ catch (Exception error)
     Environment.ExitCode = 1;
 }
 
-static async Task RunServerAsync(ServerProcess process, ServerGroup group, Guid runId, string runDir)
+static async Task RunServerAsync(ServerProcess process, ServerGroup group, string runDir)
 {
+    var singlePoints = new SinglePointRegistry(typeof(ServerMessages).Assembly.GetTypes());
     var role = process.Role;
-    var singlePoints = new SinglePointRegistry(typeof(ServerSinglePoint).Assembly.GetTypes());
     var processType = process.Type;
-    var singlePoint = singlePoints.Create(processType);
-
-    var node = new ServerNode(process.Name, singlePoint, group);
-    using var resources = singlePoint as IDisposable;
+    var settings = ServerSettings.Current.Value;
 
     var builder = WebApplication.CreateSlimBuilder();
+    var messages = new RpcDispatcher();
+    var idOptions = IdGeneratorOptions.Load(Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName), settings.ZooKeeper);
+    await using var idGenerator = await SnowflakeIdGenerator.CreateAsync(idOptions);
+    using var node = new ServerNode(process.Name, group, messages, idGenerator);
+    ServerMessages.Register(messages, node);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
     {
-        if (certificate is not null || singlePoint is GMServerSinglePoint)
+        if (certificate is not null)
         {
             listen.Protocols = HttpProtocols.Http1;
         }
@@ -64,18 +66,11 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, Guid 
         }
     }));
     builder.Services.AddGrpc();
-    builder.Services.AddSingleton(node);
+    builder.Services.AddSingleton<ServerNode>(node);
+    builder.Services.AddSingleton<IIdGenerator>(idGenerator);
 
     await using var app = builder.Build();
-    if (processType == ProcessType.Gate)
-    {
-        node.MapDiagnostics(app);
-    }
-    else if (singlePoint is GMServerSinglePoint gm)
-    {
-        GMHttp.Map(app, node, gm);
-    }
-    else
+    if (processType != ProcessType.Gate)
     {
         app.MapGrpcService<LinkService>();
     }
@@ -90,11 +85,10 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, Guid 
 
     try
     {
-        var initialization = node.InitializeAsync(stop);
-        await using var registry = new ServiceRegistry(runId, group);
-        using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        registrationTimeout.CancelAfter(TimeSpan.FromSeconds(StartupTimeoutSeconds));
-        var registration = registry.RegisterAsync(process, address, consoleMode, registrationTimeout.Token);
+        await using var registry = new ServiceRegistry(group, settings.ZooKeeper, settings.DiscoveryRoot);
+        using var startupTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        startupTimeout.CancelAfter(TimeSpan.FromSeconds(StartupTimeoutSeconds));
+        var registration = registry.RegisterAsync(process, address, startupTimeout.Token);
 
         var workers = new List<Task>();
         foreach (var peer in Topology.DialTargets(group, process.Name))
@@ -102,15 +96,28 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, Guid 
             workers.Add(SuperviseAsync(ConnectAsync(peer)));
         }
 
-        workers.Add(SuperviseAsync(initialization));
-        workers.Add(SuperviseAsync(registration));
-        if (!consoleMode)
+        workers.Add(SuperviseAsync(InitializeAsync()));
+        workers.Add(SuperviseAsync(WatchStopAsync()));
+        workers.Add(SuperviseAsync(WatchIdLeaseAsync()));
+        await Task.WhenAll(workers);
+
+        async Task InitializeAsync()
         {
-            workers.Add(SuperviseAsync(node.FirstLinks.WaitAsync(TimeSpan.FromSeconds(StartupTimeoutSeconds), stop)));
+            await InitializeEngineAsync();
+            await node.InitializeSinglePointAsync(singlePoints, stop);
         }
 
-        workers.Add(SuperviseAsync(WatchStopAsync()));
-        await Task.WhenAll(workers);
+        async Task InitializeEngineAsync()
+        {
+            await registration;
+            if (consoleMode)
+            {
+                await node.FirstLinks.WaitAsync(stop);
+                return;
+            }
+
+            await node.FirstLinks.WaitAsync(startupTimeout.Token);
+        }
 
         async Task ConnectAsync(string peer)
         {
@@ -122,6 +129,12 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, Guid 
     {
         lifetime.Cancel();
         await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
+    }
+
+    async Task WatchIdLeaseAsync()
+    {
+        await idGenerator.LeaseLost.WaitAsync(stop);
+        throw new InvalidOperationException("The ID generator lost its ZooKeeper session.");
     }
 
     async Task WatchStopAsync()

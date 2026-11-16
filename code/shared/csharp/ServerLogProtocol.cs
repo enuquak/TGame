@@ -2,6 +2,7 @@ namespace TGame;
 
 public static class ServerLogEvents
 {
+    public const string EntityRpcFailed = "ENTITY_RPC_FAILED";
     public const string ProfilePrefix = "PROFILE_";
     public const string LegacyReady = "READY";
     public const string LegacyBaseSinglePointInit = "BASE_SINGLE_POINT_INIT";
@@ -17,16 +18,7 @@ public static class ServerLogEvents
     public const string LinkUp = "LINK_UP";
     public const string LinksReady = "LINKS_READY";
     public const string LinksLost = "LINKS_LOST";
-    public const string PingTx = "PING_TX";
-    public const string PingRx = "PING_RX";
-    public const string PongTx = "PONG_TX";
-    public const string PongRx = "PONG_RX";
-    public const string PingFailed = "PING_FAILED";
-    public const string PingDeliveryFailed = "PING_DELIVERY_FAILED";
     public const string UnmatchedReply = "UNMATCHED_REPLY";
-    public const string MongoPong = "MONGO_PONG";
-    public const string GMCommand = "GM_COMMAND";
-    public const string GMDeliveryFailed = "GM_DELIVERY_FAILED";
     public const string ProfileRequestTx = "PROFILE_REQUEST_TX";
     public const string ProfileRequestRx = "PROFILE_REQUEST_RX";
     public const string ProfileReplyTx = "PROFILE_REPLY_TX";
@@ -48,7 +40,6 @@ public static class ServerLogFields
     public const string Role = "role";
     public const string Instance = "instance";
     public const string Pid = "pid";
-    public const string RunId = "runId";
     public const string Peer = "peer";
     public const string Id = "id";
     public const string Entity = "entity";
