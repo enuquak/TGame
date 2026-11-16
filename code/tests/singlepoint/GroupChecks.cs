@@ -180,23 +180,20 @@ internal static class GroupChecks
             RequestId = Guid.NewGuid().ToString("N"),
             Publish = new EntitySummary { EntityId = ids[secondBase], DisplayName = "Group check", Title = "Owner" }
         };
-        publisher.Input.Writer.TryWrite(new Frame { ProfileRequest = request });
+        publisher.Input.Writer.TryWrite(RpcFrames.Request(request));
         var forwarded = await profile.Output.Reader.ReadAsync(stop);
-        if (forwarded.ProfileRequest?.Publish?.EntityId != ids[secondBase])
+        if (forwarded.ReadRequest<ProfileRequest>().Publish?.EntityId != ids[secondBase])
         {
             throw new Exception("Router lost the entity owner of the second Base instance.");
         }
 
-        profile.Input.Writer.TryWrite(new Frame
+        profile.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
         {
-            ProfileReply = new ProfileReply
-            {
-                RequestId = request.RequestId,
-                EntityId = ids[secondBase],
-                Result = ProfileReply.Types.Result.Stored
-            }
-        });
-        if ((await publisher.Output.Reader.ReadAsync(stop)).ProfileReply?.Result != ProfileReply.Types.Result.Stored)
+            RequestId = request.RequestId,
+            EntityId = ids[secondBase],
+            Result = ProfileReply.Types.Result.Stored
+        }));
+        if ((await publisher.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Stored)
         {
             throw new Exception("Profile reply did not return to the second Base instance.");
         }
@@ -204,8 +201,8 @@ internal static class GroupChecks
         var firstBase = streams[nameof(ProcessType.Base)];
         var foreign = request.Clone();
         foreign.RequestId = Guid.NewGuid().ToString("N");
-        firstBase.Input.Writer.TryWrite(new Frame { ProfileRequest = foreign });
-        if ((await firstBase.Output.Reader.ReadAsync(stop)).ProfileReply?.Result != ProfileReply.Types.Result.Rejected ||
+        firstBase.Input.Writer.TryWrite(RpcFrames.Request(foreign));
+        if ((await firstBase.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Rejected ||
             profile.Output.Reader.TryRead(out _))
         {
             throw new Exception("One Base instance was allowed to publish another Base instance's entity.");
@@ -218,17 +215,17 @@ internal static class GroupChecks
         {
             RequestId = Guid.NewGuid().ToString("N"), EntityId = ids[thirdBase], Entry = nameof(ProcessType.Login)
         };
-        caller.Input.Writer.TryWrite(new Frame { Ping = ping });
-        if ((await receiver.Output.Reader.ReadAsync(stop)).Ping?.RequestId != ping.RequestId)
+        caller.Input.Writer.TryWrite(RpcFrames.Request(ping));
+        if ((await receiver.Output.Reader.ReadAsync(stop)).ReadRequest<TGame.Diagnostics.Ping>().RequestId != ping.RequestId)
         {
             throw new Exception("Router did not deliver to the exact third Base instance.");
         }
 
-        receiver.Input.Writer.TryWrite(new Frame
+        receiver.Input.Writer.TryWrite(RpcFrames.Reply(new TGame.Diagnostics.Pong
         {
-            Pong = new TGame.Diagnostics.Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = nameof(ProcessType.Base) }
-        });
-        if ((await caller.Output.Reader.ReadAsync(stop)).Pong?.RequestId != ping.RequestId)
+            RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = nameof(ProcessType.Base)
+        }));
+        if ((await caller.Output.Reader.ReadAsync(stop)).ReadReply<TGame.Diagnostics.Pong>().RequestId != ping.RequestId)
         {
             throw new Exception("Router did not return the reply to the second Login instance.");
         }

@@ -54,9 +54,9 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 
 服务端入口为 `code/server/app/Program.cs`，只接受 `<角色> <运行目录>`。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 只引用 `code/shared/TGame.Shared.csproj`，不依赖服务端工程。它接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
 
-服务端工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。启动、节点、连接和服务注册使用 `TGame.Server` 命名空间；共享的日志格式、WebSocket 读帧与诊断数据分别属于 `TGame.Logging`、`TGame.Transport` 和 `TGame.Diagnostics`。通用连接服务与帧定义在 [transport.proto](code/shared/protocols/transport.proto)，Ping/Pong 消息保留在诊断协议中，消息分发集中在 `ServerNode.Messages.cs`。Profile 请求直接使用自身消息，不需要经过 Ping/Pong 包装。构建时统一生成到 `code/shared/generated/protocols/`。
+服务端工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。启动、节点、连接和服务注册使用 `TGame.Server` 命名空间；共享的日志格式、WebSocket 读帧与诊断数据分别属于 `TGame.Logging`、`TGame.Transport` 和 `TGame.Diagnostics`。通用连接服务与帧定义在 [transport.proto](code/shared/protocols/transport.proto)，只包含 Hello 握手和通用 RpcRequest/RpcReply，不引用诊断或 Profile 协议。请求编号用于匹配响应，Protobuf Any 承载具体消息。Ping/Pong 和 Profile 都作为普通 RPC，由功能入口向 `RpcDispatcher` 注册处理方法；`ServerNode.Messages.cs` 只区分请求和响应。构建时统一生成到 `code/shared/generated/protocols/`。
 
-本次整理将内部 gRPC 服务改为 `tgame.transport.ServerLink`，服务发现临时节点前缀改为 `server-<运行ID>-`；同一轮进程须使用统一重新构建的版本，不能混用旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。Ping/Pong 验收脚本及历史日志目录继续保留测试名称。
+内部 gRPC 服务为 `tgame.transport.ServerLink`，服务发现临时节点前缀为 `server-<运行ID>-`。通用 RPC 帧与旧的业务专用帧不兼容；同一轮进程须使用统一重新构建的版本，不能混用旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。外部 WebSocket 的 Ping/Pong 格式不变，验收脚本及历史日志目录继续保留测试名称。
 
 ### GM 管理入口
 

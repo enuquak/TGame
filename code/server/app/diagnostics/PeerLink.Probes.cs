@@ -1,5 +1,4 @@
 using TGame.Diagnostics;
-using TGame.Transport;
 
 namespace TGame.Server;
 
@@ -7,18 +6,21 @@ internal sealed partial class PeerLink
 {
     public async Task<Pong> PingAsync(Ping ping, CancellationToken stop)
     {
-        var frame = await CallAsync(new Frame { Ping = ping }, ping.RequestId, ping.EntityId, ServerLogEvents.PingTx, stop);
-        if (frame.Pong?.EntityId != ping.EntityId)
+        var pong = await CallAsync<Pong>(ping, ping.RequestId, stop,
+            () => TraceLog.Event(ServerLogEvents.PingTx, role, peer, ping.RequestId, ping.EntityId, id));
+        TraceLog.Event(ServerLogEvents.PongRx, role, peer, pong.RequestId, pong.EntityId, id);
+
+        if (pong.RequestId != ping.RequestId || pong.EntityId != ping.EntityId)
         {
-            throw new InvalidDataException("Pong entity mismatch.");
+            throw new InvalidDataException("Pong request or entity mismatch.");
         }
 
-        return frame.Pong;
+        return pong;
     }
 
     public async Task ReplyAsync(Pong pong, CancellationToken stop)
     {
-        await WriteAsync(new Frame { Pong = pong }, stop);
+        await ReplyAsync(pong, pong.RequestId, stop);
         TraceLog.Event(ServerLogEvents.PongTx, role, peer, pong.RequestId, pong.EntityId, id);
     }
 }
