@@ -7,7 +7,8 @@ $ErrorActionPreference = 'Stop'
 $manifest = Join-Path $RunDirectory 'server-logs.json'
 if (Test-Path -LiteralPath $manifest)
 {
-    $roles = (Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json).roles
+    $layout = Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json
+    $roles = @($layout.processes.PSObject.Properties.Name)
 }
 else
 {

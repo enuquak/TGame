@@ -4,7 +4,7 @@ using org.apache.zookeeper;
 
 namespace TGame.Server.Engine;
 
-public sealed class ServiceRegistry(Guid run, string endpoint) : IAsyncDisposable
+public sealed class ServiceRegistry(string endpoint) : IAsyncDisposable
 {
     private sealed class Changed : Watcher
     {
@@ -18,40 +18,31 @@ public sealed class ServiceRegistry(Guid run, string endpoint) : IAsyncDisposabl
     }
 
     private const string Root = "/tgame/test";
+    private const string NodePrefix = "server-";
     private const int SessionTimeoutMilliseconds = 10000;
     private readonly ZooKeeper zk = new(endpoint, SessionTimeoutMilliseconds, new Changed());
-    private readonly string prefix = $"server-{run:N}-";
 
-    public async Task RegisterAsync(string role, string address, bool consoleMode, CancellationToken stop)
+    public async Task RegisterAsync(string role, string address, CancellationToken stop)
     {
-        var path = $"{Root}/{prefix}{role}";
-        while (true)
+        var path = $"{Root}/{NodePrefix}{role}";
+        try
         {
-            try
-            {
-                await zk.createAsync(path, Encoding.UTF8.GetBytes(address), ZooDefs.Ids.OPEN_ACL_UNSAFE,
-                    CreateMode.EPHEMERAL).WaitAsync(stop);
-                break;
-            }
-            catch (KeeperException.NodeExistsException) when (consoleMode)
-            {
-                // After a forced stop, the previous instance's ephemeral node can outlive its process.
-                var changed = new Changed();
-                if (await zk.existsAsync(path, changed).WaitAsync(stop) != null)
-                {
-                    await changed.Signal.Task.WaitAsync(stop);
-                }
-            }
+            await zk.createAsync(path, Encoding.UTF8.GetBytes(address), ZooDefs.Ids.OPEN_ACL_UNSAFE,
+                CreateMode.EPHEMERAL).WaitAsync(stop);
+        }
+        catch (KeeperException.NodeExistsException error)
+        {
+            throw new InvalidOperationException($"Cannot start {role}: ZooKeeper node '{path}' already exists.", error);
         }
 
         TraceLog.Event(ServerLogEvents.ZkRegister, role, detail: address);
         var names = (await zk.getChildrenAsync(Root).WaitAsync(stop)).Children;
-        TraceLog.Event(ServerLogEvents.ZkDiscover, role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(prefix + r))));
+        TraceLog.Event(ServerLogEvents.ZkDiscover, role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(NodePrefix + r))));
     }
 
     public async Task<string> ResolveAsync(string peer, CancellationToken stop)
     {
-        var path = $"{Root}/{prefix}{peer}";
+        var path = $"{Root}/{NodePrefix}{peer}";
         while (true)
         {
             try

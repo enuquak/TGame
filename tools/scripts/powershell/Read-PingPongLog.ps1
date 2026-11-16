@@ -15,7 +15,8 @@ $manifest = Join-Path $RunDirectory 'server-logs.json'
 if ($Role -ne [TGame.ServerPeerNames]::Client -and (Test-Path -LiteralPath $manifest))
 {
     $layout = Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json
-    if ($layout.runId -cnotmatch '^[0-9a-f]{32}$' -or $Role -cnotin $layout.roles)
+    $identity = $layout.processes.$Role
+    if ($null -eq $identity -or $identity.pid -le 0 -or $identity.startedUtcTicks -le 0)
     {
         throw "Invalid log manifest for $Role."
     }
@@ -26,7 +27,7 @@ if ($Role -ne [TGame.ServerPeerNames]::Client -and (Test-Path -LiteralPath $mani
         return
     }
 
-    $files = Get-ChildItem -LiteralPath $directory -File -Filter "$($layout.runId)-*.log" |
+    $files = Get-ChildItem -LiteralPath $directory -File -Filter "$($identity.pid)-$($identity.startedUtcTicks)-*.log" |
         Sort-Object { $_.BaseName.Split('_')[0] }, { [int]$_.BaseName.Split('_')[1] }
 }
 else
@@ -55,9 +56,9 @@ foreach ($file in $files)
             }
 
             $row = $line | ConvertFrom-Json
-            if ($row.role -cne $Role -or ($layout -and $row.runId -cne $layout.runId))
+            if ($row.role -cne $Role -or ($layout -and $row.pid -ne $identity.pid))
             {
-                throw "Unexpected process/run in $($file.FullName)."
+                throw "Unexpected process in $($file.FullName)."
             }
 
             $row

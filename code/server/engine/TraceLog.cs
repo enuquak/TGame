@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TGame.Logging;
 using Serilog;
 using Serilog.Core;
@@ -9,14 +10,14 @@ public static class TraceLog
 {
     private const long FileSizeLimit = 10 * 1024 * 1024;
     private static Logger? serverLog;
-    private static string? runId;
 
-    public static IDisposable OpenServer(string role, Guid run)
+    public static IDisposable OpenServer(string role)
     {
-        runId = run.ToString("N");
+        using var process = Process.GetCurrentProcess();
+        long startedUtcTicks = process.StartTime.ToUniversalTime().Ticks;
         var root = Environment.GetEnvironmentVariable(ServerEnvironment.LogRoot) ?? Path.Combine("logs", "server");
         var directory = Directory.CreateDirectory(Path.Combine(root, role + "Server"));
-        var path = Path.Combine(directory.FullName, $"{runId}-{Environment.ProcessId}-.log");
+        var path = Path.Combine(directory.FullName, $"{Environment.ProcessId}-{startedUtcTicks}-.log");
         SelfLog.Enable(TextWriter.Synchronized(Console.Error));
         serverLog = new LoggerConfiguration().WriteTo.File(path, outputTemplate: "{Message:lj}{NewLine}",
             rollingInterval: RollingInterval.Hour, rollOnFileSizeLimit: true, fileSizeLimitBytes: FileSizeLimit,
@@ -27,7 +28,7 @@ public static class TraceLog
     public static void Event(string ev, string role, string? peer = null, string? id = null,
         string? entity = null, string? link = null, string? detail = null)
     {
-        var json = LogEventJson.Serialize(ev, role, peer, id, entity, link, detail, runId);
+        var json = LogEventJson.Serialize(ev, role, peer, id, entity, link, detail);
 
         if (serverLog is null)
         {
