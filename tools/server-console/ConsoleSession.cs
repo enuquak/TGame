@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Globalization;
+using TGame.Server.Engine;
 
 namespace TGame.ServerConsole;
 
@@ -50,7 +52,8 @@ internal sealed class ConsoleSession : IDisposable
         }
 
         var saved = File.ReadAllText(current).Trim();
-        if (!Guid.TryParseExact(saved, "N", out _) || !File.Exists(Path.Combine(sessions, saved, ServerRunFiles.ConsoleMode)))
+        bool validSavedId = IdText.IsValid(saved) || Guid.TryParseExact(saved, "N", out _);
+        if (!validSavedId || !File.Exists(Path.Combine(sessions, saved, ServerRunFiles.ConsoleMode)))
         {
             throw new InvalidDataException("控制台当前会话记录无效。");
         }
@@ -125,7 +128,9 @@ internal sealed class ConsoleSession : IDisposable
 
     private async Task StartNewRun()
     {
-        var id = Guid.NewGuid().ToString("N");
+        var options = IdGeneratorOptions.Load(Path.Combine(root, "code", "server", "config", IdGeneratorOptions.FileName));
+        await using var idGenerator = await SnowflakeIdGenerator.CreateAsync(options);
+        var id = idGenerator.GenId().ToString(CultureInfo.InvariantCulture);
         var snapshot = Snapshot(id);
         var runDir = Directory.CreateDirectory(Path.Combine(sessions, id)).FullName;
         File.WriteAllText(Path.Combine(runDir, ServerRunFiles.ConsoleMode), "");

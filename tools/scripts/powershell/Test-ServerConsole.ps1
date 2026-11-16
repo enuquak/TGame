@@ -4,8 +4,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
-$checkout = Join-Path $root "build/console-check/$([guid]::NewGuid().ToString('N'))"
-$null = New-Item -ItemType Directory -Path $checkout
+$checkout = [IO.Directory]::CreateTempSubdirectory('tgame-console-check-').FullName
 $null = New-Item -ItemType File -Path "$checkout/.console-check"
 $dotnet = "$env:ProgramFiles/dotnet/dotnet.exe"
 if (!(Test-Path -LiteralPath $dotnet))

@@ -47,9 +47,9 @@ internal sealed partial class GameServerNode
             return Failure(Result.Unavailable);
         }
 
-        if (!Guid.TryParseExact(request.RequestId, "N", out _) ||
+        if (!IdText.IsValid(request.RequestId) ||
             subject.Length is 0 or > MaxProfileEntityIdLength ||
-            !Guid.TryParseExact(subject, "N", out _) ||
+            !IdText.IsValid(subject) ||
             (request.Publish is { } summary && (string.IsNullOrWhiteSpace(summary.DisplayName) ||
                 summary.DisplayName.Length > MaxProfileTextLength ||
                 summary.Title.Length > MaxProfileTextLength)))

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.WebSockets;
 using Google.Protobuf;
 using TGame.Diagnostics;
@@ -30,9 +31,9 @@ internal sealed partial class GameServerNode
         }
 
         var gateLocal = ping.Entry == nameof(ProcessType.Gate) && Role == nameof(ProcessType.Gate) && ping.EntityId == State.EntityId;
-        if (!Guid.TryParseExact(ping.RequestId, "N", out _) ||
+        if (!IdText.IsValid(ping.RequestId) ||
             (!gateLocal && ping.Entry is not (nameof(ProcessType.Base) or nameof(ProcessType.Login))) ||
-            !Guid.TryParseExact(ping.EntityId, "N", out _) ||
+            !IdText.IsValid(ping.EntityId) ||
             (ping.Storage && ping.Entry != nameof(ProcessType.Base)))
         {
             throw new InvalidDataException("Invalid ping.");
@@ -114,8 +115,8 @@ internal sealed partial class GameServerNode
             return;
         }
 
+        string link = IdGenerator.GenId().ToString(CultureInfo.InvariantCulture);
         using var ws = await context.WebSockets.AcceptWebSocketAsync();
-        string link = context.Connection.Id;
 
         while (await WebSocketFrames.ReadAsync(ws, context.RequestAborted) is { } bytes)
         {
@@ -146,7 +147,7 @@ internal sealed partial class GameServerNode
                 request.Withdraw = ping.EntityId;
                 break;
 
-            case Ping.Types.ProfileProbe.Fetch when Role is nameof(ProcessType.Login) or nameof(ProcessType.Scene) && Guid.TryParseExact(ping.ProfileSubject, "N", out _):
+            case Ping.Types.ProfileProbe.Fetch when Role is nameof(ProcessType.Login) or nameof(ProcessType.Scene) && IdText.IsValid(ping.ProfileSubject):
                 request.Fetch = ping.ProfileSubject;
                 break;
 

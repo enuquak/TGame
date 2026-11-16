@@ -4,6 +4,8 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using TGame;
 using TGame.ServerConsole;
+using TGame.Server.Engine;
+using System.Globalization;
 
 internal static class LogChecks
 {
@@ -14,7 +16,8 @@ internal static class LogChecks
     // A private executable waiting on stdin supplies a real image path, PID and creation time.
     public static void Run(string checkout)
     {
-        var id = Guid.NewGuid().ToString("N");
+        var idGenerator = new SnowflakeIdGenerator(0, TimeProvider.System);
+        var id = idGenerator.GenId().ToString(CultureInfo.InvariantCulture);
         var run = Directory.CreateDirectory(Path.Combine(checkout, "build", "log-check", id)).FullName;
         var logs = Directory.CreateDirectory(Path.Combine(run, ProcessName + "Server")).FullName;
         var exe = Path.Combine(run, ProcessName + "Server.exe");
@@ -51,7 +54,7 @@ internal static class LogChecks
             SaveIdentity(ticks);
             File.WriteAllLines(prefix + ".log", [
                 Row(ServerLogEvents.ProcessFailed, time: ticks - 1), Row(ServerLogEvents.ProcessFailed, pid: 1),
-                Row(ServerLogEvents.ProcessFailed, runId: Guid.NewGuid().ToString("N")), Row(ServerLogEvents.SinglePointInit), Row(ServerLogEvents.LinksReady)
+                Row(ServerLogEvents.ProcessFailed, runId: idGenerator.GenId().ToString(CultureInfo.InvariantCulture)), Row(ServerLogEvents.SinglePointInit), Row(ServerLogEvents.LinksReady)
             ]);
             using var item = new ServerInstance(ProcessName);
             item.Open(run, run, run);

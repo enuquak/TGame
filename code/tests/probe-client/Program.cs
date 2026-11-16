@@ -1,4 +1,25 @@
 using TGame.Tests;
+using System.Globalization;
+using TGame.Server.Engine;
+
+const int MaxIdBatchSize = 100000;
+
+if (args is ["--ids", var configPath, var countText])
+{
+    if (!int.TryParse(countText, NumberStyles.None, CultureInfo.InvariantCulture, out int count) || count is < 1 or > MaxIdBatchSize)
+    {
+        throw new ArgumentException($"ID count must be between 1 and {MaxIdBatchSize}.");
+    }
+
+    var options = IdGeneratorOptions.Load(configPath);
+    await using var idGenerator = await SnowflakeIdGenerator.CreateAsync(options);
+    for (int i = 0; i < count; i++)
+    {
+        Console.WriteLine(idGenerator.GenId().ToString(CultureInfo.InvariantCulture));
+    }
+
+    return 0;
+}
 
 if (args is not [var directory, var endpoint, var pin])
 {

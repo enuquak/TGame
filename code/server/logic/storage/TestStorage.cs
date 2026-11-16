@@ -26,12 +26,6 @@ internal sealed class TestStorage
         init;
     }
 
-    public required string ZooKeeper
-    {
-        get;
-        init;
-    }
-
     public static readonly Lazy<TestStorage> Settings = new(() =>
     {
         var yaml = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, ConfigDirectory, ConfigFileName));

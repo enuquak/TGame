@@ -30,7 +30,7 @@ if ($LASTEXITCODE -eq 0)
 Write-Output 'BAT failure exit code: PASS'
 
 # A relocated script must read the existing repository state, even from another working directory.
-$fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("tgame-tunnel-layout-" + [guid]::NewGuid())
+$fixtureRoot = [IO.Directory]::CreateTempSubdirectory('tgame-tunnel-layout-').FullName
 $fixtureScript = Join-Path $fixtureRoot 'tools/scripts/powershell/Start-EnvironmentTunnel.ps1'
 
 try

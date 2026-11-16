@@ -22,20 +22,50 @@ $profileRole = [TGame.ProcessType]::Profile.ToString()
 $gmRole = [TGame.ProcessType]::GM.ToString()
 
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
-$runId = [guid]::NewGuid().ToString('N')
-$runDir = Join-Path $root "logs/tools/pingpong/$runId"
-$serverRoot = Join-Path $root 'logs/server'
-$readLog = Join-Path $PSScriptRoot 'Read-PingPongLog.ps1'
-$null = New-Item -ItemType Directory -Path $runDir
-$children = @{}
 $dotnet = "$env:ProgramFiles/dotnet/dotnet.exe"
 if (!(Test-Path -LiteralPath $dotnet))
 {
     $dotnet = (Get-Command dotnet -CommandType Application).Source
 }
 
-$serverDll = Join-Path $root 'build/bin/TGame.Server/debug/TGame.Server.dll'
 $clientDll = Join-Path $root 'build/bin/TGame.ProbeClient/debug/TGame.ProbeClient.dll'
+& $dotnet build (Join-Path $root 'code/tests/probe-client/TGame.ProbeClient.csproj') --nologo
+if ($LASTEXITCODE -ne 0)
+{
+    throw "ID client build failed ($LASTEXITCODE)."
+}
+
+$idBatchSize = 256
+$idQueue = [Collections.Generic.Queue[string]]::new()
+$idConfig = Join-Path $root 'code/server/config/id-generator.json'
+$generatedIds = @(& $dotnet $clientDll --ids $idConfig $idBatchSize)
+if ($LASTEXITCODE -ne 0 -or $generatedIds.Count -ne $idBatchSize)
+{
+    throw 'Failed to allocate test IDs through the engine generator.'
+}
+
+foreach ($id in $generatedIds)
+{
+    if (![TGame.IdText]::IsValid($id))
+    {
+        throw "Invalid generated test ID: $id"
+    }
+
+    $idQueue.Enqueue($id)
+}
+
+function New-TestId
+{
+    return $idQueue.Dequeue()
+}
+
+$runId = New-TestId
+$runDir = Join-Path $root "logs/tools/pingpong/$runId"
+$serverRoot = Join-Path $root 'logs/server'
+$readLog = Join-Path $PSScriptRoot 'Read-PingPongLog.ps1'
+$null = New-Item -ItemType Directory -Path $runDir
+$children = @{}
+$serverDll = Join-Path $root 'build/bin/TGame.Server/debug/TGame.Server.dll'
 Write-Host "Server logs: $serverRoot/<Role>Server/"
 Write-Host "PingPong results: $runDir"
 Push-Location $root
@@ -46,12 +76,6 @@ try
     if ($LASTEXITCODE -ne 0)
     {
         throw "Server build failed ($LASTEXITCODE)."
-    }
-
-    & $dotnet build code/tests/probe-client/TGame.ProbeClient.csproj --nologo
-    if ($LASTEXITCODE -ne 0)
-    {
-        throw "Probe client build failed ($LASTEXITCODE)."
     }
 
     $password = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::MongoTestPassword)
@@ -179,7 +203,7 @@ try
     foreach ($role in $roles)
     {
         $point = @(& $readLog $runDir $role -Event ([TGame.ServerLogEvents]::SinglePointInit))
-        if ($point.Count -ne 1 -or $point[0].entity -cnotmatch '^[0-9a-f]{32}$')
+        if ($point.Count -ne 1 -or ![TGame.IdText]::IsValid($point[0].entity))
         {
             throw "Expected one startup Entity in $role."
         }
@@ -200,7 +224,7 @@ try
             {
                 $path = @(([TGame.ServerPeerNames]::Client), $gateRole) + $route.Split(',')
                 [pscustomobject]@{
-                    Id = [guid]::NewGuid().ToString('N')
+                    Id = (New-TestId)
                     Entity = $pointIds[$path[-1]]
                     Path = $path
                     Storage = ($route -eq "$baseRole,$dbMgrRole")
@@ -221,7 +245,7 @@ try
     {
         $path = @(([TGame.ServerPeerNames]::Client)) + $route.Split(',')
         $cases += [pscustomobject]@{
-            Id = [guid]::NewGuid().ToString('N')
+            Id = (New-TestId)
             Entity = $pointIds[$path[-1]]
             Path = $path
             Storage = $false
@@ -240,7 +264,7 @@ try
         $route,$action,$expected,$evidence = $step.Split(' ')
         $path = @(([TGame.ServerPeerNames]::Client), $gateRole) + $route.Split(',')
         $cases += [pscustomobject]@{
-            Id = [guid]::NewGuid().ToString('N')
+            Id = (New-TestId)
             Entity = $pointIds[$path[-1]]
             Path = $path
             Storage = $false
@@ -267,7 +291,7 @@ try
         throw 'Unexpected GM HTTP endpoint.'
     }
 
-    $unknownId = [guid]::NewGuid().ToString('N')
+    $unknownId = (New-TestId)
     $checks = @(foreach ($check in 'missing-token','wrong-token','invalid-id','unknown-id','delivered')
         {
             $target = $pointIds[$sceneRole]
@@ -309,7 +333,7 @@ try
 
             $response = Invoke-WebRequest -Method Post -Uri "$($gmUri.AbsoluteUri)gm/commands/ping/$target" -Headers $headers -NoProxy -MaximumRedirection 0 -TimeoutSec $gmRequestTimeoutSeconds -SkipHttpErrorCheck
             $body = $response.Content | ConvertFrom-Json
-            if ($response.StatusCode -ne $expected -or $body.requestId -cnotmatch '^[0-9a-f]{32}$' -or
+            if ($response.StatusCode -ne $expected -or ![TGame.IdText]::IsValid($body.requestId) -or
                 $response.Headers['X-Request-Id'][0] -cne $body.requestId -or
                 ($expected -eq [int][Net.HttpStatusCode]::OK -and ($body.entityId -cne $target -or $body.responder -cne $sceneRole)))
             {

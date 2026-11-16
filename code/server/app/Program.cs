@@ -19,7 +19,12 @@ if (args.Length != ProcessArgumentCount || !Topology.Dials.ContainsKey(args[0]))
 
 var role = args[0];
 var runDir = Path.GetFullPath(args[1]);
-var runId = Guid.ParseExact(Path.GetFileName(runDir), "N");
+var runId = Path.GetFileName(runDir);
+if (!IdText.IsValid(runId) && !Guid.TryParseExact(runId, "N", out _))
+{
+    throw new ArgumentException("The run directory must be named with a Snowflake ID.");
+}
+
 using var serverLog = TraceLog.OpenServer(role, runId);
 try
 {
@@ -32,13 +37,15 @@ catch (Exception error)
     Environment.ExitCode = 1;
 }
 
-static async Task RunServerAsync(string role, Guid runId, string runDir)
+static async Task RunServerAsync(string role, string runId, string runDir)
 {
     var singlePoints = new SinglePointRegistry(typeof(GameServerNode).Assembly.GetTypes());
     var processType = Enum.Parse<ProcessType>(role);
 
     var builder = WebApplication.CreateSlimBuilder();
-    using var node = new GameServerNode(role);
+    var idOptions = IdGeneratorOptions.Load(Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName));
+    await using var idGenerator = await SnowflakeIdGenerator.CreateAsync(idOptions);
+    using var node = new GameServerNode(role, idGenerator);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
@@ -59,6 +66,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     }));
     builder.Services.AddGrpc();
     builder.Services.AddSingleton<ServerNode>(node);
+    builder.Services.AddSingleton<IIdGenerator>(idGenerator);
 
     await using var app = builder.Build();
     if (processType == ProcessType.Gate)
@@ -84,7 +92,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
 
     try
     {
-        await using var registry = new ServiceRegistry(runId, TestStorage.Settings.Value.ZooKeeper);
+        await using var registry = new ServiceRegistry(runId, idOptions.ZooKeeperEndpoint);
         using var startupTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
         startupTimeout.CancelAfter(TimeSpan.FromSeconds(StartupTimeoutSeconds));
         var registration = registry.RegisterAsync(role, address, consoleMode, startupTimeout.Token);
@@ -97,6 +105,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
 
         workers.Add(SuperviseAsync(InitializeAsync()));
         workers.Add(SuperviseAsync(WatchStopAsync()));
+        workers.Add(SuperviseAsync(WatchIdLeaseAsync()));
         await Task.WhenAll(workers);
 
         async Task InitializeAsync()
@@ -127,6 +136,12 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     {
         lifetime.Cancel();
         await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
+    }
+
+    async Task WatchIdLeaseAsync()
+    {
+        await idGenerator.LeaseLost.WaitAsync(stop);
+        throw new InvalidOperationException("The ID generator lost its ZooKeeper session.");
     }
 
     async Task WatchStopAsync()

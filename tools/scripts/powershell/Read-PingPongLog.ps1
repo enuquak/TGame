@@ -15,7 +15,7 @@ $manifest = Join-Path $RunDirectory 'server-logs.json'
 if ($Role -ne [TGame.ServerPeerNames]::Client -and (Test-Path -LiteralPath $manifest))
 {
     $layout = Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json
-    if ($layout.runId -cnotmatch '^[0-9a-f]{32}$' -or $Role -cnotin $layout.roles)
+    if ((![TGame.IdText]::IsValid($layout.runId) -and $layout.runId -cnotmatch '^[0-9a-f]{32}$') -or $Role -cnotin $layout.roles)
     {
         throw "Invalid log manifest for $Role."
     }

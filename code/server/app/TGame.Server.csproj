@@ -12,6 +12,7 @@
     <PackageReference Include="MongoDB.Driver" Version="3.13.0" />
     <PackageReference Include="StackExchange.Redis" Version="3.4.31" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <Content Include="../config/id-generator.json" Link="config/id-generator.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../config/storage.test.yaml" Link="config/storage.test.yaml" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../config/dbmgr-storage.yaml" Link="config/dbmgr-storage.yaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

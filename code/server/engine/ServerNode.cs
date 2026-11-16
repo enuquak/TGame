@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Grpc.Core;
@@ -20,8 +21,11 @@ public abstract class ServerNode : IDisposable
     protected readonly ConcurrentDictionary<string, string> owners = new();
     protected readonly ConcurrentDictionary<string, PeerLink> links = new();
 
-    protected ServerNode(string role)
+    protected ServerNode(string role, IIdGenerator idGenerator)
     {
+        ArgumentNullException.ThrowIfNull(idGenerator);
+        IdGenerator = idGenerator;
+        State = new SinglePointState(idGenerator);
         Role = role;
         localEntities[State.EntityId] = 0;
     }
@@ -29,7 +33,8 @@ public abstract class ServerNode : IDisposable
     public Task FirstLinks => firstLinks.Task;
     public string Role { get; }
     public bool Ready => singlePoint?.Initialized == true && linksReady;
-    public SinglePointState State { get; } = new();
+    public SinglePointState State { get; }
+    public IIdGenerator IdGenerator { get; }
     public ServerSinglePoint? SinglePoint => singlePoint;
 
     public async Task InitializeSinglePointAsync(SinglePointRegistry registry, CancellationToken stop)
@@ -46,7 +51,7 @@ public abstract class ServerNode : IDisposable
         }
 
         singlePoint = registry.Create(Enum.Parse<ProcessType>(Role));
-        await singlePoint.InitializeAsync(Role, State, stop);
+        await singlePoint.InitializeAsync(Role, State, IdGenerator, stop);
     }
 
     public void Dispose()
@@ -84,7 +89,7 @@ public abstract class ServerNode : IDisposable
     private async Task ConnectAsync(string peer, string address, CancellationToken stop)
     {
         using var channel = GrpcChannel.ForAddress(address);
-        var id = Guid.NewGuid().ToString("N");
+        var id = IdGenerator.GenId().ToString(CultureInfo.InvariantCulture);
         var headers = new Metadata { { TransportProtocol.PeerHeader, Role }, { TransportProtocol.LinkHeader, id } };
         if (peer == nameof(ProcessType.Router))
         {
@@ -102,7 +107,7 @@ public abstract class ServerNode : IDisposable
         var link = new PeerLink(Role, peer, id, output);
         if (Role == nameof(ProcessType.Router))
         {
-            bool hasInvalidIds = entities.Any(entity => !Guid.TryParseExact(entity, "N", out _));
+            bool hasInvalidIds = entities.Any(entity => !IdText.IsValid(entity));
             bool hasDuplicateIds = entities.Distinct().Count() != entities.Length;
             if (entities.Length == 0 || hasInvalidIds || hasDuplicateIds)
             {

@@ -64,6 +64,8 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 
 服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类、业务节点 `GameServerNode`、Profile 和诊断处理位于 `code/server/logic/`；宿主负责提供业务类型集合、组装节点并按两个阶段启动服务。引擎可以单独构建，不引用宿主或业务实现。
 
+唯一 ID 统一调用引擎的 `idGenerator.GenId()`，使用雪花算法；ZooKeeper 自动分配进程编号，引擎与业务共用生成器。请求、实体、连接和运行批次均已接入，详见[雪花 ID](docs/雪花ID.md)。
+
 共享的日志格式、WebSocket 读帧与诊断数据分别属于 `TGame.Logging`、`TGame.Transport` 和 `TGame.Diagnostics`。连接服务与帧定义在 [transport.proto](code/shared/protocols/transport.proto)，消息分发集中在 `logic/node/GameServerNode.Messages.cs`。Profile 请求直接使用自身消息，不需要经过 Ping/Pong 包装。当前共享 Frame 仍包含诊断和 Profile 消息，构建时统一生成到 `code/shared/generated/protocols/`。
 
 本次整理将内部 gRPC 服务改为 `tgame.transport.ServerLink`，服务发现临时节点前缀改为 `server-<运行ID>-`；同一轮进程须使用统一重新构建的版本，不能混用旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。Ping/Pong 验收脚本及历史日志目录继续保留测试名称。

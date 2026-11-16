@@ -11,9 +11,9 @@ public static class TraceLog
     private static Logger? serverLog;
     private static string? runId;
 
-    public static IDisposable OpenServer(string role, Guid run)
+    public static IDisposable OpenServer(string role, string run)
     {
-        runId = run.ToString("N");
+        runId = run;
         var root = Environment.GetEnvironmentVariable(ServerEnvironment.LogRoot) ?? Path.Combine("logs", "server");
         var directory = Directory.CreateDirectory(Path.Combine(root, role + "Server"));
         var path = Path.Combine(directory.FullName, $"{runId}-{Environment.ProcessId}-.log");

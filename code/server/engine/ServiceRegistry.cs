@@ -4,7 +4,7 @@ using org.apache.zookeeper;
 
 namespace TGame.Server.Engine;
 
-public sealed class ServiceRegistry(Guid run, string endpoint) : IAsyncDisposable
+public sealed class ServiceRegistry(string run, string endpoint) : IAsyncDisposable
 {
     private sealed class Changed : Watcher
     {
@@ -20,7 +20,7 @@ public sealed class ServiceRegistry(Guid run, string endpoint) : IAsyncDisposabl
     private const string Root = "/tgame/test";
     private const int SessionTimeoutMilliseconds = 10000;
     private readonly ZooKeeper zk = new(endpoint, SessionTimeoutMilliseconds, new Changed());
-    private readonly string prefix = $"server-{run:N}-";
+    private readonly string prefix = $"server-{run}-";
 
     public async Task RegisterAsync(string role, string address, bool consoleMode, CancellationToken stop)
     {

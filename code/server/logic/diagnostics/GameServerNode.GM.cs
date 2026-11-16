@@ -10,8 +10,8 @@ internal sealed partial class GameServerNode
     private async Task<Pong> RouteGmPingAsync(string from, Ping ping, CancellationToken stop)
     {
         var expectedSender = Role == nameof(ProcessType.Router) ? nameof(ProcessType.GM) : nameof(ProcessType.Router);
-        if (!Guid.TryParseExact(ping.RequestId, "N", out _) ||
-            !Guid.TryParseExact(ping.EntityId, "N", out _) ||
+        if (!IdText.IsValid(ping.RequestId) ||
+            !IdText.IsValid(ping.EntityId) ||
             ping.Storage ||
             ping.ProfileProbe != Ping.Types.ProfileProbe.None ||
             from != expectedSender)

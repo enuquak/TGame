@@ -1,0 +1,6 @@
+{
+  "ZooKeeperEndpoint": "127.0.0.1:2181",
+  "WorkerRootPath": "/tgame/id-workers",
+  "SessionTimeoutMilliseconds": 10000,
+  "ConnectTimeoutMilliseconds": 10000
+}
