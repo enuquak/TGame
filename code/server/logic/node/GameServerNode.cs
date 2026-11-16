@@ -2,7 +2,7 @@ using TGame.Server.Engine;
 
 namespace TGame.Server.Logic;
 
-internal sealed partial class GameServerNode(string role, ServerSinglePoint singlePoint) : ServerNode(role)
+internal sealed partial class GameServerNode(string name, ServerSinglePoint singlePoint, ServerGroup group) : ServerNode(name, group)
 {
     protected override bool Initialized => singlePoint.Initialized;
 

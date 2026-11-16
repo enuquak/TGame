@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([switch]$Hold)
+param([switch]$Hold, [string]$Configuration)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Import-ServerTypes.ps1')
@@ -96,7 +96,23 @@ try
         $gmActor = 'local-smoke'
     }
 
-    $roles = @(Get-Content -Raw -LiteralPath 'code/server/config/processes.json' | ConvertFrom-Json)
+    if (!$Configuration)
+    {
+        $Configuration = Join-Path $root 'code/server/config/processes.json'
+    }
+
+    $groupFile = Join-Path $runDir ([TGame.ServerRunFiles]::GroupConfiguration)
+    Copy-Item -LiteralPath $Configuration -Destination $groupFile
+    $instances = @(& "$PSScriptRoot/Read-ServerGroup.ps1" -Path $groupFile)
+    $roles = @($instances.Name)
+    foreach ($required in [Enum]::GetNames([TGame.ProcessType]))
+    {
+        if ($required -cnotin $roles)
+        {
+            throw "The full protocol smoke test requires at least one $required instance."
+        }
+    }
+
     @{
         runId = $runId
         serverRoot = [IO.Path]::GetRelativePath($runDir,$serverRoot)
@@ -106,6 +122,7 @@ try
 
     foreach ($role in $roles)
     {
+        $processRole = ($instances | Where-Object Name -CEQ $role).Role
         $launch = @{
             FilePath = $dotnet
             ArgumentList = ('"{0}" {1} "{2}"' -f $serverDll,$role,$runDir)
@@ -123,18 +140,18 @@ try
             }
         }
 
-        if ($role -eq $gmRole)
+        if ($processRole -eq $gmRole)
         {
             $launch.Environment[[TGame.ServerEnvironment]::GMToken] = $gmToken
             $launch.Environment[[TGame.ServerEnvironment]::GMOperator] = $gmActor
         }
 
-        if ($role -eq $dbMgrRole)
+        if ($processRole -eq $dbMgrRole)
         {
             $launch.Environment[[TGame.ServerEnvironment]::DBMgrMongoPassword] = $dbMgrPassword
         }
 
-        if ($role -eq $profileRole)
+        if ($processRole -eq $profileRole)
         {
             $launch.Environment[[TGame.ServerEnvironment]::MongoTestPassword] = $password
             $launch.Environment[[TGame.ServerEnvironment]::RedisTestPassword] = $redisPassword

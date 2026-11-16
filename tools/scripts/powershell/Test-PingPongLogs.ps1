@@ -44,21 +44,36 @@ if (!$points.Count -and $cases.Count -in 12,13)
 }
 
 $profileCases = @($cases | Where-Object { $_.ProfileAction })
-if ($profileCases.Count -ne (5 * [int]$hasProfile) -or $points.Count -ne $expectedRoles.Count -or $cases.Count -ne (12 + $points.Count + $profileCases.Count) -or
+$typeCount = @($points.role | Sort-Object -Unique).Count
+if ($profileCases.Count -ne (5 * [int]$hasProfile) -or $points.Count -ne $expectedRoles.Count -or $cases.Count -ne (12 + $typeCount + $profileCases.Count) -or
     ($cases.Id | Sort-Object -Unique).Count -ne $cases.Count)
 {
     throw 'Unexpected case count, duplicate request ID or duplicate startup Entity.'
 }
 
 if ($points.Count -gt 1 -and (@($points.entity | Sort-Object -Unique).Count -ne $roles.Count -or
-        @($points.detail | Sort-Object -Unique).Count -ne $roles.Count))
+        @($points.detail | Sort-Object -Unique).Count -ne $typeCount))
 {
     throw 'Expected distinct process Entity IDs and classes.'
 }
 
+$instances = @(foreach ($name in $roles)
+    {
+        $type = $name
+        $point = $points | Where-Object ([TGame.ServerLogFields]::Instance) -CEQ $name | Select-Object -First 1
+        if ($point)
+        {
+            $type = $point.role
+        }
+
+        # Historical single-instance runs can have no SinglePoint records at all.
+        [pscustomobject]@{ Name = $name; Role = $type }
+    })
+$routerCount = @($instances | Where-Object Role -EQ ([TGame.ProcessType]::Router.ToString())).Count
+
 foreach ($role in $expectedRoles)
 {
-    $point = @($points | Where-Object ([TGame.ServerLogFields]::Role) -eq $role)
+    $point = @($points | Where-Object ([TGame.ServerLogFields]::Instance) -eq $role)
     if ($point.Count -ne 1)
     {
         throw "Missing or duplicate SinglePoint in $role."
@@ -66,7 +81,7 @@ foreach ($role in $expectedRoles)
 
     $id = $point[0].entity
     $routes = @($records | Where-Object { $_.ev -eq ([TGame.ServerLogEvents]::EntityRoute) -and $_.role -eq ([TGame.ProcessType]::Router.ToString()) -and $_.peer -eq $role -and $_.entity -ceq $id })
-    $routed = $role -in ([TGame.ProcessType]::Login.ToString()),([TGame.ProcessType]::Base.ToString()),([TGame.ProcessType]::Scene.ToString()),([TGame.ProcessType]::DBMgr.ToString()),([TGame.ProcessType]::Profile.ToString()),([TGame.ProcessType]::GM.ToString())
+    $routed = $point[0].role -in ([TGame.ProcessType]::Login.ToString()),([TGame.ProcessType]::Base.ToString()),([TGame.ProcessType]::Scene.ToString()),([TGame.ProcessType]::DBMgr.ToString()),([TGame.ProcessType]::Profile.ToString()),([TGame.ProcessType]::GM.ToString())
     $probes = @($cases | Where-Object { !$_.ProfileAction -and $_.Entity -ceq $id -and $_.Path[-1] -eq $role -and (!$routed -or $_.Path -contains ([TGame.ProcessType]::Router.ToString())) })
     $type = $point[0].detail
     if ($point[0].ev -eq ([TGame.ServerLogEvents]::LegacyBaseSinglePointInit))
@@ -75,7 +90,8 @@ foreach ($role in $expectedRoles)
     }
 
     # Multiple route cases may now target the same real SinglePoint.
-    if (!$type -or $id -cnotmatch '^[0-9a-f]{32}$' -or $routes.Count -ne [int]$routed -or $probes.Count -lt 1)
+    $requiresProbe = $role -ceq $point[0].role
+    if (!$type -or $id -cnotmatch '^[0-9a-f]{32}$' -or $routes.Count -ne ([int]$routed * $routerCount) -or ($requiresProbe -and $probes.Count -lt 1))
     {
         throw "Incomplete SinglePoint initialization, registration or probe evidence for $role."
     }
@@ -85,7 +101,7 @@ foreach ($role in $expectedRoles)
 
 $serverPids = foreach ($role in $roles)
 {
-    $rows = @($records | Where-Object ([TGame.ServerLogFields]::Role) -eq $role)
+    $rows = @($records | Where-Object ([TGame.ServerLogFields]::Instance) -eq $role)
     $events = ([TGame.ServerLogEvents]::Listen),([TGame.ServerLogEvents]::ZkRegister),([TGame.ServerLogEvents]::ZkDiscover)
     if ($RequireLifecycle -or $records.ev -contains ([TGame.ServerLogEvents]::SinglePointReady) -or $records.ev -contains ([TGame.ServerLogEvents]::LinksReady))
     {
@@ -140,12 +156,25 @@ if ($hasGM)
     $pairs += 'GM Router'
 }
 
+$typePairs = $pairs
+$pairs = @(foreach ($pair in $typePairs)
+    {
+        $leftType, $rightType = $pair.Split(' ')
+        foreach ($leftPoint in ($instances | Where-Object Role -EQ $leftType))
+        {
+            foreach ($rightPoint in ($instances | Where-Object Role -EQ $rightType))
+            {
+                "$($leftPoint.Name) $($rightPoint.Name)"
+            }
+        }
+    })
+
 foreach ($pair in $pairs)
 {
     $left, $right = $pair.Split(' ')
     $ends = @($records | Where-Object { $_.ev -eq ([TGame.ServerLogEvents]::LinkUp) -and
-            (($_.role -eq $left -and $_.peer -eq $right) -or ($_.role -eq $right -and $_.peer -eq $left)) })
-    if ($ends.Count -ne 2 -or ($ends.role | Sort-Object -Unique).Count -ne 2 -or
+            (($_.instance -eq $left -and $_.peer -eq $right) -or ($_.instance -eq $right -and $_.peer -eq $left)) })
+    if ($ends.Count -ne 2 -or ($ends.instance | Sort-Object -Unique).Count -ne 2 -or
         !$ends[0].link -or $ends[0].link -ne $ends[1].link)
     {
         throw "Invalid stream evidence for $pair."

@@ -13,18 +13,20 @@ const int ShutdownTimeoutSeconds = 3;
 const int StopPollIntervalMilliseconds = 100;
 const string DevelopmentCertificateOid = "1.3.6.1.4.1.311.84.1.1";
 
-if (args.Length != ProcessArgumentCount || !Topology.Dials.ContainsKey(args[0]))
+if (args.Length != ProcessArgumentCount)
 {
-    throw new ArgumentException($"Usage: TGame.Server <{string.Join('|', Topology.Dials.Keys)}> <run-directory>");
+    throw new ArgumentException("Usage: TGame.Server <instance-name> <run-directory>");
 }
 
-var role = args[0];
 var runDir = Path.GetFullPath(args[1]);
 var runId = Guid.ParseExact(Path.GetFileName(runDir), "N");
-using var serverLog = TraceLog.OpenServer(role, runId);
+var group = ServerGroup.Load(Path.Combine(runDir, ServerGroup.FileName));
+var process = group.GetProcess(args[0]);
+var role = process.Role;
+using var serverLog = TraceLog.OpenServer(process, runId);
 try
 {
-    await RunServerAsync(role, runId, runDir);
+    await RunServerAsync(process, group, runId, runDir);
 }
 catch (Exception error)
 {
@@ -33,13 +35,14 @@ catch (Exception error)
     Environment.ExitCode = 1;
 }
 
-static async Task RunServerAsync(string role, Guid runId, string runDir)
+static async Task RunServerAsync(ServerProcess process, ServerGroup group, Guid runId, string runDir)
 {
+    var role = process.Role;
     var singlePoints = new SinglePointRegistry(typeof(ServerSinglePoint).Assembly.GetTypes());
-    var processType = Enum.Parse<ProcessType>(role);
+    var processType = process.Type;
     var singlePoint = singlePoints.Create(processType);
 
-    var node = new GameServerNode(role, singlePoint);
+    var node = new GameServerNode(process.Name, singlePoint, group);
     using var resources = singlePoint as IDisposable;
 
     var builder = WebApplication.CreateSlimBuilder();
@@ -89,12 +92,17 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     try
     {
         var initialization = node.InitializeAsync(stop);
-        await using var registry = new ServiceRegistry(runId, TestStorage.Settings.Value.ZooKeeper);
+        await using var registry = new ServiceRegistry(runId, group, TestStorage.Settings.Value.ZooKeeper);
         using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
         registrationTimeout.CancelAfter(TimeSpan.FromSeconds(StartupTimeoutSeconds));
-        var registration = registry.RegisterAsync(role, address, consoleMode, registrationTimeout.Token);
+        var registration = registry.RegisterAsync(process, address, consoleMode, registrationTimeout.Token);
 
-        var workers = Topology.Dials[role].Select(peer => SuperviseAsync(ConnectAsync(peer))).ToList();
+        var workers = new List<Task>();
+        foreach (var peer in Topology.DialTargets(group, process.Name))
+        {
+            workers.Add(SuperviseAsync(ConnectAsync(peer)));
+        }
+
         workers.Add(SuperviseAsync(initialization));
         workers.Add(SuperviseAsync(registration));
         if (!consoleMode)
@@ -120,7 +128,7 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     async Task WatchStopAsync()
     {
         var stopGroup = Path.Combine(runDir, ServerRunFiles.StopGroup);
-        var stopRole = Path.Combine(runDir, ServerRunFiles.StopRolePrefix + role);
+        var stopRole = Path.Combine(runDir, ServerRunFiles.StopRolePrefix + process.Name);
         while (!File.Exists(stopGroup) && !File.Exists(stopRole))
         {
             await Task.Delay(StopPollIntervalMilliseconds, stop);

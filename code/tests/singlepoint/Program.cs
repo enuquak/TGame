@@ -34,6 +34,9 @@ await MongoStorageChecks.RunAsync();
 
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
 var stop = deadline.Token;
+var group = new ServerGroup(Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1));
+
+await GroupChecks.RunAsync(stop);
 
 foreach (var processType in Enum.GetValues<ProcessType>())
 {
@@ -48,7 +51,7 @@ foreach (var processType in Enum.GetValues<ProcessType>())
     }
 }
 
-var loginNode = new GameServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint());
+var loginNode = new GameServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint(), group);
 var loginInit = loginNode.InitializeAsync(stop);
 var router = new FrameStream();
 var routerLink = Open(loginNode, nameof(ProcessType.Router), router);
@@ -104,7 +107,7 @@ router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
 
 var point = new WaitingSinglePoint();
-var gate = new GameServerNode(nameof(ProcessType.Gate), point);
+var gate = new GameServerNode(nameof(ProcessType.Gate), point, group);
 var initialization = gate.InitializeAsync(stop);
 if (point.Started.Task.IsCompleted)
 {
@@ -156,7 +159,7 @@ if (cancelling.Initialized)
     throw new Exception("Cancelled SinglePoint became ready.");
 }
 
-var routes = new GameServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint());
+var routes = new GameServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint(), group);
 var routerInit = routes.InitializeAsync(stop);
 var duplicateEntityId = Guid.NewGuid().ToString("N");
 string[][] invalidRegistrations = [[], [LegacyProbeEntityId], [duplicateEntityId, duplicateEntityId]];

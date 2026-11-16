@@ -5,13 +5,14 @@ namespace TGame.Logging;
 public static class LogEventJson
 {
     public static string Serialize(string ev, string role, string? peer = null, string? id = null,
-        string? entity = null, string? link = null, string? detail = null, string? runId = null)
+        string? entity = null, string? link = null, string? detail = null, string? runId = null, string? instance = null)
     {
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             [ServerLogFields.Time] = DateTimeOffset.UtcNow,
             [ServerLogFields.Event] = ev,
             [ServerLogFields.Role] = role,
+            [ServerLogFields.Instance] = instance ?? role,
             [ServerLogFields.Pid] = Environment.ProcessId,
             [ServerLogFields.RunId] = runId,
             [ServerLogFields.Peer] = peer,

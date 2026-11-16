@@ -12,5 +12,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="ServerConsole.Check" />
     <Compile Include="../../code/shared/csharp/*.cs" LinkBase="Shared" />
+    <Compile Include="../../code/shared/configuration/*.cs" LinkBase="Shared" />
   </ItemGroup>
 </Project>

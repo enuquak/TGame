@@ -1,7 +1,7 @@
 #requires -Version 7.0
 param(
     [Parameter(Mandatory)][string]$RunDirectory,
-    [Parameter(Mandatory)][ValidatePattern('^[A-Za-z]+$')][string]$Role,
+    [Parameter(Mandatory)][ValidatePattern('^[A-Za-z]+[0-9]*$')][string]$Role,
     [string]$Event
 )
 
@@ -55,7 +55,12 @@ foreach ($file in $files)
             }
 
             $row = $line | ConvertFrom-Json
-            if ($row.role -cne $Role -or ($layout -and $row.runId -cne $layout.runId))
+            if (!$row.instance)
+            {
+                $row | Add-Member -NotePropertyName instance -NotePropertyValue $row.role
+            }
+
+            if ($row.instance -cne $Role -or ($layout -and $row.runId -cne $layout.runId))
             {
                 throw "Unexpected process/run in $($file.FullName)."
             }

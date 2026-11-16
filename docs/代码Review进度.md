@@ -2,6 +2,14 @@
 
 更新时间：2026-11-17（Asia/Shanghai）。
 
+## 多实例功能续读
+
+- 多实例改动位于独立事项分支 `codex/engine-multiple-instances`，基于 `37144a8` 的引擎分层版本；原工作区其他 agent 正在进行的 SinglePoint、运行标识等重构未包含在本分支，需要后续整合。
+- 配置从角色列表改为各类型的实例数量；各实例按名称分别注册 ZooKeeper、握手和维护连接。拓扑按配置展开全部预期入站及出站实例，缺少任何一个都不能就绪，断线后撤销当前就绪状态。
+- 建议依次补读 [ServerGroup.cs](../code/shared/configuration/ServerGroup.cs)、[Topology.cs](../code/server/engine/Topology.cs)、[ServiceRegistry.cs](../code/server/engine/ServiceRegistry.cs)、[ServerNode.cs](../code/server/engine/ServerNode.cs)，再看 [Program.cs](../code/server/app/Program.cs) 的配置快照读取和启动参数。
+- 验收行为见 [GroupChecks.cs](../code/tests/singlepoint/GroupChecks.cs)，配置与运行方式见 [服务器组配置](服务器组配置.md)。这些文件尚未被用户确认读完。
+- 已验证：解决方案编译零警告、零错误；每种类型 2 个实例的真实 ZooKeeper/gRPC 验收通过（16 个进程、36 条连接）；控制台完成 Router2 停止/补起、配置快照恢复和增加实例后的整组重启（17 个实例）；默认配置 BAT 验收成功，重复配置键返回非零退出码。
+
 ## 换机器后的续读入口
 
 - 继续阅读的分支：`codex/server-review-snapshot`；引擎分层改动已按用户要求从 `codex/server-engine-boundary` 合入，后续 Review 调整继续在此分支进行。

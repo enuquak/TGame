@@ -14,7 +14,7 @@ internal sealed partial class GameServerNode
             !Guid.TryParseExact(ping.EntityId, "N", out _) ||
             ping.Storage ||
             ping.ProfileProbe != Ping.Types.ProfileProbe.None ||
-            from != expectedSender)
+            PeerRole(from) != expectedSender)
         {
             throw new InvalidDataException("Invalid GM ping or ingress.");
         }

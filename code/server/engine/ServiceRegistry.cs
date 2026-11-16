@@ -4,7 +4,7 @@ using org.apache.zookeeper;
 
 namespace TGame.Server.Engine;
 
-public sealed class ServiceRegistry(Guid run, string endpoint) : IAsyncDisposable
+public sealed class ServiceRegistry(Guid run, ServerGroup group, string endpoint) : IAsyncDisposable
 {
     private sealed class Changed : Watcher
     {
@@ -22,9 +22,9 @@ public sealed class ServiceRegistry(Guid run, string endpoint) : IAsyncDisposabl
     private readonly ZooKeeper zk = new(endpoint, SessionTimeoutMilliseconds, new Changed());
     private readonly string prefix = $"server-{run:N}-";
 
-    public async Task RegisterAsync(string role, string address, bool consoleMode, CancellationToken stop)
+    public async Task RegisterAsync(ServerProcess process, string address, bool consoleMode, CancellationToken stop)
     {
-        var path = $"{Root}/{prefix}{role}";
+        var path = $"{Root}/{prefix}{process.Name}";
         while (true)
         {
             try
@@ -44,13 +44,23 @@ public sealed class ServiceRegistry(Guid run, string endpoint) : IAsyncDisposabl
             }
         }
 
-        TraceLog.Event(ServerLogEvents.ZkRegister, role, detail: address);
+        TraceLog.Event(ServerLogEvents.ZkRegister, process.Role, detail: address);
         var names = (await zk.getChildrenAsync(Root).WaitAsync(stop)).Children;
-        TraceLog.Event(ServerLogEvents.ZkDiscover, role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(prefix + r))));
+        var registered = new List<string>();
+        foreach (var instance in group.Processes)
+        {
+            if (names.Contains(prefix + instance.Name))
+            {
+                registered.Add(instance.Name);
+            }
+        }
+
+        TraceLog.Event(ServerLogEvents.ZkDiscover, process.Role, detail: string.Join(",", registered));
     }
 
     public async Task<string> ResolveAsync(string peer, CancellationToken stop)
     {
+        var process = group.GetProcess(peer);
         var path = $"{Root}/{prefix}{peer}";
         while (true)
         {
@@ -59,7 +69,7 @@ public sealed class ServiceRegistry(Guid run, string endpoint) : IAsyncDisposabl
                 var data = await zk.getDataAsync(path).WaitAsync(stop);
                 var uri = new Uri(Encoding.UTF8.GetString(data.Data));
                 var expectedScheme = Uri.UriSchemeHttp;
-                if (peer == nameof(ProcessType.Gate))
+                if (process.Type == ProcessType.Gate)
                 {
                     expectedScheme = Uri.UriSchemeHttps;
                 }
