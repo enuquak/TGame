@@ -1,4 +1,5 @@
 using TGame.Diagnostics;
+using TGame.Profile;
 using TGame.Logging;
 using TGame.Transport;
 using System.Net.Security;
@@ -47,8 +48,29 @@ internal static class ProbeClient
             var ping = new Ping { RequestId = c.Id, EntityId = c.Entity, Entry = entry, Storage = c.Storage };
             if (c.ProfileAction != null)
             {
-                ping.ProfileProbe = Enum.Parse<Ping.Types.ProfileProbe>(c.ProfileAction);
-                ping.ProfileSubject = c.ProfileSubject;
+                ping.ProfileRequest = new ProfileRequest { RequestId = c.Id };
+                switch (c.ProfileAction)
+                {
+                    case nameof(ProfileRequest.OperationOneofCase.Publish):
+                        ping.ProfileRequest.Publish = new EntitySummary
+                        {
+                            EntityId = c.ProfileSubject,
+                            DisplayName = ProfileProbeData.DisplayName,
+                            Title = ProfileProbeData.Title
+                        };
+                        break;
+
+                    case nameof(ProfileRequest.OperationOneofCase.Fetch):
+                        ping.ProfileRequest.Fetch = c.ProfileSubject;
+                        break;
+
+                    case nameof(ProfileRequest.OperationOneofCase.Withdraw):
+                        ping.ProfileRequest.Withdraw = c.ProfileSubject;
+                        break;
+
+                    default:
+                        throw new InvalidDataException($"Unknown Profile test action: {c.ProfileAction}.");
+                }
             }
 
             await ws.SendAsync(ping.ToByteArray().AsMemory(), WebSocketMessageType.Binary, true, timeout.Token);

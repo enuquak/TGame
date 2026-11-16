@@ -7,11 +7,10 @@ option csharp_namespace = "TGame.Diagnostics";
 message Ping {
   string request_id = 1;
   string entity_id = 2;
-  string entry = 3;       // Login/Base, a Gate-local probe, or an internal read-only GM ping
+  string entry = 3;       // Login/Base or a Gate-local diagnostic request
   bool storage = 4;       // Base -> DBMgr dedicated link
-  enum ProfileProbe { NONE = 0; PUBLISH = 1; FETCH = 2; WITHDRAW = 3; }
-  ProfileProbe profile_probe = 5;  // loopback test driver
-  string profile_subject = 6;
+  reserved 5, 6;
+  tgame.profile.ProfileRequest profile_request = 7; // Supplied by the test client.
 }
 message Pong {
   string request_id = 1;

@@ -36,7 +36,7 @@ if (!(Test-Path -LiteralPath $dotnet))
 
 $serverDll = Join-Path $root 'build/bin/TGame.Server/debug/TGame.Server.dll'
 $clientDll = Join-Path $root 'build/bin/TGame.ProbeClient/debug/TGame.ProbeClient.dll'
-Write-Host "Server logs: $serverRoot/<Role>Server/"
+Write-Host "Server logs: $serverRoot/<Instance>Server/"
 Write-Host "PingPong results: $runDir"
 Push-Location $root
 
@@ -54,13 +54,13 @@ try
         throw "Probe client build failed ($LASTEXITCODE)."
     }
 
-    $password = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::MongoTestPassword)
+    $password = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::MongoPassword)
     if (!$password)
     {
         $setting = Get-Content -LiteralPath '.local/secrets/cloud.env' | Where-Object { $_ -cmatch '^MONGO_TEST_PASSWORD=' } | Select-Object -First 1
         if (!$setting)
         {
-            throw 'Set TGAME_MONGO_TEST_PASSWORD or configure the project test credentials.'
+            throw 'Set TGAME_MONGO_PASSWORD or configure the project test credentials.'
         }
 
         $password = $setting.Substring('MONGO_TEST_PASSWORD='.Length)
@@ -72,13 +72,13 @@ try
         $dbMgrPassword = $password
     }
 
-    $redisPassword = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::RedisTestPassword)
+    $redisPassword = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::RedisPassword)
     if (!$redisPassword)
     {
         $setting = Get-Content -LiteralPath '.local/secrets/cloud.env' | Where-Object { $_ -cmatch '^REDIS_TEST_PASSWORD=' } | Select-Object -First 1
         if (!$setting)
         {
-            throw 'Set TGAME_REDIS_TEST_PASSWORD or configure the project test credentials.'
+            throw 'Set TGAME_REDIS_PASSWORD or configure the project test credentials.'
         }
 
         $redisPassword = $setting.Substring('REDIS_TEST_PASSWORD='.Length)
@@ -129,9 +129,11 @@ try
                 ([TGame.ServerEnvironment]::GMToken) = $null
                 ([TGame.ServerEnvironment]::GMOperator) = $null
                 ([TGame.ServerEnvironment]::DBMgrMongoPassword) = $null
-                ([TGame.ServerEnvironment]::MongoTestPassword) = $null
-                ([TGame.ServerEnvironment]::RedisTestPassword) = $null
+                ([TGame.ServerEnvironment]::MongoPassword) = $null
+                ([TGame.ServerEnvironment]::RedisPassword) = $null
                 ([TGame.ServerEnvironment]::LogRoot) = $serverRoot
+                ([TGame.ServerEnvironment]::Config) = (Join-Path $root 'code/server/config/server.local.yaml')
+                ([TGame.ServerEnvironment]::Diagnostics) = 'true'
             }
         }
 
@@ -148,8 +150,8 @@ try
 
         if ($processRole -eq $profileRole)
         {
-            $launch.Environment[[TGame.ServerEnvironment]::MongoTestPassword] = $password
-            $launch.Environment[[TGame.ServerEnvironment]::RedisTestPassword] = $redisPassword
+            $launch.Environment[[TGame.ServerEnvironment]::MongoPassword] = $password
+            $launch.Environment[[TGame.ServerEnvironment]::RedisPassword] = $redisPassword
         }
 
         $children[$role] = Start-Process @launch

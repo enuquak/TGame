@@ -16,7 +16,7 @@ internal static class GroupChecks
         counts[ProcessType.Login] = 2;
         counts[ProcessType.Base] = 3;
         var group = new ServerGroup(counts);
-        using var gate = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
+        using var gate = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
         var streams = new Dictionary<string, FrameStream>();
         var tasks = new List<Task>();
 
@@ -108,7 +108,7 @@ internal static class GroupChecks
         await Task.WhenAll(tasks).WaitAsync(stop);
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        using var cancelledNode = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
+        using var cancelledNode = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
         var cancelledInit = cancelledNode.FirstLinks.WaitAsync(cancellation.Token);
         cancellation.Cancel();
         try
@@ -127,7 +127,7 @@ internal static class GroupChecks
 
         var isolatedCounts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
         isolatedCounts[ProcessType.Router] = 1;
-        using var isolated = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new ServerGroup(isolatedCounts));
+        using var isolated = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new ServerGroup(isolatedCounts));
         await isolated.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
         if (!isolated.Ready)
         {
@@ -184,7 +184,7 @@ internal static class GroupChecks
         var group = new ServerGroup(counts);
         var name = ServerProcess.FormatName(nameof(ProcessType.Base), 2);
         var missing = ServerProcess.FormatName(nameof(ProcessType.Router), 2);
-        using var node = new GameServerNode(name, group);
+        using var node = TestNodes.Create(name, group);
         var peers = Topology.Peers(group, name);
         var streams = new Dictionary<string, FrameStream>();
         var tasks = new Dictionary<string, Task>();
@@ -257,7 +257,7 @@ internal static class GroupChecks
 
     private static async Task CheckRoutingAsync(ServerGroup group, CancellationToken stop)
     {
-        using var router = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
+        using var router = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
         var streams = new Dictionary<string, FrameStream>();
         var ids = new Dictionary<string, string>();
         var tasks = new List<Task>();
@@ -282,23 +282,20 @@ internal static class GroupChecks
             RequestId = Guid.NewGuid().ToString("N"),
             Publish = new EntitySummary { EntityId = ids[secondBase], DisplayName = "Group check", Title = "Owner" }
         };
-        publisher.Input.Writer.TryWrite(new Frame { ProfileRequest = request });
+        publisher.Input.Writer.TryWrite(RpcFrames.Request(request));
         var forwarded = await profile.Output.Reader.ReadAsync(stop);
-        if (forwarded.ProfileRequest?.Publish?.EntityId != ids[secondBase])
+        if (forwarded.ReadRequest<ProfileRequest>().Publish?.EntityId != ids[secondBase])
         {
             throw new Exception("Router lost the entity owner of the second Base instance.");
         }
 
-        profile.Input.Writer.TryWrite(new Frame
+        profile.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
         {
-            ProfileReply = new ProfileReply
-            {
-                RequestId = request.RequestId,
-                EntityId = ids[secondBase],
-                Result = ProfileReply.Types.Result.Stored
-            }
-        });
-        if ((await publisher.Output.Reader.ReadAsync(stop)).ProfileReply?.Result != ProfileReply.Types.Result.Stored)
+            RequestId = request.RequestId,
+            EntityId = ids[secondBase],
+            Result = ProfileReply.Types.Result.Stored
+        }));
+        if ((await publisher.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Stored)
         {
             throw new Exception("Profile reply did not return to the second Base instance.");
         }
@@ -306,8 +303,8 @@ internal static class GroupChecks
         var firstBase = streams[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
         var foreign = request.Clone();
         foreign.RequestId = Guid.NewGuid().ToString("N");
-        firstBase.Input.Writer.TryWrite(new Frame { ProfileRequest = foreign });
-        if ((await firstBase.Output.Reader.ReadAsync(stop)).ProfileReply?.Result != ProfileReply.Types.Result.Rejected ||
+        firstBase.Input.Writer.TryWrite(RpcFrames.Request(foreign));
+        if ((await firstBase.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Rejected ||
             profile.Output.Reader.TryRead(out _))
         {
             throw new Exception("One Base instance was allowed to publish another Base instance's entity.");
@@ -320,17 +317,17 @@ internal static class GroupChecks
         {
             RequestId = Guid.NewGuid().ToString("N"), EntityId = ids[thirdBase], Entry = nameof(ProcessType.Login)
         };
-        caller.Input.Writer.TryWrite(new Frame { Ping = ping });
-        if ((await receiver.Output.Reader.ReadAsync(stop)).Ping?.RequestId != ping.RequestId)
+        caller.Input.Writer.TryWrite(RpcFrames.Request(ping));
+        if ((await receiver.Output.Reader.ReadAsync(stop)).ReadRequest<TGame.Diagnostics.Ping>().RequestId != ping.RequestId)
         {
             throw new Exception("Router did not deliver to the exact third Base instance.");
         }
 
-        receiver.Input.Writer.TryWrite(new Frame
+        receiver.Input.Writer.TryWrite(RpcFrames.Reply(new TGame.Diagnostics.Pong
         {
-            Pong = new TGame.Diagnostics.Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = nameof(ProcessType.Base) }
-        });
-        if ((await caller.Output.Reader.ReadAsync(stop)).Pong?.RequestId != ping.RequestId)
+            RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = nameof(ProcessType.Base)
+        }));
+        if ((await caller.Output.Reader.ReadAsync(stop)).ReadReply<TGame.Diagnostics.Pong>().RequestId != ping.RequestId)
         {
             throw new Exception("Router did not return the reply to the second Login instance.");
         }

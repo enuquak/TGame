@@ -339,14 +339,27 @@ if ($hasGM)
             throw "GM audit mismatch for $($check.Check)."
         }
 
+        $pingTx = [TGame.ServerLogEvents]::GMPingTx
+        $pingRx = [TGame.ServerLogEvents]::GMPingRx
+        $pongTx = [TGame.ServerLogEvents]::GMPongTx
+        $pongRx = [TGame.ServerLogEvents]::GMPongRx
+        if ($events.ev -contains ([TGame.ServerLogEvents]::PingTx))
+        {
+            # Historical logs used the diagnostic protocol for this management command.
+            $pingTx = [TGame.ServerLogEvents]::PingTx
+            $pingRx = [TGame.ServerLogEvents]::PingRx
+            $pongTx = [TGame.ServerLogEvents]::PongTx
+            $pongRx = [TGame.ServerLogEvents]::PongRx
+        }
+
         for ($i = 1; $i -lt $path.Count; $i++)
         {
             $src,$dst = $path[$i-1],$path[$i]
             foreach ($expected in @(
-                "$([TGame.ServerLogEvents]::PingTx) $src $dst"
-                "$([TGame.ServerLogEvents]::PingRx) $dst $src"
-                "$([TGame.ServerLogEvents]::PongTx) $dst $src"
-                "$([TGame.ServerLogEvents]::PongRx) $src $dst"
+                "$pingTx $src $dst"
+                "$pingRx $dst $src"
+                "$pongTx $dst $src"
+                "$pongRx $src $dst"
             ))
             {
                 $kind,$sender,$peer = $expected.Split(' ')

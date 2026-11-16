@@ -1,8 +1,8 @@
+using TGame.Server.Engine;
 using System.Net.WebSockets;
 using Google.Protobuf;
 using TGame.Diagnostics;
 using TGame.Profile;
-using TGame.Server.Engine;
 using TGame.Transport;
 
 namespace TGame.Server.Logic;
@@ -13,21 +13,21 @@ internal sealed partial class GameServerNode
 
     public void MapDiagnostics(WebApplication app)
     {
+        if (!diagnosticsEnabled)
+        {
+            return;
+        }
+
         app.UseWebSockets();
         app.MapGet(ProbePath, WebSocketAsync);
     }
 
-    private async Task<Pong> RouteAsync(string from, Ping ping, CancellationToken stop)
+    internal async Task<Pong> RouteAsync(string from, Ping ping, CancellationToken stop)
     {
         var fromRole = PeerRole(from);
         if (!Ready)
         {
             return Unavailable(ping);
-        }
-
-        if (ping.Entry == nameof(ProcessType.GM))
-        {
-            return await RouteGmPingAsync(from, ping, stop);
         }
 
         var gateLocal = ping.Entry == nameof(ProcessType.Gate) && Role == nameof(ProcessType.Gate) && ping.EntityId == State.EntityId;
@@ -53,9 +53,9 @@ internal sealed partial class GameServerNode
             }
 
             var result = new Pong { RequestId = ping.RequestId, EntityId = ping.EntityId, Responder = Role };
-            if (ping.ProfileProbe != Ping.Types.ProfileProbe.None)
+            if (ping.ProfileRequest is not null)
             {
-                result.ProfileReply = await RunProfileProbeAsync(ping, stop);
+                result.ProfileReply = await ForwardDiagnosticProfileAsync(ping, stop);
             }
 
             return result;
@@ -100,7 +100,7 @@ internal sealed partial class GameServerNode
         }
         catch (Exception error) when (!stop.IsCancellationRequested && IsDeliveryFailure(error))
         {
-            TraceLog.Event(ping.Entry == nameof(ProcessType.GM) ? ServerLogEvents.GMDeliveryFailed : ServerLogEvents.PingDeliveryFailed, Role, peer,
+            TraceLog.Event(ServerLogEvents.PingDeliveryFailed, Role, peer,
                 ping.RequestId, ping.EntityId, detail: error.GetType().Name);
         }
 
@@ -109,6 +109,12 @@ internal sealed partial class GameServerNode
 
     public async Task WebSocketAsync(HttpContext context)
     {
+        if (!diagnosticsEnabled)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
         if (!context.WebSockets.IsWebSocketRequest || !Ready)
         {
             context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
@@ -132,27 +138,29 @@ internal sealed partial class GameServerNode
     }
 
     // The loopback driver may only change this run's Base SinglePoint summary.
-    private Task<ProfileReply> RunProfileProbeAsync(Ping ping, CancellationToken stop)
+    private Task<ProfileReply> ForwardDiagnosticProfileAsync(Ping ping, CancellationToken stop)
     {
-        var request = new ProfileRequest { RequestId = ping.RequestId };
-        bool ownProbe = Role == nameof(ProcessType.Base) && ping.EntityId == State.EntityId && ping.ProfileSubject == ping.EntityId;
-
-        switch (ping.ProfileProbe)
+        var request = ping.ProfileRequest;
+        var subject = ProfileStore.Subject(request);
+        if (request.RequestId != ping.RequestId || !Guid.TryParseExact(subject, "N", out _))
         {
-            case Ping.Types.ProfileProbe.Publish when ownProbe:
-                request.Publish = new EntitySummary { EntityId = ping.EntityId, DisplayName = ProfileProbeData.DisplayName, Title = ProfileProbeData.Title };
-                break;
+            throw new InvalidDataException("Invalid diagnostic Profile request.");
+        }
 
-            case Ping.Types.ProfileProbe.Withdraw when ownProbe:
-                request.Withdraw = ping.EntityId;
-                break;
+        if (request.OperationCase == ProfileRequest.OperationOneofCase.Fetch)
+        {
+            if (Role is not (nameof(ProcessType.Login) or nameof(ProcessType.Scene)))
+            {
+                throw new InvalidDataException("Invalid diagnostic Profile reader.");
+            }
 
-            case Ping.Types.ProfileProbe.Fetch when Role is nameof(ProcessType.Login) or nameof(ProcessType.Scene) && Guid.TryParseExact(ping.ProfileSubject, "N", out _):
-                request.Fetch = ping.ProfileSubject;
-                break;
+            return CallProfileAsync(request, stop);
+        }
 
-            default:
-                throw new InvalidDataException("Invalid Profile probe.");
+        if (request.OperationCase is not (ProfileRequest.OperationOneofCase.Publish or ProfileRequest.OperationOneofCase.Withdraw) ||
+            Role != nameof(ProcessType.Base) || subject != State.EntityId || ping.EntityId != subject)
+        {
+            throw new InvalidDataException("Invalid diagnostic Profile owner.");
         }
 
         return CallProfileAsync(request, stop);

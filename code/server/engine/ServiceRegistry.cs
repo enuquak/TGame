@@ -4,7 +4,7 @@ using org.apache.zookeeper;
 
 namespace TGame.Server.Engine;
 
-public sealed class ServiceRegistry(ServerGroup group, string endpoint) : IAsyncDisposable
+public sealed class ServiceRegistry(ServerGroup group, string endpoint, string root) : IAsyncDisposable
 {
     private sealed class Changed : Watcher
     {
@@ -17,14 +17,13 @@ public sealed class ServiceRegistry(ServerGroup group, string endpoint) : IAsync
         }
     }
 
-    private const string Root = "/tgame/test";
     private const string NodePrefix = "server-";
     private const int SessionTimeoutMilliseconds = 10000;
     private readonly ZooKeeper zk = new(endpoint, SessionTimeoutMilliseconds, new Changed());
 
     public async Task RegisterAsync(ServerProcess process, string address, CancellationToken stop)
     {
-        var path = $"{Root}/{NodePrefix}{process.Name}";
+        var path = $"{root}/{NodePrefix}{process.Name}";
         try
         {
             await zk.createAsync(path, Encoding.UTF8.GetBytes(address), ZooDefs.Ids.OPEN_ACL_UNSAFE,
@@ -36,7 +35,7 @@ public sealed class ServiceRegistry(ServerGroup group, string endpoint) : IAsync
         }
 
         TraceLog.Event(ServerLogEvents.ZkRegister, process.Role, detail: address);
-        var names = (await zk.getChildrenAsync(Root).WaitAsync(stop)).Children;
+        var names = (await zk.getChildrenAsync(root).WaitAsync(stop)).Children;
         var registered = new List<string>();
         foreach (var instance in group.Processes)
         {
@@ -52,7 +51,7 @@ public sealed class ServiceRegistry(ServerGroup group, string endpoint) : IAsync
     public async Task<string> ResolveAsync(string peer, CancellationToken stop)
     {
         var process = group.GetProcess(peer);
-        var path = $"{Root}/{NodePrefix}{peer}";
+        var path = $"{root}/{NodePrefix}{peer}";
         while (true)
         {
             try

@@ -17,11 +17,12 @@ internal static class MongoStorageChecks
     public static async Task RunAsync()
     {
         var config = Path.Combine(AppContext.BaseDirectory, "config", "dbmgr-storage.yaml");
-        var testConfig = Path.Combine(AppContext.BaseDirectory, "config", "storage.test.yaml");
+        var profileConfig = Path.Combine(AppContext.BaseDirectory, "config", "server.local.yaml");
         var originalConfig = File.ReadAllText(config);
-        var originalTestConfig = File.ReadAllText(testConfig);
+        var originalProfileConfig = File.ReadAllText(profileConfig);
         var originalPassword = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
-        var originalTestPassword = Environment.GetEnvironmentVariable(ServerEnvironment.MongoTestPassword);
+        var originalProfilePassword = Environment.GetEnvironmentVariable(ServerEnvironment.MongoPassword);
+        var originalSelectedConfig = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
         var unavailableServer = new TcpListener(IPAddress.Loopback, 0);
         unavailableServer.Start();
 
@@ -58,9 +59,10 @@ internal static class MongoStorageChecks
             await ExpectAsync<ArgumentOutOfRangeException>(() => Task.FromResult(MongoStorageSettings.Load(config)));
             File.WriteAllText(config, yaml);
 
-            // DBMgr must not read the test config or silently use its credential.
-            File.WriteAllText(testConfig, "invalid: [");
-            Environment.SetEnvironmentVariable(ServerEnvironment.MongoTestPassword, TestPassword);
+            // DBMgr must keep its own configuration and credential.
+            File.WriteAllText(profileConfig, "invalid: [");
+            Environment.SetEnvironmentVariable(ServerEnvironment.Config, profileConfig);
+            Environment.SetEnvironmentVariable(ServerEnvironment.MongoPassword, TestPassword);
             Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, null);
             using (var missingCredential = new DBMgrServerSinglePoint())
             {
@@ -87,10 +89,11 @@ internal static class MongoStorageChecks
         finally
         {
             unavailableServer.Stop();
+            Environment.SetEnvironmentVariable(ServerEnvironment.Config, originalSelectedConfig);
             File.WriteAllText(config, originalConfig);
-            File.WriteAllText(testConfig, originalTestConfig);
+            File.WriteAllText(profileConfig, originalProfileConfig);
             Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, originalPassword);
-            Environment.SetEnvironmentVariable(ServerEnvironment.MongoTestPassword, originalTestPassword);
+            Environment.SetEnvironmentVariable(ServerEnvironment.MongoPassword, originalProfilePassword);
         }
     }
 
