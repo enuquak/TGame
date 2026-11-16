@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
-using System.Text.Json;
 
 namespace TGame.ServerConsole;
 
@@ -28,10 +27,11 @@ internal sealed class ConsoleSession : IDisposable
 
     public IReadOnlyList<ServerInstance> Instances
     {
-        get;
+        get; private set;
     }
 
     public event Action<string>? Output;
+    public event Action? InstancesChanged;
 
     public ConsoleSession(string repoRoot)
     {
@@ -39,17 +39,11 @@ internal sealed class ConsoleSession : IDisposable
         ProjectSettings = ConsoleProject.Load(Path.Combine(root, "tools", "server-console", "project.json"));
         sessions = Path.Combine(root, "logs", "tools", "server-console");
         logRoot = Path.Combine(root, "logs", "server");
-        var roles = JsonSerializer.Deserialize<string[]>(File.ReadAllText(Path.Combine(root, "code/server/config/processes.json")));
-        if (roles is not { Length: > 0 } || roles.Any(r => string.IsNullOrEmpty(r) || !r.All(char.IsAsciiLetter)) ||
-            roles.Distinct(StringComparer.OrdinalIgnoreCase).Count() != roles.Length)
-        {
-            throw new InvalidDataException("processes.json 需要包含不重复的进程名。");
-        }
-
-        Instances = roles.Select(role => new ServerInstance(role)).ToArray();
         var current = Path.Combine(sessions, "current");
         if (!File.Exists(current))
         {
+            var configured = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
+            Instances = CreateInstances(configured);
             return;
         }
 
@@ -60,7 +54,46 @@ internal sealed class ConsoleSession : IDisposable
             throw new InvalidDataException("控制台当前会话记录无效。");
         }
 
+        if (HasLegacyRun(saved))
+        {
+            var configured = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
+            Instances = CreateInstances(configured);
+            return;
+        }
+
+        var group = ServerGroup.Load(Path.Combine(sessions, saved, ServerGroup.FileName));
+        Instances = CreateInstances(group);
         Open(saved);
+    }
+
+    private static ServerInstance[] CreateInstances(ServerGroup group) =>
+        group.Processes.Select(process => new ServerInstance(process.Role, process.Number)).ToArray();
+
+    private bool HasLegacyRun(string id)
+    {
+        bool legacy = false;
+        foreach (var type in Enum.GetValues<ProcessType>())
+        {
+            var legacyExecutable = Path.Combine(Snapshot(id), type + "Server.exe");
+            if (!File.Exists(legacyExecutable))
+            {
+                continue;
+            }
+
+            legacy = true;
+            foreach (var candidate in Process.GetProcessesByName(type + "Server"))
+            {
+                using (candidate)
+                {
+                    if (!candidate.HasExited && string.Equals(candidate.MainModule?.FileName, legacyExecutable, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidDataException("该运行组使用旧的无编号实例名，请先用旧版控制台停止整组，再创建新的运行组。");
+                    }
+                }
+            }
+        }
+
+        return legacy;
     }
 
     public void Refresh()
@@ -130,13 +163,23 @@ internal sealed class ConsoleSession : IDisposable
 
     private async Task StartNewRun()
     {
+        var group = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
+        var configuredNames = group.Processes.Select(process => process.Name);
+        bool changed = !Instances.Select(instance => instance.Name).SequenceEqual(configuredNames);
+        var nextInstances = Instances;
+        if (changed)
+        {
+            nextInstances = CreateInstances(group);
+        }
+
         var name = DateTime.UtcNow.ToString(SessionDirectoryFormat, CultureInfo.InvariantCulture);
         var snapshot = Snapshot(name);
         var runDir = Directory.CreateDirectory(Path.Combine(sessions, name)).FullName;
         File.WriteAllText(Path.Combine(runDir, ServerRunFiles.ConsoleMode), "");
+        group.Save(Path.Combine(runDir, ServerGroup.FileName));
         SaveRunConfiguration(runDir);
         // Prepare credentials and a complete copy before asking healthy processes to shut down.
-        var starts = Instances.Select(i => StartInfo(i, name)).ToArray();
+        var starts = nextInstances.Select(i => StartInfo(i, name)).ToArray();
         await Task.Run(() =>
         {
             var source = Path.Combine(root, "build", "bin", "TGame.Server", "debug");
@@ -153,11 +196,26 @@ internal sealed class ConsoleSession : IDisposable
             }
         });
         await Task.WhenAll(Instances.Select(i => i.StopAsync(Report)));
+        if (changed)
+        {
+            foreach (var instance in Instances)
+            {
+                instance.Dispose();
+            }
+
+            Instances = nextInstances;
+        }
+
         var previous = sessionName;
         var current = Path.Combine(sessions, "current");
         File.WriteAllText(current + ".tmp", name);
         File.Move(current + ".tmp", current, true);
         Open(name);
+        if (changed)
+        {
+            InstancesChanged?.Invoke();
+        }
+
         for (int i = 0; i < Instances.Count; i++)
         {
             Launch(Instances[i], starts[i]);
@@ -213,13 +271,13 @@ internal sealed class ConsoleSession : IDisposable
     private void Launch(ServerInstance instance, ProcessStartInfo start)
     {
         instance.Launch(start);
-        Report($"已启动 {instance.Role} · PID {instance.Pid}");
+        Report($"已启动 {instance.Name} · PID {instance.Pid}");
     }
 
     private ProcessStartInfo StartInfo(ServerInstance instance, string name)
     {
         var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
-        info.ArgumentList.Add(instance.Role);
+        info.ArgumentList.Add(instance.Name);
         var runDir = Path.Combine(sessions, name);
         var config = Path.Combine(runDir, RunConfigurationFile);
         if (!File.Exists(config))

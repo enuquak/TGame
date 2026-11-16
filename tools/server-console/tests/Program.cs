@@ -1,14 +1,21 @@
 using System.Diagnostics;
+using System.Text.Json;
 using TGame;
 using TGame.ServerConsole;
 
 // Run against a disposable checkout so a developer's live servers are never stopped.
-if (args is not [var checkout] || !File.Exists(Path.Combine(checkout, ".console-check")))
+if (args is not [var checkout, ..] || args.Length > 2 || !File.Exists(Path.Combine(checkout, ".console-check")))
 {
     throw new ArgumentException("Expected a disposable checkout created by Test-ServerConsole.ps1.");
 }
 
 ConfigChecks.Run(checkout);
+GroupConfigChecks.Run(checkout);
+if (args.Length == 2 && args[1] == "--config-only")
+{
+    return 0;
+}
+
 LogChecks.Run(checkout);
 var session = new ConsoleSession(checkout);
 session.Output += Console.WriteLine;
@@ -23,17 +30,17 @@ try
     await session.StartAsync();
     await UntilAsync("all SinglePoints ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
     await CheckDuplicateRegistrationAsync();
-    var pids = session.Instances.ToDictionary(i => i.Role, i => i.Pid);
+    var pids = session.Instances.ToDictionary(i => i.Name, i => i.Pid);
     using (var reopened = new ConsoleSession(checkout))
     {
         reopened.Refresh();
-        if (reopened.Instances.Any(i => i.Status != ServerStatus.Ready || pids[i.Role] != i.Pid))
+        if (reopened.Instances.Any(i => i.Status != ServerStatus.Ready || pids[i.Name] != i.Pid))
         {
             throw new InvalidOperationException("Reopening the console lost the active instance or its status.");
         }
     }
 
-    var selected = session.Instances.Single(i => i.Role == nameof(ProcessType.Base));
+    var selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
     var originalConfig = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
     try
     {
@@ -41,11 +48,11 @@ try
         session.Dispose();
         session = new ConsoleSession(checkout);
         session.Output += Console.WriteLine;
-        selected = session.Instances.Single(i => i.Role == nameof(ProcessType.Base));
+        selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
         await session.StopAsync([selected]);
         await UntilAsync("Base stopped, Gate still running with a missing link", () =>
             selected.Status == ServerStatus.Stopped &&
-            session.Instances.Single(i => i.Role == nameof(ProcessType.Gate)).Status == ServerStatus.Disconnected);
+            session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.Gate), 1)).Status == ServerStatus.Disconnected);
         await session.StartAsync();
         await UntilAsync("Base rejoined with the original run configuration", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
     }
@@ -54,12 +61,25 @@ try
         Environment.SetEnvironmentVariable(ServerEnvironment.Config, originalConfig);
     }
 
-    if (selected.Pid == pids[nameof(ProcessType.Base)] || session.Instances.Any(i => i.Role != nameof(ProcessType.Base) && i.Pid != pids[i.Role]))
+    if (selected.Pid == pids[selected.Name] || session.Instances.Any(i => i.Name != selected.Name && i.Pid != pids[i.Name]))
     {
         throw new InvalidOperationException("Restoring Base disturbed another instance.");
     }
 
-    var gm = session.Instances.Single(i => i.Role == nameof(ProcessType.GM));
+    var router = session.Instances.Last(i => i.Role == nameof(ProcessType.Router));
+    var routerPid = router.Pid;
+    await session.StopAsync([router]);
+    await UntilAsync("Router stopped and every Base has an incomplete topology", () =>
+        router.Status == ServerStatus.Stopped &&
+        session.Instances.Where(i => i.Role == nameof(ProcessType.Base)).All(i => i.Status == ServerStatus.Disconnected));
+    await session.StartAsync();
+    await UntilAsync("Router rejoined", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    if (router.Pid == routerPid)
+    {
+        throw new InvalidOperationException("Restarting the Router instance retained its old PID.");
+    }
+
+    var gm = session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.GM), 1));
     await session.StopAsync([gm]);
     var originalToken = Environment.GetEnvironmentVariable(ServerEnvironment.GMToken);
     try
@@ -79,7 +99,7 @@ try
     await session.StartAsync();
     await UntilAsync("GM role initialization recovered", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
 
-    var dbMgr = session.Instances.Single(i => i.Role == nameof(ProcessType.DBMgr));
+    var dbMgr = session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.DBMgr), 1));
     await session.StopAsync([dbMgr]);
     var originalMongoPassword = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
     try
@@ -103,7 +123,7 @@ try
     // A compiler error must leave the running group and its PID associations intact.
     var broken = Path.Combine(checkout, "code/server/app/BrokenCheck.cs");
     await File.WriteAllTextAsync(broken, "#error ServerConsole.Check");
-    pids = session.Instances.ToDictionary(i => i.Role, i => i.Pid);
+    pids = session.Instances.ToDictionary(i => i.Name, i => i.Pid);
     bool rejected = false;
     try
     {
@@ -120,13 +140,36 @@ try
     }
 
     session.Refresh();
-    if (!rejected || session.Instances.Any(i => i.Status != ServerStatus.Ready || i.Pid != pids[i.Role]))
+    if (!rejected || session.Instances.Any(i => i.Status != ServerStatus.Ready || i.Pid != pids[i.Name]))
     {
         throw new InvalidOperationException("A failed build disrupted the running group.");
     }
 
+    var configuration = Path.Combine(checkout, ServerGroup.ConfigurationPath);
+    var counts = JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(configuration))!;
+    int expectedInstances = session.Instances.Count + 1;
+    counts[nameof(ProcessType.Login)]++;
+    File.WriteAllText(configuration, JsonSerializer.Serialize(counts));
+    bool instancesChanged = false;
+    session.InstancesChanged += () => instancesChanged = true;
+
     await session.BuildAsync(restart: true);
-    await UntilAsync("new group ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready && i.Pid != pids[i.Role]));
+    await UntilAsync("new group ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready &&
+        (!pids.TryGetValue(i.Name, out var oldPid) || i.Pid != oldPid)));
+    if (!instancesChanged || session.Instances.Count != expectedInstances)
+    {
+        throw new InvalidOperationException("Starting a new group did not apply the edited process counts.");
+    }
+
+    using (var reopened = new ConsoleSession(checkout))
+    {
+        reopened.Refresh();
+        if (reopened.Instances.Count != expectedInstances || reopened.Instances.Any(i => i.Status != ServerStatus.Ready))
+        {
+            throw new InvalidOperationException("Reopening lost the resized group's configuration snapshot.");
+        }
+    }
+
     Console.WriteLine($"PASS {session.Instances.Count} instances, export, selective stop, recovery, attach and build/restart.");
 }
 catch (Exception error)
@@ -178,9 +221,11 @@ async Task CheckDuplicateRegistrationAsync()
 {
     const int DuplicateExitTimeoutSeconds = 10;
     var role = nameof(ProcessType.Router);
-    var router = session.Instances.Single(i => i.Role == role);
+    var name = ServerProcess.FormatName(role, 1);
+    var router = session.Instances.Single(i => i.Name == name);
     using var original = Process.GetProcessById(router.Pid!.Value);
     var directory = Directory.CreateDirectory(Path.Combine(checkout, "duplicate-registration")).FullName;
+    File.Copy(Path.Combine(checkout, ServerGroup.ConfigurationPath), Path.Combine(directory, ServerGroup.FileName), true);
     foreach (bool consoleMode in new[] { false, true })
     {
         if (consoleMode)
@@ -195,7 +240,7 @@ async Task CheckDuplicateRegistrationAsync()
             CreateNoWindow = true,
             RedirectStandardError = true
         };
-        info.ArgumentList.Add(role);
+        info.ArgumentList.Add(name);
         info.ArgumentList.Add(directory);
         info.Environment[ServerEnvironment.LogRoot] = Path.Combine(directory, "logs");
         info.Environment[ServerEnvironment.Config] = Path.Combine(Path.GetDirectoryName(original.MainModule!.FileName)!, "config", "server.local.yaml");
@@ -205,7 +250,7 @@ async Task CheckDuplicateRegistrationAsync()
         try
         {
             await duplicate.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(DuplicateExitTimeoutSeconds));
-            if (duplicate.ExitCode != 1 || !(await error).Contains($"ZooKeeper node '/tgame/test/server-{role}' already exists."))
+            if (duplicate.ExitCode != 1 || !(await error).Contains($"ZooKeeper node '/tgame/test/server-{name}' already exists."))
             {
                 throw new InvalidOperationException("Duplicate startup must report the occupied path and exit with code 1 in both modes.");
             }

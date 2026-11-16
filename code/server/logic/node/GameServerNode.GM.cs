@@ -6,7 +6,7 @@ namespace TGame.Server.Logic;
 internal sealed partial class GameServerNode
 {
     internal Task<GmPingReply> GmPingAsync(GmPingRequest request, CancellationToken stop) =>
-        ForwardGmPingAsync(nameof(ProcessType.Router), request, stop);
+        ForwardGmPingAsync(ServerProcess.FormatName(nameof(ProcessType.Router), 1), request, stop);
 
     internal async Task<GmPingReply> RouteGmPingAsync(string from, GmPingRequest request, CancellationToken stop)
     {
@@ -16,7 +16,7 @@ internal sealed partial class GameServerNode
         }
 
         var expectedSender = Role == nameof(ProcessType.Router) ? nameof(ProcessType.GM) : nameof(ProcessType.Router);
-        if (!IdText.IsValid(request.RequestId) || !IdText.IsValid(request.EntityId) || from != expectedSender)
+        if (!IdText.IsValid(request.RequestId) || !IdText.IsValid(request.EntityId) || PeerRole(from) != expectedSender)
         {
             throw new InvalidDataException("Invalid GM entity ping or ingress.");
         }

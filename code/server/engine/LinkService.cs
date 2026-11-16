@@ -9,8 +9,7 @@ public sealed class LinkService(ServerNode node) : ServerLink.ServerLinkBase
     {
         var peer = context.RequestHeaders.GetValue(TransportProtocol.PeerHeader) ?? "";
         var link = context.RequestHeaders.GetValue(TransportProtocol.LinkHeader) ?? "";
-        if (!IdText.IsValid(link) || !Topology.Dials.TryGetValue(peer, out var targets)
-            || !targets.Contains(node.Role))
+        if (!IdText.IsValid(link) || !node.AcceptsIncoming(peer))
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, "Unexpected link."));
         }

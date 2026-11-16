@@ -9,7 +9,7 @@ message Frame {
   reserved "ping", "pong", "profile_request", "profile_reply";
 
   oneof body {
-    string hello = 3;     // Exchanges process roles before serving requests.
+    string hello = 3;     // Exchanges process instance names before serving requests.
     RpcRequest request = 6;
     RpcReply reply = 7;
   }

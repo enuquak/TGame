@@ -1,1 +1,10 @@
-["Router", "DBMgr", "Scene", "Login", "Base", "Profile", "GM", "Gate"]
+{
+  "Router": 1,
+  "DBMgr": 1,
+  "Scene": 1,
+  "Login": 1,
+  "Base": 1,
+  "Profile": 1,
+  "GM": 1,
+  "Gate": 1
+}

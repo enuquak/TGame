@@ -1,10 +1,11 @@
 using System.Text;
 using org.apache.zookeeper;
+using TGame;
 using TGame.Server.Engine;
 
 internal static class ServiceRegistryChecks
 {
-    private const string Role = "RegistryCheck";
+    private static readonly ServerProcess Process = new(ProcessType.Router, 1);
     private const string Address = "http://127.0.0.1:12345";
     private const string ReplacementAddress = "http://127.0.0.1:12346";
     private const int TimeoutSeconds = 10;
@@ -18,9 +19,11 @@ internal static class ServiceRegistryChecks
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TimeoutSeconds));
         var stop = deadline.Token;
-        var path = root + "/server-" + Role;
+        var path = root + "/server-" + Process.Name;
         var owner = new ZooKeeper(endpoint, TimeoutSeconds * 1000, new WatcherStub());
-        await using var registry = new ServiceRegistry(endpoint, root);
+        var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
+        counts[ProcessType.Router] = 1;
+        await using var registry = new ServiceRegistry(new ServerGroup(counts), endpoint, root);
         try
         {
             // Never replace a node owned by another session, including another copy of this test.
@@ -30,7 +33,7 @@ internal static class ServiceRegistryChecks
             bool rejected = false;
             try
             {
-                await registry.RegisterAsync(Role, ReplacementAddress, stop);
+                await registry.RegisterAsync(Process, ReplacementAddress, stop);
             }
             catch (InvalidOperationException error) when (error.InnerException is KeeperException.NodeExistsException)
             {
@@ -53,8 +56,8 @@ internal static class ServiceRegistryChecks
             await owner.closeAsync();
         }
 
-        await registry.RegisterAsync(Role, ReplacementAddress, stop);
-        if (await registry.ResolveAsync(Role, stop) != ReplacementAddress)
+        await registry.RegisterAsync(Process, ReplacementAddress, stop);
+        if (await registry.ResolveAsync(Process.Name, stop) != ReplacementAddress)
         {
             throw new Exception("Registration and discovery must use the same fixed service path.");
         }

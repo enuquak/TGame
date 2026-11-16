@@ -23,8 +23,8 @@ internal partial class MainWindow : Window
     private sealed record ServerCommand(string Name, string Icon, Func<Task>? Execute = null);
     private readonly ConsoleSession session;
     private readonly UserSettings settings;
-    private readonly ProcessPage[] pages;
-    private readonly ListCollectionView pickerView;
+    private ProcessPage[] pages = [];
+    private ListCollectionView pickerView = null!;
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(RefreshIntervalMilliseconds) };
     private readonly ConcurrentQueue<string> output = new();
     private bool busy;
@@ -40,18 +40,7 @@ internal partial class MainWindow : Window
         MachineLabel.Text = Environment.MachineName;
         EnvironmentLabel.Text = session.ProjectSettings.EnvironmentName;
         EnvironmentLabel.ToolTip = EnvironmentLabel.Text;
-        pages = session.Instances.Select(instance => new ProcessPage(instance)).ToArray();
-        foreach (var page in pages)
-        {
-            if (!settings.Logs.TryGetValue(page.Role, out var preference))
-            {
-                continue;
-            }
-
-            page.Keyword = preference.Keyword;
-            page.MatchesOnly = preference.MatchesOnly;
-            page.Following = preference.Following;
-        }
+        pages = CreatePages();
         pickerView = new ListCollectionView(pages);
         PickerResults.ItemsSource = pickerView;
         Commands.ItemsSource = session.ProjectSettings.Commands.Select(action => action switch
@@ -74,6 +63,7 @@ internal partial class MainWindow : Window
         }
 
         session.Output += output.Enqueue;
+        session.InstancesChanged += ReloadInstances;
         timer.Tick += (_, _) => RefreshWindow();
         Loaded += (_, _) =>
         {
@@ -84,7 +74,36 @@ internal partial class MainWindow : Window
         {
             timer.Stop();
             session.Output -= output.Enqueue;
+            session.InstancesChanged -= ReloadInstances;
         };
+    }
+
+    private void ReloadInstances()
+    {
+        SaveSettings();
+        pages = CreatePages();
+        pickerView = new ListCollectionView(pages);
+        PickerResults.ItemsSource = pickerView;
+        ProcessTabs.ItemsSource = pages;
+        ProcessTabs.SelectedItem = pages.FirstOrDefault(page => page.Role == settings.SelectedRole) ?? pages.FirstOrDefault();
+    }
+
+    private ProcessPage[] CreatePages()
+    {
+        var result = session.Instances.Select(instance => new ProcessPage(instance)).ToArray();
+        foreach (var page in result)
+        {
+            if (!settings.Logs.TryGetValue(page.Role, out var preference))
+            {
+                continue;
+            }
+
+            page.Keyword = preference.Keyword;
+            page.MatchesOnly = preference.MatchesOnly;
+            page.Following = preference.Following;
+        }
+
+        return result;
     }
 
     private void RestoreWindow()

@@ -4,7 +4,7 @@ using org.apache.zookeeper;
 
 namespace TGame.Server.Engine;
 
-public sealed class ServiceRegistry(string endpoint, string root) : IAsyncDisposable
+public sealed class ServiceRegistry(ServerGroup group, string endpoint, string root) : IAsyncDisposable
 {
     private sealed class Changed : Watcher
     {
@@ -21,9 +21,9 @@ public sealed class ServiceRegistry(string endpoint, string root) : IAsyncDispos
     private const int SessionTimeoutMilliseconds = 10000;
     private readonly ZooKeeper zk = new(endpoint, SessionTimeoutMilliseconds, new Changed());
 
-    public async Task RegisterAsync(string role, string address, CancellationToken stop)
+    public async Task RegisterAsync(ServerProcess process, string address, CancellationToken stop)
     {
-        var path = $"{root}/{NodePrefix}{role}";
+        var path = $"{root}/{NodePrefix}{process.Name}";
         try
         {
             await zk.createAsync(path, Encoding.UTF8.GetBytes(address), ZooDefs.Ids.OPEN_ACL_UNSAFE,
@@ -31,16 +31,26 @@ public sealed class ServiceRegistry(string endpoint, string root) : IAsyncDispos
         }
         catch (KeeperException.NodeExistsException error)
         {
-            throw new InvalidOperationException($"Cannot start {role}: ZooKeeper node '{path}' already exists.", error);
+            throw new InvalidOperationException($"Cannot start {process.Name}: ZooKeeper node '{path}' already exists.", error);
         }
 
-        TraceLog.Event(ServerLogEvents.ZkRegister, role, detail: address);
+        TraceLog.Event(ServerLogEvents.ZkRegister, process.Role, detail: address);
         var names = (await zk.getChildrenAsync(root).WaitAsync(stop)).Children;
-        TraceLog.Event(ServerLogEvents.ZkDiscover, role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(NodePrefix + r))));
+        var registered = new List<string>();
+        foreach (var instance in group.Processes)
+        {
+            if (names.Contains(NodePrefix + instance.Name))
+            {
+                registered.Add(instance.Name);
+            }
+        }
+
+        TraceLog.Event(ServerLogEvents.ZkDiscover, process.Role, detail: string.Join(",", registered));
     }
 
     public async Task<string> ResolveAsync(string peer, CancellationToken stop)
     {
+        var process = group.GetProcess(peer);
         var path = $"{root}/{NodePrefix}{peer}";
         while (true)
         {
@@ -49,7 +59,7 @@ public sealed class ServiceRegistry(string endpoint, string root) : IAsyncDispos
                 var data = await zk.getDataAsync(path).WaitAsync(stop);
                 var uri = new Uri(Encoding.UTF8.GetString(data.Data));
                 var expectedScheme = Uri.UriSchemeHttp;
-                if (peer == nameof(ProcessType.Gate))
+                if (process.Type == ProcessType.Gate)
                 {
                     expectedScheme = Uri.UriSchemeHttps;
                 }

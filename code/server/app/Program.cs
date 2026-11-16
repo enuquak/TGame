@@ -13,17 +13,19 @@ const int ShutdownTimeoutSeconds = 3;
 const int StopPollIntervalMilliseconds = 100;
 const string DevelopmentCertificateOid = "1.3.6.1.4.1.311.84.1.1";
 
-if (args.Length != ProcessArgumentCount || !Topology.Dials.ContainsKey(args[0]))
+if (args.Length != ProcessArgumentCount)
 {
-    throw new ArgumentException($"Usage: TGame.Server <{string.Join('|', Topology.Dials.Keys)}> <run-directory>");
+    throw new ArgumentException("Usage: TGame.Server <instance-name> <run-directory>");
 }
 
-var role = args[0];
 var runDir = Path.GetFullPath(args[1]);
-using var serverLog = TraceLog.OpenServer(role);
+var group = ServerGroup.Load(Path.Combine(runDir, ServerGroup.FileName));
+var process = group.GetProcess(args[0]);
+var role = process.Role;
+using var serverLog = TraceLog.OpenServer(process);
 try
 {
-    await RunServerAsync(role, runDir);
+    await RunServerAsync(process, group, runDir);
 }
 catch (Exception error)
 {
@@ -32,10 +34,11 @@ catch (Exception error)
     Environment.ExitCode = 1;
 }
 
-static async Task RunServerAsync(string role, string runDir)
+static async Task RunServerAsync(ServerProcess process, ServerGroup group, string runDir)
 {
     var singlePoints = new SinglePointRegistry(typeof(GameServerNode).Assembly.GetTypes());
-    var processType = Enum.Parse<ProcessType>(role);
+    var role = process.Role;
+    var processType = process.Type;
     var settings = ServerSettings.Current.Value;
     bool diagnosticsEnabled = ServerSettings.DiagnosticsEnabled();
 
@@ -43,7 +46,7 @@ static async Task RunServerAsync(string role, string runDir)
     var messages = new RpcDispatcher();
     var idOptions = IdGeneratorOptions.Load(Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName), settings.ZooKeeper);
     await using var idGenerator = await SnowflakeIdGenerator.CreateAsync(idOptions);
-    using var node = new GameServerNode(role, messages, idGenerator, diagnosticsEnabled);
+    using var node = new GameServerNode(process.Name, group, messages, idGenerator, diagnosticsEnabled);
     ServerMessages.Register(messages, node, diagnosticsEnabled);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
@@ -91,13 +94,13 @@ static async Task RunServerAsync(string role, string runDir)
 
     try
     {
-        await using var registry = new ServiceRegistry(settings.ZooKeeper, settings.DiscoveryRoot);
+        await using var registry = new ServiceRegistry(group, settings.ZooKeeper, settings.DiscoveryRoot);
         using var startupTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
         startupTimeout.CancelAfter(TimeSpan.FromSeconds(StartupTimeoutSeconds));
-        var registration = registry.RegisterAsync(role, address, startupTimeout.Token);
+        var registration = registry.RegisterAsync(process, address, startupTimeout.Token);
 
         var workers = new List<Task>();
-        foreach (var peer in Topology.Dials[role])
+        foreach (var peer in Topology.DialTargets(group, process.Name))
         {
             workers.Add(SuperviseAsync(ConnectAsync(peer)));
         }
@@ -146,7 +149,7 @@ static async Task RunServerAsync(string role, string runDir)
     async Task WatchStopAsync()
     {
         var stopGroup = Path.Combine(runDir, ServerRunFiles.StopGroup);
-        var stopRole = Path.Combine(runDir, ServerRunFiles.StopRolePrefix + role);
+        var stopRole = Path.Combine(runDir, ServerRunFiles.StopRolePrefix + process.Name);
         while (!File.Exists(stopGroup) && !File.Exists(stopRole))
         {
             await Task.Delay(StopPollIntervalMilliseconds, stop);

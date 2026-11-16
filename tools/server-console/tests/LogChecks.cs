@@ -14,11 +14,12 @@ internal static class LogChecks
     // A private executable waiting on stdin supplies a real image path, PID and creation time.
     public static void Run(string checkout)
     {
+        var name = ServerProcess.FormatName(ProcessName, 1);
         var idGenerator = new TGame.Server.Engine.SnowflakeIdGenerator(0, TimeProvider.System);
         var id = idGenerator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
         var run = Directory.CreateDirectory(Path.Combine(checkout, "build", "log-check", id)).FullName;
-        var logs = Directory.CreateDirectory(Path.Combine(run, ProcessName + "Server")).FullName;
-        var exe = Path.Combine(run, ProcessName + "Server.exe");
+        var logs = Directory.CreateDirectory(Path.Combine(run, name + "Server")).FullName;
+        var exe = Path.Combine(run, name + "Server.exe");
         File.Copy(Path.Combine(Environment.SystemDirectory, "sort.exe"), exe);
         using var child = Process.Start(new ProcessStartInfo(exe)
         {
@@ -29,7 +30,7 @@ internal static class LogChecks
         })!;
         try
         {
-            var identity = Path.Combine(run, ProcessName + ".json");
+            var identity = Path.Combine(run, name + ".json");
             long ticks = child.StartTime.ToUniversalTime().Ticks;
             string prefix = Path.Combine(logs, $"{child.Id}-{ticks}-2026110712");
 
@@ -39,6 +40,7 @@ internal static class LogChecks
                 {
                     pid = pid ?? child.Id,
                     role = role ?? ProcessName,
+                    instance = name,
                     time = new DateTimeOffset(time ?? DateTime.UtcNow.Ticks, TimeSpan.Zero),
                     ev,
                     detail

@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param()
+param([string]$Configuration)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Import-ServerTypes.ps1')
@@ -29,6 +29,11 @@ try
         $target = Join-Path $checkout $file
         $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
         [IO.File]::Copy((Join-Path $root $file), $target)
+    }
+
+    if ($Configuration)
+    {
+        Copy-Item -LiteralPath $Configuration -Destination (Join-Path $checkout 'code/server/config/processes.json') -Force
     }
 
     $credentials = @{

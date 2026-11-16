@@ -12,6 +12,8 @@ public abstract class ServerNode : IDisposable
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
 
+    private readonly ServerGroup group;
+    private readonly HashSet<string> expectedPeers;
     private volatile bool linksReady;
     private volatile ServerSinglePoint? singlePoint;
     private readonly object linkChanges = new();
@@ -21,14 +23,20 @@ public abstract class ServerNode : IDisposable
     protected readonly ConcurrentDictionary<string, string> owners = new();
     protected readonly ConcurrentDictionary<string, PeerLink> links = new();
 
-    protected ServerNode(string role, IIdGenerator idGenerator)
+    protected ServerNode(string name, ServerGroup group, IIdGenerator idGenerator)
     {
         ArgumentNullException.ThrowIfNull(idGenerator);
         IdGenerator = idGenerator;
         State = new SinglePointState(idGenerator);
-        Role = role;
+        Name = name;
+        this.group = group;
+        Role = group.GetProcess(name).Role;
         localEntities[State.EntityId] = 0;
+        expectedPeers = Topology.Peers(group, name);
+        UpdateLinkReadiness();
     }
+
+    public string Name { get; }
 
     public Task FirstLinks => firstLinks.Task;
     public string Role { get; }
@@ -63,6 +71,26 @@ public abstract class ServerNode : IDisposable
 
     protected abstract Task ServeFrameAsync(Frame frame, string peer, string id, PeerLink link, CancellationToken stop);
 
+    public bool AcceptsIncoming(string peer)
+    {
+        if (!expectedPeers.Contains(peer))
+        {
+            return false;
+        }
+
+        return Topology.Dials[group.GetProcess(peer).Role].Contains(Role);
+    }
+
+    protected string PeerRole(string peer)
+    {
+        if (peer == ServerPeerNames.Client)
+        {
+            return peer;
+        }
+
+        return group.GetProcess(peer).Role;
+    }
+
     public async Task MaintainLinkAsync(string peer, ServiceRegistry registry, bool reconnect, CancellationToken stop)
     {
         while (true)
@@ -90,20 +118,25 @@ public abstract class ServerNode : IDisposable
     {
         using var channel = GrpcChannel.ForAddress(address);
         var id = IdGenerator.GenId().ToString(CultureInfo.InvariantCulture);
-        var headers = new Metadata { { TransportProtocol.PeerHeader, Role }, { TransportProtocol.LinkHeader, id } };
-        if (peer == nameof(ProcessType.Router))
+        var headers = new Metadata { { TransportProtocol.PeerHeader, Name }, { TransportProtocol.LinkHeader, id } };
+        if (PeerRole(peer) == nameof(ProcessType.Router))
         {
             headers.Add(TransportProtocol.EntityHeader, string.Join(',', localEntities.Keys));
         }
 
         using var call = new ServerLink.ServerLinkClient(channel).Connect(headers, cancellationToken: stop);
-        await call.RequestStream.WriteAsync(new Frame { Hello = Role }, stop);
+        await call.RequestStream.WriteAsync(new Frame { Hello = Name }, stop);
         await RunLinkAsync(peer, id, [], call.ResponseStream, call.RequestStream, stop);
     }
 
     public async Task RunLinkAsync(string peer, string id, string[] entities, IAsyncStreamReader<Frame> input,
         IAsyncStreamWriter<Frame> output, CancellationToken stop)
     {
+        if (!expectedPeers.Contains(peer))
+        {
+            throw new RpcException(new Status(StatusCode.InvalidArgument, $"Unexpected peer instance {peer}."));
+        }
+
         var link = new PeerLink(Role, peer, id, output);
         if (Role == nameof(ProcessType.Router))
         {
@@ -130,9 +163,9 @@ public abstract class ServerNode : IDisposable
 
         try
         {
-            if (Topology.Dials[peer].Contains(Role))
+            if (AcceptsIncoming(peer))
             {
-                await output.WriteAsync(new Frame { Hello = Role }, stop);
+                await output.WriteAsync(new Frame { Hello = Name }, stop);
             }
 
             lock (linkChanges)
@@ -214,7 +247,7 @@ public abstract class ServerNode : IDisposable
 
     private void UpdateLinkReadiness()
     {
-        bool complete = links.Count == Topology.Degree(Role);
+        bool complete = expectedPeers.All(links.ContainsKey);
         if (complete == linksReady)
         {
             return;

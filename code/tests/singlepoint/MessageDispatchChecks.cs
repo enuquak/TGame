@@ -27,7 +27,7 @@ internal static class MessageDispatchChecks
 
         messages.Register<StringValue>(request => request.Value, async (peer, request, link, token) =>
         {
-            if (request.Value != requestId || peer != nameof(ProcessType.Login) || link.Id != linkId)
+            if (request.Value != requestId || peer != ServerProcess.FormatName(nameof(ProcessType.Login), 1) || link.Id != linkId)
             {
                 throw new Exception("Dispatch changed the payload or connection context.");
             }
@@ -43,10 +43,10 @@ internal static class MessageDispatchChecks
         });
 
         var stream = new FrameStream();
-        using var node = new GameServerNode(nameof(ProcessType.Gate), messages, TestIds.Generator);
+        using var node = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        stream.Input.Writer.TryWrite(new Frame { Hello = nameof(ProcessType.Login) });
-        var running = node.RunLinkAsync(nameof(ProcessType.Login), linkId, [], stream, stream, lifetime.Token);
+        stream.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Login), 1) });
+        var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), linkId, [], stream, stream, lifetime.Token);
         try
         {
             stream.Input.Writer.TryWrite(RpcFrames.Request(new StringValue { Value = requestId }, requestId));
@@ -84,13 +84,13 @@ internal static class MessageDispatchChecks
     {
         var messages = new RpcDispatcher();
         var stream = new FrameStream();
-        var link = new PeerLink(nameof(ProcessType.Gate), nameof(ProcessType.Login), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), stream);
-        using var node = new GameServerNode(nameof(ProcessType.Gate), messages, TestIds.Generator);
+        var link = new PeerLink(nameof(ProcessType.Gate), ServerProcess.FormatName(nameof(ProcessType.Login), 1), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), stream);
+        using var node = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
         ServerMessages.Register(messages, node);
         var ping = new Ping { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = node.State.EntityId };
         try
         {
-            await messages.DispatchAsync(RpcFrames.Request(ping).Request, nameof(ProcessType.Login), link, stop);
+            await messages.DispatchAsync(RpcFrames.Request(ping).Request, ServerProcess.FormatName(nameof(ProcessType.Login), 1), link, stop);
             throw new Exception("Normal startup registered a diagnostic RPC handler.");
         }
         catch (RpcException error) when (error.StatusCode == StatusCode.Unimplemented)
@@ -98,7 +98,7 @@ internal static class MessageDispatchChecks
         }
 
         var profile = new ProfileRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), Fetch = node.State.EntityId };
-        await messages.DispatchAsync(RpcFrames.Request(profile).Request, nameof(ProcessType.Login), link, stop);
+        await messages.DispatchAsync(RpcFrames.Request(profile).Request, ServerProcess.FormatName(nameof(ProcessType.Login), 1), link, stop);
         var profileFrame = await stream.Output.Reader.ReadAsync(stop);
         if (profileFrame.ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Unavailable)
         {
@@ -106,7 +106,7 @@ internal static class MessageDispatchChecks
         }
 
         var gm = new GmPingRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = node.State.EntityId };
-        await messages.DispatchAsync(RpcFrames.Request(gm, gm.RequestId).Request, nameof(ProcessType.Router), link, stop);
+        await messages.DispatchAsync(RpcFrames.Request(gm, gm.RequestId).Request, ServerProcess.FormatName(nameof(ProcessType.Router), 1), link, stop);
         var gmFrame = await stream.Output.Reader.ReadAsync(stop);
         if (gmFrame.ReadReply<GmPingReply>().Status != GmPingReply.Types.Status.Unavailable)
         {
@@ -114,7 +114,7 @@ internal static class MessageDispatchChecks
         }
 
         DiagnosticMessages.Register(messages, node);
-        await messages.DispatchAsync(RpcFrames.Request(ping).Request, nameof(ProcessType.Login), link, stop);
+        await messages.DispatchAsync(RpcFrames.Request(ping).Request, ServerProcess.FormatName(nameof(ProcessType.Login), 1), link, stop);
         var diagnosticFrame = await stream.Output.Reader.ReadAsync(stop);
         if (diagnosticFrame.ReadReply<Pong>().Status != Pong.Types.Status.Unavailable)
         {
@@ -135,9 +135,9 @@ internal static class MessageDispatchChecks
             return release.Task.WaitAsync(token);
         });
 
-        using var node = new GameServerNode(nameof(ProcessType.Gate), messages, TestIds.Generator);
-        stream.Input.Writer.TryWrite(new Frame { Hello = nameof(ProcessType.Login) });
-        var running = node.RunLinkAsync(nameof(ProcessType.Login), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
+        using var node = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
+        stream.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Login), 1) });
+        var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
         var id = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
         stream.Input.Writer.TryWrite(RpcFrames.Request(new StringValue { Value = id }, id));
         await started.Task.WaitAsync(stop);

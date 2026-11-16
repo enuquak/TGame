@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([switch]$Hold)
+param([switch]$Hold, [string]$Configuration)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Import-ServerTypes.ps1')
@@ -36,7 +36,7 @@ if (!(Test-Path -LiteralPath $dotnet))
 
 $serverDll = Join-Path $root 'build/bin/TGame.Server/debug/TGame.Server.dll'
 $clientDll = Join-Path $root 'build/bin/TGame.ProbeClient/debug/TGame.ProbeClient.dll'
-Write-Host "Server logs: $serverRoot/<Role>Server/"
+Write-Host "Server logs: $serverRoot/<Instance>Server/"
 Write-Host "PingPong results: $runDir"
 Push-Location $root
 
@@ -116,11 +116,28 @@ try
         $gmActor = 'local-smoke'
     }
 
-    $roles = @(Get-Content -Raw -LiteralPath 'code/server/config/processes.json' | ConvertFrom-Json)
+    if (!$Configuration)
+    {
+        $Configuration = Join-Path $root 'code/server/config/processes.json'
+    }
+
+    $groupFile = Join-Path $runDir ([TGame.ServerRunFiles]::GroupConfiguration)
+    Copy-Item -LiteralPath $Configuration -Destination $groupFile
+    $instances = @(& "$PSScriptRoot/Read-ServerGroup.ps1" -Path $groupFile)
+    $roles = @($instances.Name)
+    foreach ($required in [Enum]::GetNames([TGame.ProcessType]))
+    {
+        if ($required -cnotin $instances.Role)
+        {
+            throw "The full protocol smoke test requires at least one $required instance."
+        }
+    }
+
     $processes = @{}
 
     foreach ($role in $roles)
     {
+        $processRole = ($instances | Where-Object Name -CEQ $role).Role
         $launch = @{
             FilePath = $dotnet
             ArgumentList = ('"{0}" {1} "{2}"' -f $serverDll,$role,$runDir)
@@ -140,18 +157,18 @@ try
             }
         }
 
-        if ($role -eq $gmRole)
+        if ($processRole -eq $gmRole)
         {
             $launch.Environment[[TGame.ServerEnvironment]::GMToken] = $gmToken
             $launch.Environment[[TGame.ServerEnvironment]::GMOperator] = $gmActor
         }
 
-        if ($role -eq $dbMgrRole)
+        if ($processRole -eq $dbMgrRole)
         {
             $launch.Environment[[TGame.ServerEnvironment]::DBMgrMongoPassword] = $dbMgrPassword
         }
 
-        if ($role -eq $profileRole)
+        if ($processRole -eq $profileRole)
         {
             $launch.Environment[[TGame.ServerEnvironment]::MongoPassword] = $password
             $launch.Environment[[TGame.ServerEnvironment]::RedisPassword] = $redisPassword
@@ -211,7 +228,10 @@ try
             throw "Expected one startup Entity in $role."
         }
 
-        $pointIds[$role] = $point[0].entity
+        if (($instances | Where-Object Name -CEQ $role).Number -eq 1)
+        {
+            $pointIds[$point[0].role] = $point[0].entity
+        }
     }
 
     $cases = @(foreach ($round in 1..2)
@@ -279,7 +299,7 @@ try
     }
 
     $cases | ConvertTo-Json -Depth $caseJsonDepth -AsArray | Set-Content -LiteralPath "$runDir/cases.json" -Encoding utf8
-    $listen = & $readLog $runDir $gateRole -Event ([TGame.ServerLogEvents]::Listen)
+    $listen = & $readLog $runDir ([TGame.ServerProcess]::FormatName($gateRole, 1)) -Event ([TGame.ServerLogEvents]::Listen)
     $endpoint = 'wss://localhost:{0}/probe' -f ([uri]$listen.detail).Port
     & $dotnet $clientDll $runDir $endpoint $listen.link > "$runDir/Client.log" 2> "$runDir/Client.err.log"
     if ($LASTEXITCODE -ne 0)
@@ -287,7 +307,7 @@ try
         throw "Client failed. See Client.err.log."
     }
 
-    $gmListen = & $readLog $runDir $gmRole -Event ([TGame.ServerLogEvents]::Listen)
+    $gmListen = & $readLog $runDir ([TGame.ServerProcess]::FormatName($gmRole, 1)) -Event ([TGame.ServerLogEvents]::Listen)
     $gmUri = [uri]$gmListen.detail
     if ($gmUri.Host -ne '127.0.0.1' -or $gmUri.Scheme -ne 'http')
     {
