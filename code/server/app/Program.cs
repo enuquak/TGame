@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using TGame;
+using TGame.Server;
 using TGame.Server.Engine;
 using TGame.Server.Logic;
 
@@ -35,9 +36,13 @@ static async Task RunServerAsync(string role, string runDir)
 {
     var singlePoints = new SinglePointRegistry(typeof(GameServerNode).Assembly.GetTypes());
     var processType = Enum.Parse<ProcessType>(role);
+    var settings = ServerSettings.Current.Value;
+    bool diagnosticsEnabled = ServerSettings.DiagnosticsEnabled();
 
     var builder = WebApplication.CreateSlimBuilder();
-    using var node = new GameServerNode(role);
+    var messages = new RpcDispatcher();
+    using var node = new GameServerNode(role, messages, diagnosticsEnabled);
+    ServerMessages.Register(messages, node, diagnosticsEnabled);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
@@ -83,7 +88,7 @@ static async Task RunServerAsync(string role, string runDir)
 
     try
     {
-        await using var registry = new ServiceRegistry(TestStorage.Settings.Value.ZooKeeper);
+        await using var registry = new ServiceRegistry(settings.ZooKeeper, settings.DiscoveryRoot);
         using var startupTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
         startupTimeout.CancelAfter(TimeSpan.FromSeconds(StartupTimeoutSeconds));
         var registration = registry.RegisterAsync(role, address, startupTimeout.Token);

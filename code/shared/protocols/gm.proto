@@ -1,0 +1,16 @@
+syntax = "proto3";
+package tgame.management;
+option csharp_namespace = "TGame.Management";
+
+// Read-only entity reachability command used by authenticated management tools.
+message GmPingRequest {
+  string request_id = 1;
+  string entity_id = 2;
+}
+message GmPingReply {
+  string request_id = 1;
+  string entity_id = 2;
+  string responder = 3;
+  enum Status { OK = 0; NOT_FOUND = 1; UNAVAILABLE = 2; }
+  Status status = 4;
+}

@@ -1,6 +1,7 @@
 using Google.Protobuf;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using TGame.Server;
 using StackExchange.Redis;
 using TGame.Profile;
 using Result = TGame.Profile.ProfileReply.Types.Result;
@@ -9,11 +10,10 @@ using TGame.Server.Storage;
 
 namespace TGame.Server.Logic;
 
-// The smoke host runs in the test namespace over the project's SSH tunnel.
 internal sealed class ProfileStore : IDisposable
 {
     private const string CollectionName = "entity_profiles";
-    private const string CacheKeyPrefix = "tgame:test:profile:";
+    private readonly string cacheKeyPrefix = ServerSettings.Current.Value.ProfileCachePrefix;
     private const string EntityIdField = "_id";
     private const string DisplayNameField = "display_name";
     private const string TitleField = "title";
@@ -32,28 +32,28 @@ internal sealed class ProfileStore : IDisposable
     {
         this.mongo = mongo;
         this.redis = redis;
-        summaries = mongo.GetDatabase(TestStorage.DatabaseName).GetCollection<BsonDocument>(CollectionName);
+        summaries = mongo.GetDatabase(ServerSettings.Current.Value.MongoDatabase).GetCollection<BsonDocument>(CollectionName);
         cache = redis.GetDatabase();
     }
 
     public static async Task<ProfileStore> OpenAsync(CancellationToken stop)
     {
-        var settings = TestStorage.Settings.Value;
+        var settings = ServerSettings.Current.Value;
         var options = new ConfigurationOptions
         {
             EndPoints = { settings.ProfileRedis },
-            User = TestStorage.UserName,
-            Password = TestStorage.Password(ServerEnvironment.RedisTestPassword),
+            User = settings.RedisUser,
+            Password = StorageConnections.Password(settings.RedisPasswordVariable),
             AbortOnConnectFail = false,
             ConnectTimeout = RedisTimeoutMilliseconds,
             AsyncTimeout = RedisTimeoutMilliseconds,
             ConnectRetry = RedisConnectRetryCount
         };
 
-        var mongo = TestStorage.Mongo(settings.ProfileMongo);
+        var mongo = StorageConnections.Mongo(settings.ProfileMongo);
         try
         {
-            await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(TestStorage.DatabaseName), stop);
+            await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(ServerSettings.Current.Value.MongoDatabase), stop);
             var redis = await ConnectionMultiplexer.ConnectAsync(options);
             return new ProfileStore(mongo, redis);
         }
@@ -75,7 +75,7 @@ internal sealed class ProfileStore : IDisposable
     internal async Task<ProfileReply> HandleAsync(ProfileRequest request, CancellationToken stop)
     {
         string id = Subject(request);
-        var key = (RedisKey)(CacheKeyPrefix + id);
+        var key = (RedisKey)(cacheKeyPrefix + id);
         var filter = Builders<BsonDocument>.Filter.Eq(EntityIdField, id);
         var reply = new ProfileReply { RequestId = request.RequestId, EntityId = id };
 

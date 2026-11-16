@@ -1,4 +1,4 @@
-using TGame.Diagnostics;
+using TGame.Management;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -59,13 +59,13 @@ internal static class GMHttp
                 return Finish(StatusCodes.Status503ServiceUnavailable);
             }
 
-            var pong = await node.GmPingAsync(new Ping { RequestId = requestId, EntityId = target, Entry = nameof(ProcessType.GM) },
+            var pong = await node.GmPingAsync(new GmPingRequest { RequestId = requestId, EntityId = target },
                 app.Lifetime.ApplicationStopping);
 
             return pong.Status switch
             {
-                Pong.Types.Status.Ok => Finish(StatusCodes.Status200OK, pong.Responder),
-                Pong.Types.Status.NotFound => Finish(StatusCodes.Status404NotFound),
+                GmPingReply.Types.Status.Ok => Finish(StatusCodes.Status200OK, pong.Responder),
+                GmPingReply.Types.Status.NotFound => Finish(StatusCodes.Status404NotFound),
                 _ => Finish(StatusCodes.Status503ServiceUnavailable)
             };
         });

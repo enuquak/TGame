@@ -4,7 +4,7 @@ using org.apache.zookeeper;
 
 namespace TGame.Server.Engine;
 
-public sealed class ServiceRegistry(string endpoint) : IAsyncDisposable
+public sealed class ServiceRegistry(string endpoint, string root) : IAsyncDisposable
 {
     private sealed class Changed : Watcher
     {
@@ -17,14 +17,13 @@ public sealed class ServiceRegistry(string endpoint) : IAsyncDisposable
         }
     }
 
-    private const string Root = "/tgame/test";
     private const string NodePrefix = "server-";
     private const int SessionTimeoutMilliseconds = 10000;
     private readonly ZooKeeper zk = new(endpoint, SessionTimeoutMilliseconds, new Changed());
 
     public async Task RegisterAsync(string role, string address, CancellationToken stop)
     {
-        var path = $"{Root}/{NodePrefix}{role}";
+        var path = $"{root}/{NodePrefix}{role}";
         try
         {
             await zk.createAsync(path, Encoding.UTF8.GetBytes(address), ZooDefs.Ids.OPEN_ACL_UNSAFE,
@@ -36,13 +35,13 @@ public sealed class ServiceRegistry(string endpoint) : IAsyncDisposable
         }
 
         TraceLog.Event(ServerLogEvents.ZkRegister, role, detail: address);
-        var names = (await zk.getChildrenAsync(Root).WaitAsync(stop)).Children;
+        var names = (await zk.getChildrenAsync(root).WaitAsync(stop)).Children;
         TraceLog.Event(ServerLogEvents.ZkDiscover, role, detail: string.Join(",", Topology.Dials.Keys.Where(r => names.Contains(NodePrefix + r))));
     }
 
     public async Task<string> ResolveAsync(string peer, CancellationToken stop)
     {
-        var path = $"{Root}/{NodePrefix}{peer}";
+        var path = $"{root}/{NodePrefix}{peer}";
         while (true)
         {
             try

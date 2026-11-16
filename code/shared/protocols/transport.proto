@@ -1,19 +1,30 @@
 syntax = "proto3";
-import "pingpong.proto";
-import "profile.proto";
+import "google/protobuf/any.proto";
 package tgame.transport;
 option csharp_namespace = "TGame.Transport";
 
 // Each pair of server processes shares one bidirectional stream.
 message Frame {
+  reserved 1, 2, 4, 5;
+  reserved "ping", "pong", "profile_request", "profile_reply";
+
   oneof body {
-    tgame.smoke.Ping ping = 1;
-    tgame.smoke.Pong pong = 2;
-    string hello = 3;     // Opens the stream before any probe is issued.
-    tgame.profile.ProfileRequest profile_request = 4;
-    tgame.profile.ProfileReply profile_reply = 5;
+    string hello = 3;     // Exchanges process roles before serving requests.
+    RpcRequest request = 6;
+    RpcReply reply = 7;
   }
 }
+
+message RpcRequest {
+  string request_id = 1;
+  google.protobuf.Any payload = 2;
+}
+
+message RpcReply {
+  string request_id = 1;
+  google.protobuf.Any payload = 2;
+}
+
 service ServerLink {
   rpc Connect(stream Frame) returns (stream Frame);
 }

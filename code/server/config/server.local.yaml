@@ -1,0 +1,11 @@
+# Local development through the existing SSH tunnel. Selected explicitly by launchers.
+profileMongo: "127.0.0.1:37017"
+profileRedis: "127.0.0.1:16379"
+zooKeeper: "127.0.0.1:2181"
+mongoDatabase: "tgame_test"
+mongoUser: "tgame_test"
+mongoPasswordVariable: "TGAME_MONGO_PASSWORD"
+redisUser: "tgame_test"
+redisPasswordVariable: "TGAME_REDIS_PASSWORD"
+profileCachePrefix: "tgame:test:profile:"
+discoveryRoot: "/tgame/test"

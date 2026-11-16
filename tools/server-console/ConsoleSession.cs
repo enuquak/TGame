@@ -11,6 +11,8 @@ internal sealed class ConsoleSession : IDisposable
     private const int GmTokenByteCount = 32;
     private const string Project = "code/server/app/TGame.Server.csproj";
     private const string ProtocolProject = "code/shared/TGame.Shared.csproj";
+    private const string RunConfigurationFile = "server.yaml";
+    private const string LocalCredentialsMarker = "local-credentials";
     private const string DefaultGmOperator = "local-console";
     private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
     private const string RedisPasswordKey = "REDIS_TEST_PASSWORD";
@@ -132,6 +134,7 @@ internal sealed class ConsoleSession : IDisposable
         var snapshot = Snapshot(name);
         var runDir = Directory.CreateDirectory(Path.Combine(sessions, name)).FullName;
         File.WriteAllText(Path.Combine(runDir, ServerRunFiles.ConsoleMode), "");
+        SaveRunConfiguration(runDir);
         // Prepare credentials and a complete copy before asking healthy processes to shut down.
         var starts = Instances.Select(i => StartInfo(i, name)).ToArray();
         await Task.Run(() =>
@@ -173,6 +176,22 @@ internal sealed class ConsoleSession : IDisposable
         }
     }
 
+    private void SaveRunConfiguration(string runDir)
+    {
+        var source = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
+        bool localConfig = string.IsNullOrWhiteSpace(source);
+        if (localConfig)
+        {
+            source = Path.Combine(root, "build", "bin", "TGame.Server", "debug", "config", "server.local.yaml");
+        }
+
+        File.Copy(Path.GetFullPath(source!, root), Path.Combine(runDir, RunConfigurationFile));
+        if (localConfig)
+        {
+            File.WriteAllText(Path.Combine(runDir, LocalCredentialsMarker), "");
+        }
+    }
+
     private void Open(string name)
     {
         sessionName = name;
@@ -201,14 +220,23 @@ internal sealed class ConsoleSession : IDisposable
     {
         var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
         info.ArgumentList.Add(instance.Role);
-        info.ArgumentList.Add(Path.Combine(sessions, name));
+        var runDir = Path.Combine(sessions, name);
+        var config = Path.Combine(runDir, RunConfigurationFile);
+        if (!File.Exists(config))
+        {
+            throw new InvalidOperationException("当前运行缺少环境配置快照，请选择环境后编译并重启。");
+        }
+
+        bool localConfig = File.Exists(Path.Combine(runDir, LocalCredentialsMarker));
+        info.ArgumentList.Add(runDir);
+        info.Environment[ServerEnvironment.Config] = config;
         info.Environment[ServerEnvironment.LogRoot] = logRoot;
         if (instance.Role == nameof(ProcessType.DBMgr))
         {
             var password = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
             if (string.IsNullOrWhiteSpace(password))
             {
-                password = Password(MongoPasswordKey);
+                password = Password(ServerEnvironment.MongoPassword, MongoPasswordKey);
             }
 
             info.Environment[ServerEnvironment.DBMgrMongoPassword] = password;
@@ -216,8 +244,13 @@ internal sealed class ConsoleSession : IDisposable
 
         if (instance.Role == nameof(ProcessType.Profile))
         {
-            info.Environment[ServerEnvironment.MongoTestPassword] = Password(MongoPasswordKey);
-            info.Environment[ServerEnvironment.RedisTestPassword] = Password(RedisPasswordKey);
+            info.Environment[ServerEnvironment.MongoPassword] = Environment.GetEnvironmentVariable(ServerEnvironment.MongoPassword);
+            info.Environment[ServerEnvironment.RedisPassword] = Environment.GetEnvironmentVariable(ServerEnvironment.RedisPassword);
+            if (localConfig)
+            {
+                info.Environment[ServerEnvironment.MongoPassword] = Password(ServerEnvironment.MongoPassword, MongoPasswordKey);
+                info.Environment[ServerEnvironment.RedisPassword] = Password(ServerEnvironment.RedisPassword, RedisPasswordKey);
+            }
         }
 
         if (instance.Role == nameof(ProcessType.GM))
@@ -232,9 +265,8 @@ internal sealed class ConsoleSession : IDisposable
         return info;
     }
 
-    private string Password(string key)
+    private string Password(string envKey, string key)
     {
-        var envKey = "TGAME_" + key;
         if (Environment.GetEnvironmentVariable(envKey) is { Length: > 0 } password)
         {
             return password;
@@ -254,8 +286,8 @@ internal sealed class ConsoleSession : IDisposable
     private ProcessStartInfo NewProcess(string exe)
     {
         var info = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var key in new[] { ServerEnvironment.GMToken, ServerEnvironment.GMOperator, ServerEnvironment.DBMgrMongoPassword, ServerEnvironment.MongoTestPassword,
-            ServerEnvironment.RedisTestPassword, MongoPasswordKey, RedisPasswordKey })
+        foreach (var key in new[] { ServerEnvironment.GMToken, ServerEnvironment.GMOperator, ServerEnvironment.DBMgrMongoPassword, ServerEnvironment.MongoPassword,
+            ServerEnvironment.RedisPassword, ServerEnvironment.Diagnostics, MongoPasswordKey, RedisPasswordKey })
         {
             info.Environment.Remove(key);
         }
