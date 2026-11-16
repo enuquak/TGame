@@ -10,7 +10,6 @@ internal sealed class SnowflakeSequence
     internal const long MaxTimestamp = (1L << TimestampBits) - 1;
     internal static readonly long EpochMilliseconds = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds();
 
-    private readonly object sync = new();
     private readonly long workerComponent;
     private long lastTimestamp = -1;
     private int sequence;
@@ -24,35 +23,32 @@ internal sealed class SnowflakeSequence
 
     internal long? TryGenId(long timestamp)
     {
-        lock (sync)
+        if (timestamp < 0 || timestamp > MaxTimestamp)
         {
-            if (timestamp < 0 || timestamp > MaxTimestamp)
-            {
-                throw new InvalidOperationException("The clock is outside the Snowflake timestamp range.");
-            }
-
-            if (timestamp < lastTimestamp)
-            {
-                throw new InvalidOperationException("The clock moved backwards; ID generation is suspended until it catches up.");
-            }
-
-            if (timestamp == lastTimestamp)
-            {
-                if (sequence == MaxSequence)
-                {
-                    return null;
-                }
-
-                sequence++;
-            }
-            else
-            {
-                sequence = 0;
-            }
-
-            lastTimestamp = timestamp;
-            long timestampComponent = timestamp << (WorkerBits + SequenceBits);
-            return timestampComponent | workerComponent | (uint)sequence;
+            throw new InvalidOperationException("The clock is outside the Snowflake timestamp range.");
         }
+
+        if (timestamp < lastTimestamp)
+        {
+            throw new InvalidOperationException("The clock moved backwards; ID generation is suspended until it catches up.");
+        }
+
+        if (timestamp == lastTimestamp)
+        {
+            if (sequence == MaxSequence)
+            {
+                return null;
+            }
+
+            sequence++;
+        }
+        else
+        {
+            sequence = 0;
+        }
+
+        lastTimestamp = timestamp;
+        long timestampComponent = timestamp << (WorkerBits + SequenceBits);
+        return timestampComponent | workerComponent | (uint)sequence;
     }
 }

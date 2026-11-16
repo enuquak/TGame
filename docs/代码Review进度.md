@@ -51,7 +51,7 @@
 | 待确认 | [LinkService.cs](../code/server/engine/LinkService.cs) | 理解 gRPC 连接入口、来源检查和向 ServerNode 转交连接。 |
 | 待确认 | [PeerLink.cs](../code/server/engine/PeerLink.cs) | 按通用 CallAsync、WriteAsync、Receive、Close 阅读请求等待、响应匹配、超时与断线。 |
 | 待确认 | [GameServerNode.cs](../code/server/logic/node/GameServerNode.cs) | 理解业务节点如何继承引擎节点；SinglePoint 生命周期已由引擎基类提供。 |
-| 待确认 | [GameServerNode.Messages.cs](../code/server/logic/node/GameServerNode.Messages.cs) | 理解请求进入队列、响应直接唤醒等待者，以及消息分发。 |
+| 待确认 | [ServerNode.cs](../code/server/engine/ServerNode.cs) 与 [RpcDispatcher.cs](../code/server/engine/RpcDispatcher.cs) | 理解引擎中的请求入队、响应直接唤醒等待者，以及通用消息分发。 |
 | 待确认 | [PeerLink.Profile.cs](../code/server/logic/node/PeerLink.Profile.cs) | 理解业务扩展方法如何包装 Frame，以及响应实体校验。 |
 | 待确认 | [GameServerNode.Profile.cs](../code/server/logic/node/GameServerNode.Profile.cs) | 理解调用入口、Router 转发、来源/实体归属校验和存储调用。 |
 | 待确认 | [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs) | 理解 Redis 查询、MongoDB 读取、缓存回填、更新与删除。 |

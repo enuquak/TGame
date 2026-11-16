@@ -7,12 +7,13 @@ using TGame.Transport;
 
 namespace TGame.Server.Engine;
 
-public abstract class ServerNode : IDisposable
+public class ServerNode : IDisposable
 {
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
 
     private readonly ServerGroup group;
+    private readonly RpcDispatcher messages;
     private readonly HashSet<string> expectedPeers;
     private volatile bool linksReady;
     private volatile ServerSinglePoint? singlePoint;
@@ -23,13 +24,14 @@ public abstract class ServerNode : IDisposable
     protected readonly ConcurrentDictionary<string, string> owners = new();
     protected readonly ConcurrentDictionary<string, PeerLink> links = new();
 
-    protected ServerNode(string name, ServerGroup group, IIdGenerator idGenerator)
+    public ServerNode(string name, ServerGroup group, RpcDispatcher messages, IIdGenerator idGenerator)
     {
         ArgumentNullException.ThrowIfNull(idGenerator);
         IdGenerator = idGenerator;
         State = new SinglePointState(idGenerator);
         Name = name;
         this.group = group;
+        this.messages = messages;
         Role = group.GetProcess(name).Role;
         localEntities[State.EntityId] = 0;
         expectedPeers = Topology.Peers(group, name);
@@ -67,9 +69,26 @@ public abstract class ServerNode : IDisposable
         (singlePoint as IDisposable)?.Dispose();
     }
 
-    protected abstract void ReceiveFrame(Frame frame, PeerLink link, ChannelWriter<Frame> requests);
+    private static void ReceiveFrame(Frame frame, PeerLink link, ChannelWriter<Frame> requests)
+    {
+        switch (frame.BodyCase)
+        {
+            case Frame.BodyOneofCase.Reply:
+                link.Receive(frame.Reply);
+                return;
 
-    protected abstract Task ServeFrameAsync(Frame frame, string peer, string id, PeerLink link, CancellationToken stop);
+            case Frame.BodyOneofCase.Request:
+                if (!requests.TryWrite(frame))
+                {
+                    throw new RpcException(new Status(StatusCode.ResourceExhausted, "Peer request queue is full."));
+                }
+
+                return;
+
+            default:
+                throw new InvalidDataException("Invalid stream frame.");
+        }
+    }
 
     public bool AcceptsIncoming(string peer)
     {
@@ -221,7 +240,7 @@ public abstract class ServerNode : IDisposable
             {
                 await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
                 {
-                    await ServeFrameAsync(frame, peer, id, link, transport.Token);
+                    await messages.DispatchAsync(frame.Request, peer, link, transport.Token);
                 }
             }
         }

@@ -16,6 +16,15 @@ const int HandshakeObservationMilliseconds = 200;
 const string LegacyProbeEntityId = "body-1";
 
 await IdGeneratorChecks.RunAsync();
+if (args is ["--engine"])
+{
+    using var engineDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
+    RpcChecks.CheckTransportBoundary();
+    await RpcChecks.RunAsync(engineDeadline.Token);
+    await MessageDispatchChecks.RunAsync(engineDeadline.Token);
+    return 0;
+}
+
 if (args is ["--id-zookeeper", var idConfig])
 {
     await IdGeneratorChecks.RunZooKeeperAsync(idConfig, ServerSettings.Current.Value.ZooKeeper);

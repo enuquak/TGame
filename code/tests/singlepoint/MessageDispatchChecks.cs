@@ -22,7 +22,6 @@ internal static class MessageDispatchChecks
     {
         var messages = new RpcDispatcher();
         var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var entityId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
         var linkId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         messages.Register<StringValue>(request => request.Value, async (peer, request, link, token) =>
@@ -32,18 +31,12 @@ internal static class MessageDispatchChecks
                 throw new Exception("Dispatch changed the payload or connection context.");
             }
 
-            var nested = await link.GmPingAsync(new GmPingRequest { RequestId = requestId, EntityId = entityId }, token);
-            var reply = new ProfileReply
-            {
-                RequestId = nested.RequestId,
-                EntityId = nested.EntityId,
-                Result = ProfileReply.Types.Result.Missing
-            };
-            await link.ReplyAsync(reply, token);
+            var nested = await link.CallAsync<Int32Value>(request, request.Value, token);
+            await link.ReplyAsync(new Int32Value { Value = nested.Value + 1 }, request.Value, token);
         });
 
         var stream = new FrameStream();
-        using var node = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         stream.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Login), 1) });
         var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), linkId, [], stream, stream, lifetime.Token);
@@ -51,17 +44,17 @@ internal static class MessageDispatchChecks
         {
             stream.Input.Writer.TryWrite(RpcFrames.Request(new StringValue { Value = requestId }, requestId));
             var frame = await stream.Output.Reader.ReadAsync(stop);
-            var nested = frame.ReadRequest<GmPingRequest>();
-            if (nested.RequestId != requestId || nested.EntityId != entityId)
+            var nested = frame.ReadRequest<StringValue>();
+            if (frame.Request.RequestId != requestId || nested.Value != requestId)
             {
                 throw new Exception("Registered request handler did not start its nested RPC.");
             }
 
             stream.Input.Writer.TryWrite(RpcFrames.Reply(
-                new GmPingReply { RequestId = requestId, EntityId = entityId }, requestId));
+                new Int32Value { Value = 41 }, requestId));
             var responseFrame = await stream.Output.Reader.ReadAsync(stop);
-            var response = responseFrame.ReadReply<ProfileReply>();
-            if (response.RequestId != requestId || response.EntityId != entityId || response.Result != ProfileReply.Types.Result.Missing)
+            var response = responseFrame.ReadReply<Int32Value>();
+            if (responseFrame.Reply.RequestId != requestId || response.Value != 42)
             {
                 throw new Exception("Nested reply was blocked by request dispatch or matched incorrectly.");
             }
@@ -135,7 +128,7 @@ internal static class MessageDispatchChecks
             return release.Task.WaitAsync(token);
         });
 
-        using var node = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
         stream.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Login), 1) });
         var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
         var id = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
