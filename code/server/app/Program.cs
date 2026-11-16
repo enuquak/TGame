@@ -39,7 +39,10 @@ static async Task RunServerAsync(string role, Guid runId, string runDir)
     var singlePoint = singlePoints.Create(processType);
 
     _ = ServerSettings.Current.Value;
-    var node = new ServerNode(role, singlePoint, ServerSettings.DiagnosticsEnabled());
+
+    bool diagnosticsEnabled = ServerSettings.DiagnosticsEnabled();
+    var messages = ServerMessages.Create(diagnosticsEnabled);
+    var node = new ServerNode(role, singlePoint, messages, diagnosticsEnabled);
     using var resources = singlePoint as IDisposable;
 
     var builder = WebApplication.CreateSlimBuilder();

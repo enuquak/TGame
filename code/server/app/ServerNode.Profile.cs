@@ -32,7 +32,7 @@ internal sealed partial class ServerNode
         return new ProfileReply { RequestId = request.RequestId, EntityId = ProfileStore.Subject(request), Result = Result.Unavailable };
     }
 
-    private async Task<ProfileReply> RouteProfileAsync(string from, ProfileRequest request, CancellationToken stop)
+    internal async Task<ProfileReply> RouteProfileAsync(string from, ProfileRequest request, CancellationToken stop)
     {
         string subject = ProfileStore.Subject(request);
         ProfileReply Failure(Result result) => new()

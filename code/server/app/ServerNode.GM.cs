@@ -7,7 +7,7 @@ internal sealed partial class ServerNode
     internal Task<GmPingReply> GmPingAsync(GmPingRequest request, CancellationToken stop) =>
         ForwardGmPingAsync(nameof(ProcessType.Router), request, stop);
 
-    private async Task<GmPingReply> RouteGmPingAsync(string from, GmPingRequest request, CancellationToken stop)
+    internal async Task<GmPingReply> RouteGmPingAsync(string from, GmPingRequest request, CancellationToken stop)
     {
         if (!Ready)
         {

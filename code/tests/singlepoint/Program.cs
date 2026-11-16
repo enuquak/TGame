@@ -18,6 +18,7 @@ const string LegacyProbeEntityId = "body-1";
 
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
 var stop = deadline.Token;
+await MessageDispatchChecks.RunAsync(stop);
 await DiagnosticChecks.VerifyDisabledAsync();
 SettingsChecks.Run();
 
@@ -34,7 +35,7 @@ foreach (var processType in Enum.GetValues<ProcessType>())
     }
 }
 
-var loginNode = new ServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint());
+var loginNode = new ServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint(), ServerMessages.Create());
 var loginInit = loginNode.InitializeAsync(stop);
 var router = new FrameStream();
 var routerLink = Open(loginNode, nameof(ProcessType.Router), router);
@@ -90,7 +91,7 @@ router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
 
 var point = new WaitingSinglePoint();
-var gate = new ServerNode(nameof(ProcessType.Gate), point, diagnosticsEnabled: true);
+var gate = new ServerNode(nameof(ProcessType.Gate), point, ServerMessages.Create(diagnosticsEnabled: true), diagnosticsEnabled: true);
 var initialization = gate.InitializeAsync(stop);
 if (point.Started.Task.IsCompleted)
 {
@@ -142,7 +143,7 @@ if (cancelling.Initialized)
     throw new Exception("Cancelled SinglePoint became ready.");
 }
 
-var routes = new ServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint());
+var routes = new ServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint(), ServerMessages.Create());
 var routerInit = routes.InitializeAsync(stop);
 var duplicateEntityId = Guid.NewGuid().ToString("N");
 string[][] invalidRegistrations = [[], [LegacyProbeEntityId], [duplicateEntityId, duplicateEntityId]];
@@ -277,12 +278,12 @@ foreach (var stream in neighbors.Values)
 await routing.WaitAsync(stop);
 await ExpectDiagnosticsRejected(new Frame { DiagnosticRequest = ByteString.CopyFromUtf8("invalid diagnostic payload") });
 await ExpectDiagnosticsRejected(new Frame { DiagnosticReply = ByteString.CopyFromUtf8("invalid diagnostic payload") });
-Console.WriteLine("PASS configuration, disabled diagnostics, independent GM protocol, GUID-only initialization and registration, Profile routing and authorization, handshake retry, WSS/gRPC gating, cancellation, disconnect and missing entity");
+Console.WriteLine("PASS registered dispatch, nested reply delivery, duplicate registration, bounded queue, configuration, disabled diagnostics, independent GM protocol, GUID-only initialization and registration, Profile routing and authorization, handshake retry, WSS/gRPC gating, cancellation, disconnect and missing entity");
 return 0;
 
 async Task ExpectDiagnosticsRejected(Frame frame)
 {
-    var normalNode = new ServerNode(nameof(ProcessType.Gate), new GateServerSinglePoint());
+    var normalNode = new ServerNode(nameof(ProcessType.Gate), new GateServerSinglePoint(), ServerMessages.Create());
     var stream = new FrameStream();
     var opened = Open(normalNode, nameof(ProcessType.Login), stream);
     stream.Input.Writer.TryWrite(frame);
@@ -291,7 +292,7 @@ async Task ExpectDiagnosticsRejected(Frame frame)
         await opened.WaitAsync(stop);
         throw new Exception("Disabled diagnostics accepted a peer frame.");
     }
-    catch (RpcException error) when (error.StatusCode == StatusCode.PermissionDenied)
+    catch (RpcException error) when (error.StatusCode == StatusCode.Unimplemented)
     {
     }
 }

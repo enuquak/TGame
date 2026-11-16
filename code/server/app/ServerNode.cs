@@ -7,7 +7,7 @@ using TGame.Transport;
 
 namespace TGame.Server;
 
-internal sealed partial class ServerNode(string role, ServerSinglePoint singlePoint, bool diagnosticsEnabled = false)
+internal sealed partial class ServerNode(string role, ServerSinglePoint singlePoint, MessageDispatcher messages, bool diagnosticsEnabled = false)
 {
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
@@ -129,6 +129,7 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
             // Keep receiving replies while a handler awaits its result.
             using var transport = CancellationTokenSource.CreateLinkedTokenSource(stop);
             var queue = Channel.CreateBounded<Frame>(new BoundedChannelOptions(RequestQueueCapacity) { SingleReader = true, SingleWriter = true });
+            var context = new MessageContext(this, peer, id, link);
             var read = ReadAsync();
             var serve = ServeAsync();
             var finished = await Task.WhenAny(read, serve);
@@ -149,7 +150,7 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
             {
                 await foreach (var frame in input.ReadAllAsync(transport.Token))
                 {
-                    ReceiveFrame(frame, link, queue.Writer);
+                    messages.Receive(frame, link, queue.Writer);
                 }
             }
 
@@ -157,7 +158,7 @@ internal sealed partial class ServerNode(string role, ServerSinglePoint singlePo
             {
                 await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
                 {
-                    await ServeFrameAsync(frame, peer, id, link, transport.Token);
+                    await messages.DispatchAsync(frame, context, transport.Token);
                 }
             }
         }

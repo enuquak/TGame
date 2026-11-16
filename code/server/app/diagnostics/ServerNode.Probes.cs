@@ -22,7 +22,7 @@ internal sealed partial class ServerNode
         app.MapGet(ProbePath, WebSocketAsync);
     }
 
-    private async Task<Pong> RouteAsync(string from, Ping ping, CancellationToken stop)
+    internal async Task<Pong> RouteAsync(string from, Ping ping, CancellationToken stop)
     {
         if (!Ready)
         {

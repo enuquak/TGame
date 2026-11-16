@@ -10,7 +10,7 @@ internal static class DiagnosticChecks
 {
     public static async Task VerifyDisabledAsync()
     {
-        var node = new ServerNode(nameof(ProcessType.Gate), new GateServerSinglePoint());
+        var node = new ServerNode(nameof(ProcessType.Gate), new GateServerSinglePoint(), ServerMessages.Create());
         await using var app = WebApplication.CreateSlimBuilder().Build();
         node.MapDiagnostics(app);
         if (((IEndpointRouteBuilder)app).DataSources.Any(source => source.Endpoints.Count > 0))
@@ -18,7 +18,7 @@ internal static class DiagnosticChecks
             throw new Exception("Normal startup registered diagnostic routes.");
         }
 
-        var enabled = new ServerNode(nameof(ProcessType.Gate), new GateServerSinglePoint(), diagnosticsEnabled: true);
+        var enabled = new ServerNode(nameof(ProcessType.Gate), new GateServerSinglePoint(), ServerMessages.Create(diagnosticsEnabled: true), diagnosticsEnabled: true);
         enabled.MapDiagnostics(app);
         var endpoints = ((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints);
         var routes = endpoints.OfType<RouteEndpoint>();
