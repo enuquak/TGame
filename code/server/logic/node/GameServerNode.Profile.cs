@@ -1,11 +1,11 @@
 using MongoDB.Driver;
 using TGame.Profile;
-using TGame.Server.Logic;
+using TGame.Server.Engine;
 using Result = TGame.Profile.ProfileReply.Types.Result;
 
-namespace TGame.Server;
+namespace TGame.Server.Logic;
 
-internal sealed partial class ServerNode
+internal sealed partial class GameServerNode
 {
     private const int MaxProfileEntityIdLength = 128;
     private const int MaxProfileTextLength = 80;
@@ -26,7 +26,7 @@ internal sealed partial class ServerNode
         }
         catch (Exception error) when (!stop.IsCancellationRequested && IsDeliveryFailure(error))
         {
-            TraceLog.Event(ServerLogEvents.ProfileDeliveryFailed, role, peer, request.RequestId, ProfileStore.Subject(request), detail: error.GetType().Name);
+            TraceLog.Event(ServerLogEvents.ProfileDeliveryFailed, Role, peer, request.RequestId, ProfileStore.Subject(request), detail: error.GetType().Name);
         }
 
         return new ProfileReply { RequestId = request.RequestId, EntityId = ProfileStore.Subject(request), Result = Result.Unavailable };
@@ -47,15 +47,17 @@ internal sealed partial class ServerNode
             return Failure(Result.Unavailable);
         }
 
-        if (!Guid.TryParseExact(request.RequestId, "N", out _) || subject.Length is 0 or > MaxProfileEntityIdLength ||
+        if (!Guid.TryParseExact(request.RequestId, "N", out _) ||
+            subject.Length is 0 or > MaxProfileEntityIdLength ||
             !Guid.TryParseExact(subject, "N", out _) ||
             (request.Publish is { } summary && (string.IsNullOrWhiteSpace(summary.DisplayName) ||
-                summary.DisplayName.Length > MaxProfileTextLength || summary.Title.Length > MaxProfileTextLength)))
+                summary.DisplayName.Length > MaxProfileTextLength ||
+                summary.Title.Length > MaxProfileTextLength)))
         {
             return Failure(Result.Rejected);
         }
 
-        if (role == nameof(ProcessType.Router))
+        if (Role == nameof(ProcessType.Router))
         {
             bool canAccessProfiles = from is nameof(ProcessType.Login) or nameof(ProcessType.Base) or nameof(ProcessType.Scene)
                 or nameof(ProcessType.DBMgr) or nameof(ProcessType.Profile);
@@ -79,7 +81,7 @@ internal sealed partial class ServerNode
         }
         catch (Exception error) when (error is MongoException or TimeoutException)
         {
-            TraceLog.Event(ServerLogEvents.ProfileDbError, role, id: request.RequestId, entity: subject, detail: error.GetType().Name);
+            TraceLog.Event(ServerLogEvents.ProfileDbError, Role, id: request.RequestId, entity: subject, detail: error.GetType().Name);
             return Failure(Result.Unavailable);
         }
     }

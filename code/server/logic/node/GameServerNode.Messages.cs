@@ -1,12 +1,13 @@
 using System.Threading.Channels;
 using Grpc.Core;
+using TGame.Server.Engine;
 using TGame.Transport;
 
-namespace TGame.Server;
+namespace TGame.Server.Logic;
 
-internal sealed partial class ServerNode
+internal sealed partial class GameServerNode
 {
-    private static void ReceiveFrame(Frame frame, PeerLink link, ChannelWriter<Frame> requests)
+    protected override void ReceiveFrame(Frame frame, PeerLink link, ChannelWriter<Frame> requests)
     {
         switch (frame.BodyCase)
         {
@@ -31,17 +32,17 @@ internal sealed partial class ServerNode
         }
     }
 
-    private async Task ServeFrameAsync(Frame frame, string peer, string id, PeerLink link, CancellationToken stop)
+    protected override async Task ServeFrameAsync(Frame frame, string peer, string id, PeerLink link, CancellationToken stop)
     {
         if (frame.ProfileRequest is { } request)
         {
-            TraceLog.Event(ServerLogEvents.ProfileRequestRx, role, peer, request.RequestId, ProfileStore.Subject(request), id);
+            TraceLog.Event(ServerLogEvents.ProfileRequestRx, Role, peer, request.RequestId, ProfileStore.Subject(request), id);
             await link.ReplyAsync(await RouteProfileAsync(peer, request, stop), stop);
             return;
         }
 
         var ping = frame.Ping;
-        TraceLog.Event(ServerLogEvents.PingRx, role, peer, ping.RequestId, ping.EntityId, id);
+        TraceLog.Event(ServerLogEvents.PingRx, Role, peer, ping.RequestId, ping.EntityId, id);
 
         try
         {
@@ -49,7 +50,7 @@ internal sealed partial class ServerNode
         }
         catch (Exception error) when (!stop.IsCancellationRequested)
         {
-            TraceLog.Event(ServerLogEvents.PingFailed, role, peer, ping.RequestId, ping.EntityId, id, error.Message);
+            TraceLog.Event(ServerLogEvents.PingFailed, Role, peer, ping.RequestId, ping.EntityId, id, error.Message);
             throw;
         }
     }

@@ -1,9 +1,9 @@
 using Grpc.Core;
 using TGame.Transport;
 
-namespace TGame.Server;
+namespace TGame.Server.Engine;
 
-internal sealed class LinkService(ServerNode node) : ServerLink.ServerLinkBase
+public sealed class LinkService(ServerNode node) : ServerLink.ServerLinkBase
 {
     public override Task Connect(IAsyncStreamReader<Frame> input, IServerStreamWriter<Frame> output, ServerCallContext context)
     {

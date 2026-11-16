@@ -1,4 +1,4 @@
-namespace TGame.Server;
+namespace TGame.Server.Engine;
 
 internal static class TransportProtocol
 {

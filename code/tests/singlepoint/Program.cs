@@ -8,11 +8,27 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using TGame;
 using TGame.Server;
+using TGame.Server.Engine;
 using TGame.Server.Logic;
 
 const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
 const string LegacyProbeEntityId = "body-1";
+
+var engineAssembly = typeof(Topology).Assembly;
+if (engineAssembly == typeof(ServerSinglePoint).Assembly)
+{
+    throw new Exception("Engine topology and business SinglePoint must be compiled into separate assemblies.");
+}
+
+Type[] engineTypes = [typeof(LinkService), typeof(ServerNode), typeof(PeerLink), typeof(ServiceRegistry)];
+foreach (var type in engineTypes)
+{
+    if (type.Assembly != engineAssembly)
+    {
+        throw new Exception($"{type.Name} must belong to the engine assembly.");
+    }
+}
 
 await MongoStorageChecks.RunAsync();
 
@@ -32,7 +48,7 @@ foreach (var processType in Enum.GetValues<ProcessType>())
     }
 }
 
-var loginNode = new ServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint());
+var loginNode = new GameServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint());
 var loginInit = loginNode.InitializeAsync(stop);
 var router = new FrameStream();
 var routerLink = Open(loginNode, nameof(ProcessType.Router), router);
@@ -88,7 +104,7 @@ router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
 
 var point = new WaitingSinglePoint();
-var gate = new ServerNode(nameof(ProcessType.Gate), point);
+var gate = new GameServerNode(nameof(ProcessType.Gate), point);
 var initialization = gate.InitializeAsync(stop);
 if (point.Started.Task.IsCompleted)
 {
@@ -140,7 +156,7 @@ if (cancelling.Initialized)
     throw new Exception("Cancelled SinglePoint became ready.");
 }
 
-var routes = new ServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint());
+var routes = new GameServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint());
 var routerInit = routes.InitializeAsync(stop);
 var duplicateEntityId = Guid.NewGuid().ToString("N");
 string[][] invalidRegistrations = [[], [LegacyProbeEntityId], [duplicateEntityId, duplicateEntityId]];

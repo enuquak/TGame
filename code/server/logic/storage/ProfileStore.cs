@@ -4,10 +4,10 @@ using MongoDB.Driver;
 using StackExchange.Redis;
 using TGame.Profile;
 using Result = TGame.Profile.ProfileReply.Types.Result;
-using TGame.Server.Logic;
+using TGame.Server.Engine;
 using TGame.Server.Storage;
 
-namespace TGame.Server;
+namespace TGame.Server.Logic;
 
 // The smoke host runs in the test namespace over the project's SSH tunnel.
 internal sealed class ProfileStore : IDisposable
