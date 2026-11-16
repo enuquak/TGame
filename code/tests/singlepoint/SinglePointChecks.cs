@@ -9,15 +9,16 @@ internal static class SinglePointChecks
         var registry = new SinglePointRegistry([]);
         foreach (var role in Enum.GetValues<ProcessType>())
         {
-            var state = new SinglePointState();
+            var state = new SinglePointState(TestIds.Generator);
             var singlePoint = registry.Create(role);
             if (singlePoint.GetType() != typeof(ServerSinglePoint))
             {
                 throw new Exception("A role without a business implementation must use the engine default SinglePoint.");
             }
 
-            await singlePoint.InitializeAsync(role.ToString(), state, CancellationToken.None);
-            if (!singlePoint.Initialized || !ReferenceEquals(singlePoint.State, state))
+            await singlePoint.InitializeAsync(role.ToString(), state, TestIds.Generator, CancellationToken.None);
+            if (!singlePoint.Initialized || !ReferenceEquals(singlePoint.State, state) ||
+                !ReferenceEquals(singlePoint.IdGenerator, TestIds.Generator))
             {
                 throw new Exception("The default SinglePoint must initialize with the engine's existing identity.");
             }

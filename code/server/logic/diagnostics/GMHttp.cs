@@ -18,12 +18,12 @@ internal static class GMHttp
     {
         app.MapPost(PingRoute, async (HttpContext http, string entityId) =>
         {
-            var requestId = Guid.NewGuid().ToString("N");
+            var requestId = node.IdGenerator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
             http.Response.Headers[RequestIdHeader] = requestId;
             http.Response.Headers.CacheControl = NoStoreCacheControl;
 
-            bool validId = Guid.TryParseExact(entityId, "N", out var id);
-            var target = validId ? id.ToString("N") : null;
+            bool validId = IdText.IsValid(entityId);
+            var target = validId ? entityId : null;
 
             var authorization = http.Request.Headers.Authorization;
             var gm = node.SinglePoint as GMServerSinglePoint;

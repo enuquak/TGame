@@ -50,7 +50,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 每个服务进程先完成引擎初始化（监听、ZooKeeper 注册和首次拓扑连接），再按 `SinglePointFor` 标注创建并初始化本进程的 SinglePoint。业务实现可选；没有注册实现的角色使用引擎 `ServerSinglePoint` 默认类。目前 DBMgr、Profile 和 GM 提供业务子类，其余角色使用默认类。`SINGLE_POINT_INIT` 与 `SINGLE_POINT_READY` 记录初始化的开始与成功，均带实际类名和 EntityId。`LINKS_READY` 单独记录所有预期实例连接齐备。每种类型的首个实例收到定向探针；所有实例核对拓扑连接，以及在全部 Router 实例的位置登记。
 
-引擎提前生成并登记本进程的 EntityId，随后创建的 SinglePoint 复用同一份身份。Router 只接受非空、无重复的 GUID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。联通脚本从本轮启动日志读取实际 EntityId 来生成测试用例，正式流程不再登记或依赖固定的测试 ID，旧版固定 ID 请求也不再接受。
+引擎提前生成并登记本进程的 EntityId，随后创建的 SinglePoint 复用同一份身份。Router 只接受非空、无重复的 雪花 ID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。联通脚本从本轮启动日志读取实际 EntityId 来生成测试用例，正式流程不再登记或依赖固定的测试 ID，旧版固定 ID 请求也不再接受。
 
 Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[本地环境配置](code/server/config/server.local.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
 
@@ -66,6 +66,8 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 
 服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类、业务节点 `GameServerNode`、Profile 和诊断处理位于 `code/server/logic/`；宿主负责提供业务类型集合、组装节点并按两个阶段启动服务。引擎可以单独构建，不引用宿主或业务实现。
 
+唯一 ID 统一调用引擎的 `idGenerator.GenId()`，使用雪花算法；ZooKeeper 自动分配进程编号，引擎与业务共用生成器。请求、实体、连接和缓存占用标记均已接入，详见[雪花 ID](docs/雪花ID.md)。
+
 共享的日志格式与 WebSocket 读帧分别属于 `TGame.Logging`、`TGame.Transport`，探针数据放在 `code/tests/fixtures/`。连接服务与通用 RPC 帧定义在 [transport.proto](code/shared/protocols/transport.proto)，请求与响应通过 Protobuf `Any` 承载。`RpcDispatcher` 根据消息类型分发，`logic/messages/ServerMessages.cs` 注册 Profile、GM 和可选诊断处理器；GM 使用独立的 [gm.proto](code/shared/protocols/gm.proto)。协议构建时生成到 `code/shared/generated/protocols/`。
 
 内部 gRPC 服务为 `tgame.transport.ServerLink`，服务发现采用固定的 `server-<实例名>` 节点；各进程须使用统一重新构建的版本，不能混用仍带运行 ID 的旧构建。控制台的“编译并重启”和验收脚本都会统一构建、启动各角色。强制终止后若 ZooKeeper 会话尚未过期，新进程会起服失败，待旧节点消失后再启动。可运行 `dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --registry` 检查节点冲突与正常退出后的重新注册；该检查需要 ZooKeeper 隧道。Ping/Pong 验收脚本及历史日志目录继续保留测试名称。
@@ -80,7 +82,7 @@ DBMgr 使用 [dbmgr-storage.yaml](code/server/config/dbmgr-storage.yaml) 配置 
 
 ### GM 管理入口
 
-本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的 32 位十六进制 EntityId。返回的 `requestId` 可关联 GM 审计和 gRPC 收发日志。
+本地 GM 监听随机回环端口。管理工具调用 `POST /gm/commands/ping/{entityId}`，携带 `Authorization: Bearer <token>`。目标使用 Router 已登记的 十进制雪花 EntityId。返回的 `requestId` 可关联 GM 审计和 gRPC 收发日志。
 
 自动验收默认生成一次性随机令牌。手动验收时先设置 `TGAME_GM_TOKEN`（至少 32 个字符的随机令牌）和 `TGAME_GM_OPERATOR`（该凭据对应的操作员），以 `-Hold` 运行脚本，从控制台取得 GM 地址。用 `Read-PingPongLog.ps1 -RunDirectory <本轮验收目录> -Role Scene1 -Event SINGLE_POINT_INIT` 读取目标 EntityId。在另一终端中使用相同令牌执行：
 

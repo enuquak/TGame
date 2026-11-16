@@ -16,7 +16,7 @@ internal sealed partial class GameServerNode
         }
 
         var expectedSender = Role == nameof(ProcessType.Router) ? nameof(ProcessType.GM) : nameof(ProcessType.Router);
-        if (!Guid.TryParseExact(request.RequestId, "N", out _) || !Guid.TryParseExact(request.EntityId, "N", out _) || PeerRole(from) != expectedSender)
+        if (!IdText.IsValid(request.RequestId) || !IdText.IsValid(request.EntityId) || PeerRole(from) != expectedSender)
         {
             throw new InvalidDataException("Invalid GM entity ping or ingress.");
         }

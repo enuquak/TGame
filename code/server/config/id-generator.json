@@ -1,0 +1,5 @@
+{
+  "WorkerRootPath": "/tgame/id-workers",
+  "SessionTimeoutMilliseconds": 10000,
+  "ConnectTimeoutMilliseconds": 10000
+}

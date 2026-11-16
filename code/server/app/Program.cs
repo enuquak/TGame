@@ -44,7 +44,9 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
     var builder = WebApplication.CreateSlimBuilder();
     var messages = new RpcDispatcher();
-    using var node = new GameServerNode(process.Name, group, messages, diagnosticsEnabled);
+    var idOptions = IdGeneratorOptions.Load(Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName), settings.ZooKeeper);
+    await using var idGenerator = await SnowflakeIdGenerator.CreateAsync(idOptions);
+    using var node = new GameServerNode(process.Name, group, messages, idGenerator, diagnosticsEnabled);
     ServerMessages.Register(messages, node, diagnosticsEnabled);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
@@ -66,6 +68,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     }));
     builder.Services.AddGrpc();
     builder.Services.AddSingleton<ServerNode>(node);
+    builder.Services.AddSingleton<IIdGenerator>(idGenerator);
 
     await using var app = builder.Build();
     if (processType == ProcessType.Gate)
@@ -104,6 +107,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
         workers.Add(SuperviseAsync(InitializeAsync()));
         workers.Add(SuperviseAsync(WatchStopAsync()));
+        workers.Add(SuperviseAsync(WatchIdLeaseAsync()));
         await Task.WhenAll(workers);
 
         async Task InitializeAsync()
@@ -134,6 +138,12 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     {
         lifetime.Cancel();
         await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
+    }
+
+    async Task WatchIdLeaseAsync()
+    {
+        await idGenerator.LeaseLost.WaitAsync(stop);
+        throw new InvalidOperationException("The ID generator lost its ZooKeeper session.");
     }
 
     async Task WatchStopAsync()

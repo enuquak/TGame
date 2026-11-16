@@ -14,5 +14,6 @@
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <Content Include="../config/server.local.yaml" Link="config/server.local.yaml" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../config/dbmgr-storage.yaml" Link="config/dbmgr-storage.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../config/id-generator.json" Link="config/id-generator.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

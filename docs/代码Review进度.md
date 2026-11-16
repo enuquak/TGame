@@ -4,7 +4,7 @@
 
 ## 多实例功能续读
 
-- 多实例改动来自 `codex/engine-multiple-instances`，已整合引擎优先初始化、可选 SinglePoint、移除 runId，以及通用 RPC、消息处理器和环境配置；继续使用 `codex/server-review-snapshot` 阅读。
+- 多实例改动来自 `codex/engine-multiple-instances`，已整合引擎优先初始化、可选 SinglePoint、移除 runId，以及通用 RPC、消息处理器、环境配置和雪花 ID；继续使用 `codex/server-review-snapshot` 阅读。
 - 配置从角色列表改为各类型的实例数量；各实例按名称分别注册 ZooKeeper、握手和维护连接。拓扑按配置展开全部预期入站及出站实例，缺少任何一个都不能就绪，断线后撤销当前就绪状态。
 - 实例名称统一从 1 开始带编号：`"Router": 2` 对应 `Router1`、`Router2`，`"Base": 1` 对应 `Base1`；角色名仍分别为 `Router`、`Base`。原无编号运行组需要停止后重新启动。
 - 建议依次补读 [ServerGroup.cs](../code/shared/configuration/ServerGroup.cs)、[Topology.cs](../code/server/engine/Topology.cs)、[ServiceRegistry.cs](../code/server/engine/ServiceRegistry.cs)、[ServerNode.cs](../code/server/engine/ServerNode.cs)，再看 [Program.cs](../code/server/app/Program.cs) 的配置快照读取和启动参数。

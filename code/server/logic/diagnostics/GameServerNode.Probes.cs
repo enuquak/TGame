@@ -31,9 +31,9 @@ internal sealed partial class GameServerNode
         }
 
         var gateLocal = ping.Entry == nameof(ProcessType.Gate) && Role == nameof(ProcessType.Gate) && ping.EntityId == State.EntityId;
-        if (!Guid.TryParseExact(ping.RequestId, "N", out _) ||
+        if (!IdText.IsValid(ping.RequestId) ||
             (!gateLocal && ping.Entry is not (nameof(ProcessType.Base) or nameof(ProcessType.Login))) ||
-            !Guid.TryParseExact(ping.EntityId, "N", out _) ||
+            !IdText.IsValid(ping.EntityId) ||
             (ping.Storage && ping.Entry != nameof(ProcessType.Base)))
         {
             throw new InvalidDataException("Invalid ping.");
@@ -122,7 +122,7 @@ internal sealed partial class GameServerNode
         }
 
         using var ws = await context.WebSockets.AcceptWebSocketAsync();
-        string link = context.Connection.Id;
+        string link = IdGenerator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         while (await WebSocketFrames.ReadAsync(ws, context.RequestAborted) is { } bytes)
         {
@@ -142,7 +142,7 @@ internal sealed partial class GameServerNode
     {
         var request = ping.ProfileRequest;
         var subject = ProfileStore.Subject(request);
-        if (request.RequestId != ping.RequestId || !Guid.TryParseExact(subject, "N", out _))
+        if (request.RequestId != ping.RequestId || !IdText.IsValid(subject))
         {
             throw new InvalidDataException("Invalid diagnostic Profile request.");
         }

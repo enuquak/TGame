@@ -103,7 +103,7 @@ foreach ($role in $expectedRoles)
 
     # Multiple route cases may now target the same real SinglePoint.
     $requiresProbe = $role -ceq (Get-FirstInstanceName $point[0].role)
-    if (!$type -or $id -cnotmatch '^[0-9a-f]{32}$' -or $routes.Count -ne ([int]$routed * $routerCount) -or ($requiresProbe -and $probes.Count -lt 1))
+    if (!$type -or (![TGame.IdText]::IsValid($id) -and $id -cnotmatch '^[0-9a-f]{32}$') -or $routes.Count -ne ([int]$routed * $routerCount) -or ($requiresProbe -and $probes.Count -lt 1))
     {
         throw "Incomplete SinglePoint initialization, registration or probe evidence for $role."
     }
@@ -216,6 +216,11 @@ $gateSessions = @($records | Where-Object { $_.role -eq ([TGame.ProcessType]::Ga
 if ($gateSessions.Count -ne 1 -or !$gateSessions[0])
 {
     throw 'Expected one WSS connection across both rounds.'
+}
+
+if ($RequireLifecycle -and ![TGame.IdText]::IsValid($gateSessions[0]))
+{
+    throw 'A new WSS connection must use a Snowflake ID.'
 }
 
 foreach ($case in $cases)

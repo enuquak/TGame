@@ -44,7 +44,7 @@ internal static class GroupChecks
                 failed.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Base), 1) });
                 try
                 {
-                    await gate.RunLinkAsync(peer.Name, Guid.NewGuid().ToString("N"), [], failed, failed, stop);
+                    await gate.RunLinkAsync(peer.Name, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], failed, failed, stop);
                     throw new Exception("A handshake from a different instance was accepted.");
                 }
                 catch (IOException)
@@ -152,7 +152,7 @@ internal static class GroupChecks
         Task Open(string peer, FrameStream stream)
         {
             stream.Input.Writer.TryWrite(new Frame { Hello = peer });
-            return gate.RunLinkAsync(peer, Guid.NewGuid().ToString("N"), [], stream, stream, stop);
+            return gate.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
         }
     }
 
@@ -251,7 +251,7 @@ internal static class GroupChecks
             var stream = new FrameStream();
             streams[peer] = stream;
             stream.Input.Writer.TryWrite(new Frame { Hello = peer });
-            tasks[peer] = node.RunLinkAsync(peer, Guid.NewGuid().ToString("N"), [], stream, stream, stop);
+            tasks[peer] = node.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
         }
     }
 
@@ -264,11 +264,11 @@ internal static class GroupChecks
         foreach (var peer in Topology.Peers(group, router.Name))
         {
             var stream = new FrameStream();
-            var entity = Guid.NewGuid().ToString("N");
+            var entity = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
             streams.Add(peer, stream);
             ids.Add(peer, entity);
             stream.Input.Writer.TryWrite(new Frame { Hello = peer });
-            tasks.Add(router.RunLinkAsync(peer, Guid.NewGuid().ToString("N"), [entity], stream, stream, stop));
+            tasks.Add(router.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [entity], stream, stream, stop));
             await stream.Output.Reader.ReadAsync(stop);
         }
 
@@ -279,7 +279,7 @@ internal static class GroupChecks
         var profile = streams[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
         var request = new ProfileRequest
         {
-            RequestId = Guid.NewGuid().ToString("N"),
+            RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
             Publish = new EntitySummary { EntityId = ids[secondBase], DisplayName = "Group check", Title = "Owner" }
         };
         publisher.Input.Writer.TryWrite(RpcFrames.Request(request));
@@ -302,7 +302,7 @@ internal static class GroupChecks
 
         var firstBase = streams[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
         var foreign = request.Clone();
-        foreign.RequestId = Guid.NewGuid().ToString("N");
+        foreign.RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
         firstBase.Input.Writer.TryWrite(RpcFrames.Request(foreign));
         if ((await firstBase.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Rejected ||
             profile.Output.Reader.TryRead(out _))
@@ -315,7 +315,7 @@ internal static class GroupChecks
         var receiver = streams[thirdBase];
         var ping = new TGame.Diagnostics.Ping
         {
-            RequestId = Guid.NewGuid().ToString("N"), EntityId = ids[thirdBase], Entry = nameof(ProcessType.Login)
+            RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), EntityId = ids[thirdBase], Entry = nameof(ProcessType.Login)
         };
         caller.Input.Writer.TryWrite(RpcFrames.Request(ping));
         if ((await receiver.Output.Reader.ReadAsync(stop)).ReadRequest<TGame.Diagnostics.Ping>().RequestId != ping.RequestId)

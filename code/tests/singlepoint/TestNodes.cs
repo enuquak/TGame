@@ -12,7 +12,7 @@ internal static class TestNodes
     public static GameServerNode Create(string name, ServerGroup group, bool diagnosticsEnabled = true)
     {
         var messages = new RpcDispatcher();
-        var node = new GameServerNode(name, group, messages, diagnosticsEnabled);
+        var node = new GameServerNode(name, group, messages, TestIds.Generator, diagnosticsEnabled);
         ServerMessages.Register(messages, node, diagnosticsEnabled);
         return node;
     }
