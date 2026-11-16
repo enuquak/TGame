@@ -12,6 +12,21 @@ const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
 const string InvalidEntityId = "body-1";
 
+if (args is ["--profile-storage", var profileIdConfig])
+{
+    using var profileDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    try
+    {
+        await ProfileStorageChecks.RunAsync(profileIdConfig, profileDeadline.Token);
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error);
+        return 1;
+    }
+}
+
 if (args is ["--profile"])
 {
     using var profileDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
