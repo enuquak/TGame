@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using TGame;
+using TGame.Server.Engine;
 using TGame.Server.Logic;
 using TGame.Server.Storage;
 
@@ -64,7 +65,7 @@ internal static class MongoStorageChecks
             using (var missingCredential = new DBMgrServerSinglePoint())
             {
                 await ExpectAsync<InvalidOperationException>(() => missingCredential.InitializeAsync(
-                    nameof(ProcessType.DBMgr), _ => { }, Task.CompletedTask, CancellationToken.None));
+                    nameof(ProcessType.DBMgr), new SinglePointState(), CancellationToken.None));
                 if (missingCredential.Initialized)
                 {
                     throw new Exception("DBMgr became ready without its own credential.");
@@ -75,7 +76,7 @@ internal static class MongoStorageChecks
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
             using var unavailable = new DBMgrServerSinglePoint();
             await ExpectAsync<TimeoutException>(() => unavailable.InitializeAsync(
-                nameof(ProcessType.DBMgr), _ => { }, Task.CompletedTask, deadline.Token));
+                nameof(ProcessType.DBMgr), new SinglePointState(), deadline.Token));
             if (unavailable.Initialized)
             {
                 throw new Exception("DBMgr became ready before its database connection check succeeded.");

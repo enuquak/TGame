@@ -28,11 +28,11 @@ internal static class GroupConfigChecks
 
         var groupFile = Path.Combine(root, ServerGroup.ConfigurationPath);
         var group = ServerGroup.Load(groupFile);
-        var runId = Guid.NewGuid().ToString("N");
+        var sessionName = Guid.NewGuid().ToString("N");
         var sessions = Path.Combine(root, "logs/tools/server-console");
-        var run = Directory.CreateDirectory(Path.Combine(sessions, runId)).FullName;
+        var run = Directory.CreateDirectory(Path.Combine(sessions, sessionName)).FullName;
         File.WriteAllText(Path.Combine(run, ServerRunFiles.ConsoleMode), "");
-        File.WriteAllText(Path.Combine(sessions, "current"), runId);
+        File.WriteAllText(Path.Combine(sessions, "current"), sessionName);
         group.Save(Path.Combine(run, ServerGroup.FileName));
         counts[nameof(ProcessType.Login)] = 1;
         counts[nameof(ProcessType.Base)] = 1;
@@ -66,7 +66,7 @@ internal static class GroupConfigChecks
         File.WriteAllText(groupFile, valid);
 
         // Older console runs recorded instance apphosts but had no group configuration snapshot.
-        var oldSnapshot = Directory.CreateDirectory(Path.Combine(root, "build/server-console/runs", runId)).FullName;
+        var oldSnapshot = Directory.CreateDirectory(Path.Combine(root, "build/server-console/runs", sessionName)).FullName;
         foreach (var type in Enum.GetValues<ProcessType>())
         {
             File.WriteAllText(Path.Combine(oldSnapshot, type + "Server.exe"), "");

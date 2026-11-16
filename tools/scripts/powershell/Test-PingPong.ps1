@@ -22,8 +22,8 @@ $profileRole = [TGame.ProcessType]::Profile.ToString()
 $gmRole = [TGame.ProcessType]::GM.ToString()
 
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
-$runId = [guid]::NewGuid().ToString('N')
-$runDir = Join-Path $root "logs/tools/pingpong/$runId"
+$directoryName = [datetime]::UtcNow.ToString('yyyyMMdd-HHmmss-fffffff', [cultureinfo]::InvariantCulture)
+$runDir = Join-Path $root "logs/tools/pingpong/$directoryName"
 $serverRoot = Join-Path $root 'logs/server'
 $readLog = Join-Path $PSScriptRoot 'Read-PingPongLog.ps1'
 $null = New-Item -ItemType Directory -Path $runDir
@@ -113,12 +113,7 @@ try
         }
     }
 
-    @{
-        runId = $runId
-        serverRoot = [IO.Path]::GetRelativePath($runDir,$serverRoot)
-        roles = $roles
-    } |
-        ConvertTo-Json | Set-Content -LiteralPath "$runDir/server-logs.json" -Encoding utf8
+    $processes = @{}
 
     foreach ($role in $roles)
     {
@@ -158,7 +153,17 @@ try
         }
 
         $children[$role] = Start-Process @launch
+        $processes[$role] = @{
+            pid = $children[$role].Id
+            startedUtcTicks = $children[$role].StartTime.ToUniversalTime().Ticks
+        }
     }
+
+    @{
+        serverRoot = [IO.Path]::GetRelativePath($runDir,$serverRoot)
+        processes = $processes
+    } |
+        ConvertTo-Json -Depth $caseJsonDepth | Set-Content -LiteralPath "$runDir/server-logs.json" -Encoding utf8
 
     $deadline = [datetime]::UtcNow.AddSeconds($startupTimeoutSeconds)
     do

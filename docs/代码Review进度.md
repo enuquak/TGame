@@ -4,32 +4,39 @@
 
 ## 多实例功能续读
 
-- 多实例改动位于独立事项分支 `codex/engine-multiple-instances`，基于 `37144a8` 的引擎分层版本；原工作区其他 agent 正在进行的 SinglePoint、运行标识等重构未包含在本分支，需要后续整合。
+- 多实例改动来自 `codex/engine-multiple-instances`，已整合 `f68c5bc` 的引擎优先初始化、可选 SinglePoint 和移除 runId 改动；目标为当前续读分支 `codex/server-review-snapshot`。
 - 配置从角色列表改为各类型的实例数量；各实例按名称分别注册 ZooKeeper、握手和维护连接。拓扑按配置展开全部预期入站及出站实例，缺少任何一个都不能就绪，断线后撤销当前就绪状态。
 - 实例名称统一从 1 开始带编号：`"Router": 2` 对应 `Router1`、`Router2`，`"Base": 1` 对应 `Base1`；角色名仍分别为 `Router`、`Base`。原无编号运行组需要停止后重新启动。
 - 建议依次补读 [ServerGroup.cs](../code/shared/configuration/ServerGroup.cs)、[Topology.cs](../code/server/engine/Topology.cs)、[ServiceRegistry.cs](../code/server/engine/ServiceRegistry.cs)、[ServerNode.cs](../code/server/engine/ServerNode.cs)，再看 [Program.cs](../code/server/app/Program.cs) 的配置快照读取和启动参数。
 - 验收行为见 [GroupChecks.cs](../code/tests/singlepoint/GroupChecks.cs)，配置与运行方式见 [服务器组配置](服务器组配置.md)。这些文件尚未被用户确认读完。
-- 已验证：解决方案编译零警告、零错误；每种类型 2 个实例的真实 ZooKeeper/gRPC 验收通过（16 个进程、36 条连接）；控制台完成 Router2 停止/补起、配置快照恢复和增加实例后的整组重启（17 个实例）；默认配置 BAT 验收成功，重复配置键返回非零退出码。
+- 合并前多实例分支已验证：解决方案编译零警告、零错误；每种类型 2 个实例的真实 ZooKeeper/gRPC 验收通过（16 个进程、36 条连接）；控制台完成 Router2 停止/补起、配置快照恢复和增加实例后的整组重启（17 个实例）；默认配置 BAT 验收成功，重复配置键返回非零退出码。
 
 ## 换机器后的续读入口
 
 - 继续阅读的分支：`codex/server-review-snapshot`；引擎分层改动已按用户要求从 `codex/server-engine-boundary` 合入，后续 Review 调整继续在此分支进行。
 - 原阅读进度基于代码提交 `4835f8d`。本次按用户要求将进程拓扑与连接管理迁入引擎，具体 SinglePoint 保留在业务层，以下链接已随迁移更新；不据此增加“已读”状态。
-- 当前阶段：已读完服务器启动、角色初始化、服务发现和连接管理；下一阶段阅读消息收发与 Profile 请求处理。
+- 当前阶段：旧版本的服务器启动、角色初始化、服务发现和连接管理已读；本次将 SinglePoint 基础能力迁入引擎，业务实现改为可选，并改成先初始化引擎、再创建和初始化 SinglePoint。先复读这些改动，再继续消息收发与 Profile 请求处理；本次不增加“已读”状态。
 - 最近一次明确确认：用户于 2026-11-14 表示上一轮推荐的文件已经看完。随后推荐的消息处理文件尚未确认读完。
 - 下面的“已读”表示用户确认完成阅读，不表示这些文件已通过完整的正确性、安全或性能审查。
+- 本次移除起服 `runId`：ZooKeeper 使用固定的 `/tgame/test/server-<实例名>`，重复注册直接起服失败；日志按 PID 和进程启动时间定位。补读 `ServiceRegistry.RegisterAsync`、`Program.cs` 的注册异常退出流程，以及 `TraceLog.OpenServer`；不增加“已读”状态。
 
 ## 已阅读
 
 - [x] [Program.cs](../code/server/app/Program.cs)：启动参数、宿主配置、角色创建、初始化与注册、任务监督、退出清理。
-- [x] [ServerSinglePoint.cs](../code/server/logic/entities/ServerSinglePoint.cs)：公共初始化流程、等待连接、角色初始化与就绪标记。
+- [x] [ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：旧版公共初始化已读；当前移入引擎并作为默认实现，复用引擎身份，不再负责等待连接，变更待复读。
 - [x] [DBMgrServerSinglePoint.cs](../code/server/logic/entities/dbMgrServerSinglePoint/DBMgrServerSinglePoint.cs)：具体角色的初始化与资源释放。
-- [x] [SinglePointRegistry.cs](../code/server/app/SinglePointRegistry.cs)：通过角色标注收集、校验并创建业务类型。
+- [x] [SinglePointRegistry.cs](../code/server/engine/SinglePointRegistry.cs)：旧版标注注册已读；当前移入引擎，缺少业务实现时创建默认类，变更待复读。
 - [x] [Topology.cs](../code/server/engine/Topology.cs)：角色之间主动发起连接的关系。
 - [x] [ServiceRegistry.cs](../code/server/engine/ServiceRegistry.cs)：向 ZooKeeper 注册地址、发现其他角色、关闭注册连接。
 - [x] [ServerNode.cs](../code/server/engine/ServerNode.cs)：建立与维持连接、握手、连接状态和节点就绪条件；现为引擎基类。
 
 ## 下一步阅读顺序
+
+先复读本次调整：
+
+1. [Program.cs](../code/server/app/Program.cs)：`InitializeAsync` 中先 `InitializeEngineAsync`，再 `InitializeSinglePointAsync`；连接维护任务持续运行，业务初始化等待注册与首次连接完成。
+2. [ServerNode.cs](../code/server/engine/ServerNode.cs)：提前创建和登记 State，连接完成后才创建 SinglePoint，Ready 仍检查业务状态与当前连接，退出时释放业务资源。
+3. [SinglePointRegistry.cs](../code/server/engine/SinglePointRegistry.cs) 与 [ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：可选业务实现、默认类，以及构造/初始化失败不能回退。
 
 建议沿一次 Profile 摘要查询，跟踪请求发出、Router 转发、Profile 处理和响应返回。先读短小的协议与入口文件，再重点阅读 `PeerLink.cs`。
 
@@ -39,7 +46,7 @@
 | 待确认 | [profile.proto](../code/shared/protocols/profile.proto) | 理解请求 ID、发布/查询/撤回操作及响应结果。 |
 | 待确认 | [LinkService.cs](../code/server/engine/LinkService.cs) | 理解 gRPC 连接入口、来源检查和向 ServerNode 转交连接。 |
 | 待确认 | [PeerLink.cs](../code/server/engine/PeerLink.cs) | 按 CallAsync、WriteAsync、Receive、Close 阅读请求等待、响应匹配、超时与断线。 |
-| 待确认 | [GameServerNode.cs](../code/server/logic/node/GameServerNode.cs) | 理解业务节点如何继承引擎节点，并接入 SinglePoint 初始化。 |
+| 待确认 | [GameServerNode.cs](../code/server/logic/node/GameServerNode.cs) | 理解业务节点如何继承引擎节点；SinglePoint 生命周期已由引擎基类提供。 |
 | 待确认 | [GameServerNode.Messages.cs](../code/server/logic/node/GameServerNode.Messages.cs) | 理解请求进入队列、响应直接唤醒等待者，以及消息分发。 |
 | 待确认 | [PeerLink.Profile.cs](../code/server/logic/node/PeerLink.Profile.cs) | 理解业务扩展方法如何包装 Frame，以及响应实体校验。 |
 | 待确认 | [GameServerNode.Profile.cs](../code/server/logic/node/GameServerNode.Profile.cs) | 理解调用入口、Router 转发、来源/实体归属校验和存储调用。 |

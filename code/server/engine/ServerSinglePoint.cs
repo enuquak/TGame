@@ -1,31 +1,20 @@
-using TGame.Server.Model;
-using TGame.Server.Engine;
+namespace TGame.Server.Engine;
 
-namespace TGame.Server.Logic;
-
-[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-internal sealed class SinglePointForAttribute(ProcessType role) : Attribute
+public class ServerSinglePoint
 {
-    public ProcessType Role { get; } = role;
-}
-
-internal abstract class ServerSinglePoint
-{
-    public SinglePointState State { get; } = new();
+    public SinglePointState State { get; private set; } = null!;
 
     public bool Initialized => Volatile.Read(ref initialized);
     private bool initialized;
 
-    public async Task InitializeAsync(string role, Action<string> registerEntity, Task firstLinks, CancellationToken stop)
+    public async Task InitializeAsync(string role, SinglePointState state, CancellationToken stop)
     {
+        State = state;
         TraceLog.Event(ServerLogEvents.SinglePointInit, role, entity: State.EntityId, detail: GetType().Name);
 
         try
         {
             stop.ThrowIfCancellationRequested();
-            registerEntity(State.EntityId);
-
-            await firstLinks.WaitAsync(stop);
             await InitializeRoleAsync(stop);
             stop.ThrowIfCancellationRequested();
             Volatile.Write(ref initialized, true);

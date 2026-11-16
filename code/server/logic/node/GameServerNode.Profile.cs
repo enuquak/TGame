@@ -70,7 +70,7 @@ internal sealed partial class GameServerNode
             return await ForwardProfileAsync(ServerProcess.FormatName(nameof(ProcessType.Profile), 1), request, stop);
         }
 
-        if (singlePoint is not ProfileServerSinglePoint profile || PeerRole(from) != nameof(ProcessType.Router))
+        if (SinglePoint is not ProfileServerSinglePoint profile || PeerRole(from) != nameof(ProcessType.Router))
         {
             return Failure(Result.Rejected);
         }

@@ -16,9 +16,7 @@ internal static class GroupChecks
         counts[ProcessType.Login] = 2;
         counts[ProcessType.Base] = 3;
         var group = new ServerGroup(counts);
-        var point = new WaitingSinglePoint();
-        var gate = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), point, group);
-        var initialization = gate.InitializeAsync(stop);
+        using var gate = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
         var streams = new Dictionary<string, FrameStream>();
         var tasks = new List<Task>();
 
@@ -29,7 +27,7 @@ internal static class GroupChecks
             tasks.Add(Open(peer, stream));
         }
 
-        if (gate.FirstLinks.IsCompleted || point.Started.Task.IsCompleted)
+        if (gate.FirstLinks.IsCompleted || gate.SinglePoint is not null)
         {
             throw new Exception("Gate became ready after only 1 Login and 1 Base; configuration requires 2 Login and 3 Base.");
         }
@@ -53,7 +51,7 @@ internal static class GroupChecks
                 {
                 }
 
-                if (gate.FirstLinks.IsCompleted || point.Started.Task.IsCompleted)
+                if (gate.FirstLinks.IsCompleted || gate.SinglePoint is not null)
                 {
                     throw new Exception("A missing Base instance was replaced by another peer or a failed handshake.");
                 }
@@ -65,6 +63,9 @@ internal static class GroupChecks
         }
 
         await gate.FirstLinks.WaitAsync(stop);
+        var business = new SinglePointRegistry([typeof(WaitingSinglePoint)]);
+        var initialization = gate.InitializeSinglePointAsync(business, stop);
+        var point = (WaitingSinglePoint)gate.SinglePoint!;
         await point.Started.Task.WaitAsync(stop);
         if (gate.Ready)
         {
@@ -107,9 +108,8 @@ internal static class GroupChecks
         await Task.WhenAll(tasks).WaitAsync(stop);
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        var cancelledPoint = new WaitingSinglePoint();
-        var cancelledNode = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), cancelledPoint, group);
-        var cancelledInit = cancelledNode.InitializeAsync(cancellation.Token);
+        using var cancelledNode = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
+        var cancelledInit = cancelledNode.FirstLinks.WaitAsync(cancellation.Token);
         cancellation.Cancel();
         try
         {
@@ -120,15 +120,15 @@ internal static class GroupChecks
         {
         }
 
-        if (cancelledPoint.Initialized || cancelledNode.FirstLinks.IsCompleted)
+        if (cancelledNode.SinglePoint is not null || cancelledNode.FirstLinks.IsCompleted)
         {
             throw new Exception("Cancellation completed the first-links signal.");
         }
 
         var isolatedCounts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
         isolatedCounts[ProcessType.Router] = 1;
-        var isolated = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new RouterServerSinglePoint(), new ServerGroup(isolatedCounts));
-        await isolated.InitializeAsync(stop);
+        using var isolated = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new ServerGroup(isolatedCounts));
+        await isolated.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
         if (!isolated.Ready)
         {
             throw new Exception("A node with zero configured neighbors waited forever.");
@@ -182,11 +182,9 @@ internal static class GroupChecks
         counts[ProcessType.DBMgr] = 2;
 
         var group = new ServerGroup(counts);
-        var point = new WaitingSinglePoint();
         var name = ServerProcess.FormatName(nameof(ProcessType.Base), 2);
         var missing = ServerProcess.FormatName(nameof(ProcessType.Router), 2);
-        var node = new GameServerNode(name, point, group);
-        var initialization = node.InitializeAsync(stop);
+        using var node = new GameServerNode(name, group);
         var peers = Topology.Peers(group, name);
         var streams = new Dictionary<string, FrameStream>();
         var tasks = new Dictionary<string, Task>();
@@ -209,21 +207,19 @@ internal static class GroupChecks
             Open(peer);
         }
 
-        if (node.FirstLinks.IsCompleted || point.Started.Task.IsCompleted || node.Ready)
+        if (node.FirstLinks.IsCompleted || node.SinglePoint is not null || node.Ready)
         {
             throw new Exception("Base initialized with the second configured Router still missing.");
         }
 
         Open(missing);
         await node.FirstLinks.WaitAsync(stop);
-        await point.Started.Task.WaitAsync(stop);
         if (node.Ready)
         {
             throw new Exception("Topology readiness skipped Base business initialization.");
         }
 
-        point.Release.SetResult();
-        await initialization.WaitAsync(stop);
+        await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
         if (!node.Ready)
         {
             throw new Exception("Base did not become ready with both Routers and every other expected peer.");
@@ -261,8 +257,7 @@ internal static class GroupChecks
 
     private static async Task CheckRoutingAsync(ServerGroup group, CancellationToken stop)
     {
-        var router = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new RouterServerSinglePoint(), group);
-        var initialization = router.InitializeAsync(stop);
+        using var router = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
         var streams = new Dictionary<string, FrameStream>();
         var ids = new Dictionary<string, string>();
         var tasks = new List<Task>();
@@ -277,7 +272,8 @@ internal static class GroupChecks
             await stream.Output.Reader.ReadAsync(stop);
         }
 
-        await initialization.WaitAsync(stop);
+        await router.FirstLinks.WaitAsync(stop);
+        await router.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
         var secondBase = ServerProcess.FormatName(nameof(ProcessType.Base), 2);
         var publisher = streams[secondBase];
         var profile = streams[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];

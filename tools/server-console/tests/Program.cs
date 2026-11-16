@@ -29,6 +29,7 @@ try
 
     await session.StartAsync();
     await UntilAsync("all SinglePoints ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    await CheckDuplicateRegistrationAsync();
     var pids = session.Instances.ToDictionary(i => i.Name, i => i.Pid);
     using (var reopened = new ConsoleSession(checkout))
     {
@@ -193,3 +194,59 @@ async Task UntilAsync(string stage, Func<bool> condition)
 
 static bool HasEvent(ServerInstance instance, string name) =>
     instance.Lines.Any(line => line.Contains($"\"{ServerLogFields.Event}\":\"{name}\"", StringComparison.Ordinal));
+
+async Task CheckDuplicateRegistrationAsync()
+{
+    const int DuplicateExitTimeoutSeconds = 10;
+    var role = nameof(ProcessType.Router);
+    var name = ServerProcess.FormatName(role, 1);
+    var router = session.Instances.Single(i => i.Name == name);
+    using var original = Process.GetProcessById(router.Pid!.Value);
+    var directory = Directory.CreateDirectory(Path.Combine(checkout, "duplicate-registration")).FullName;
+    File.Copy(Path.Combine(checkout, ServerGroup.ConfigurationPath), Path.Combine(directory, ServerGroup.FileName), true);
+    foreach (bool consoleMode in new[] { false, true })
+    {
+        if (consoleMode)
+        {
+            File.WriteAllText(Path.Combine(directory, ServerRunFiles.ConsoleMode), "");
+        }
+
+        var info = new ProcessStartInfo(original.MainModule!.FileName)
+        {
+            WorkingDirectory = checkout,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true
+        };
+        info.ArgumentList.Add(name);
+        info.ArgumentList.Add(directory);
+        info.Environment[ServerEnvironment.LogRoot] = Path.Combine(directory, "logs");
+
+        using var duplicate = Process.Start(info)!;
+        var error = duplicate.StandardError.ReadToEndAsync();
+        try
+        {
+            await duplicate.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(DuplicateExitTimeoutSeconds));
+            if (duplicate.ExitCode != 1 || !(await error).Contains($"ZooKeeper node '/tgame/test/server-{name}' already exists."))
+            {
+                throw new InvalidOperationException("Duplicate startup must report the occupied path and exit with code 1 in both modes.");
+            }
+        }
+        finally
+        {
+            if (!duplicate.HasExited)
+            {
+                duplicate.Kill();
+                await duplicate.WaitForExitAsync();
+            }
+        }
+    }
+
+    session.Refresh();
+    if (original.HasExited || router.Status != ServerStatus.Ready)
+    {
+        throw new InvalidOperationException("A rejected duplicate disrupted the existing Router.");
+    }
+
+    Console.WriteLine("PASS duplicate Router startup fails in console and non-console modes without disturbing the owner.");
+}

@@ -14,7 +14,7 @@ internal static class GMHttp
     private const string NoStoreCacheControl = "no-store";
     private const string UnauthenticatedActor = "unauthenticated";
 
-    public static void Map(WebApplication app, GameServerNode node, GMServerSinglePoint gm)
+    public static void Map(WebApplication app, GameServerNode node)
     {
         app.MapPost(PingRoute, async (HttpContext http, string entityId) =>
         {
@@ -26,13 +26,14 @@ internal static class GMHttp
             var target = validId ? id.ToString("N") : null;
 
             var authorization = http.Request.Headers.Authorization;
-            bool authenticated = gm.TokenHash is { } tokenHash && authorization.Count == 1 && AuthenticationHeaderValue.TryParse(authorization[0], out var auth)
+            var gm = node.SinglePoint as GMServerSinglePoint;
+            bool authenticated = gm?.TokenHash is { } tokenHash && authorization.Count == 1 && AuthenticationHeaderValue.TryParse(authorization[0], out var auth)
                 && auth.Scheme.Equals(AuthenticationScheme, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(auth.Parameter)
                 && CryptographicOperations.FixedTimeEquals(tokenHash, SHA256.HashData(Encoding.UTF8.GetBytes(auth.Parameter)));
 
             IResult Finish(int status, string? responder = null)
             {
-                TraceLog.Event(ServerLogEvents.GMCommand, node.Role, authenticated ? gm.Actor : UnauthenticatedActor, requestId, target,
+                TraceLog.Event(ServerLogEvents.GMCommand, node.Role, authenticated ? gm?.Actor : UnauthenticatedActor, requestId, target,
                     detail: $"ping {status}");
                 return Results.Json(new
                 {

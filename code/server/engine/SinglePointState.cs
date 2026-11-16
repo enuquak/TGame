@@ -1,6 +1,6 @@
-namespace TGame.Server.Model;
+namespace TGame.Server.Engine;
 
-internal sealed class SinglePointState
+public sealed class SinglePointState
 {
     public string EntityId { get; } = Guid.NewGuid().ToString("N");
 }

@@ -7,7 +7,8 @@ $ErrorActionPreference = 'Stop'
 $manifest = Join-Path $RunDirectory 'server-logs.json'
 if (Test-Path -LiteralPath $manifest)
 {
-    $roles = (Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json).roles
+    $layout = Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json
+    $roles = @($layout.processes.PSObject.Properties.Name)
 }
 else
 {
@@ -63,10 +64,9 @@ if ($profileCases.Count -ne (5 * [int]$hasProfile) -or $points.Count -ne $expect
     throw 'Unexpected case count, duplicate request ID or duplicate startup Entity.'
 }
 
-if ($points.Count -gt 1 -and (@($points.entity | Sort-Object -Unique).Count -ne $roles.Count -or
-        @($points.detail | Sort-Object -Unique).Count -ne $typeCount))
+if ($points.Count -gt 1 -and @($points.entity | Sort-Object -Unique).Count -ne $roles.Count)
 {
-    throw 'Expected distinct process Entity IDs and classes.'
+    throw 'Expected distinct process Entity IDs.'
 }
 
 $instances = @(foreach ($name in $roles)
@@ -132,6 +132,16 @@ $serverPids = foreach ($role in $roles)
             $rows.IndexOf($links[-1]) -ge $rows.IndexOf($complete[0]) -or $rows.IndexOf($complete[0]) -ge $rows.IndexOf($ready[0]))
         {
             throw "Missing or out-of-order link readiness for $role."
+        }
+
+        if ($RequireLifecycle)
+        {
+            $registered = @($rows | Where-Object ([TGame.ServerLogFields]::Event) -eq ([TGame.ServerLogEvents]::ZkRegister))
+            if ($registered.Count -ne 1 -or $rows.IndexOf($registered[0]) -ge $rows.IndexOf($init[0]) -or
+                $rows.IndexOf($complete[0]) -ge $rows.IndexOf($init[0]))
+            {
+                throw "SinglePoint initialized before ZooKeeper registration and topology connections completed for $role."
+            }
         }
     }
     else

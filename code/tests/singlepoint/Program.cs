@@ -7,7 +7,6 @@ using Grpc.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using TGame;
-using TGame.Server;
 using TGame.Server.Engine;
 using TGame.Server.Logic;
 
@@ -15,13 +14,30 @@ const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
 const string LegacyProbeEntityId = "body-1";
 
-var engineAssembly = typeof(Topology).Assembly;
-if (engineAssembly == typeof(ServerSinglePoint).Assembly)
+if (args is ["--registry"])
 {
-    throw new Exception("Engine topology and business SinglePoint must be compiled into separate assemblies.");
+    try
+    {
+        await ServiceRegistryChecks.RunAsync(TestStorage.Settings.Value.ZooKeeper);
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error);
+        return 1;
+    }
 }
 
-Type[] engineTypes = [typeof(LinkService), typeof(ServerNode), typeof(PeerLink), typeof(ServiceRegistry)];
+await SinglePointChecks.RunAsync();
+
+var engineAssembly = typeof(Topology).Assembly;
+if (engineAssembly == typeof(GameServerNode).Assembly)
+{
+    throw new Exception("Engine primitives and the business node must be compiled into separate assemblies.");
+}
+
+Type[] engineTypes = [typeof(LinkService), typeof(ServerNode), typeof(PeerLink), typeof(ServiceRegistry),
+    typeof(ServerSinglePoint), typeof(SinglePointState), typeof(SinglePointRegistry), typeof(SinglePointForAttribute)];
 foreach (var type in engineTypes)
 {
     if (type.Assembly != engineAssembly)
@@ -36,28 +52,14 @@ using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeou
 var stop = deadline.Token;
 var group = new ServerGroup(Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1));
 
-await GroupChecks.RunAsync(stop);
 
-foreach (var processType in Enum.GetValues<ProcessType>())
-{
-    var registeredIds = new List<string>();
-    var singlePoint = new WaitingSinglePoint();
-    singlePoint.Release.SetResult();
-
-    await singlePoint.InitializeAsync(processType.ToString(), registeredIds.Add, Task.CompletedTask, stop);
-    if (registeredIds.Count != 1 || registeredIds[0] != singlePoint.State.EntityId)
-    {
-        throw new Exception($"{processType} initialization registered IDs other than its own EntityId.");
-    }
-}
-
-var loginNode = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Login), 1), new LoginServerSinglePoint(), group);
-var loginInit = loginNode.InitializeAsync(stop);
+var defaults = new SinglePointRegistry([]);
+using var loginNode = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Login), 1), group);
 var router = new FrameStream();
 var routerLink = Open(loginNode, ServerProcess.FormatName(nameof(ProcessType.Router), 1), router);
 var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 var pendingGate = Open(loginNode, ServerProcess.FormatName(nameof(ProcessType.Gate), 1), new FrameStream { BeforeWrite = handshake.Task });
-if (await Task.WhenAny(loginInit, Task.Delay(HandshakeObservationMilliseconds, stop)) == loginInit)
+if (await Task.WhenAny(loginNode.FirstLinks, Task.Delay(HandshakeObservationMilliseconds, stop)) == loginNode.FirstLinks)
 {
     Console.Error.WriteLine("Login became available before it sent its handshake reply.");
     return 1;
@@ -78,7 +80,12 @@ if (loginNode.Ready)
 
 var retry = new FrameStream();
 var accepted = Open(loginNode, ServerProcess.FormatName(nameof(ProcessType.Gate), 1), retry);
-await loginInit.WaitAsync(stop);
+await loginNode.FirstLinks.WaitAsync(stop);
+await loginNode.InitializeSinglePointAsync(defaults, stop);
+if (!loginNode.Ready || loginNode.SinglePoint?.GetType() != typeof(ServerSinglePoint))
+{
+    throw new Exception("A connected role with no business SinglePoint did not become ready.");
+}
 
 var profileRequest = new ProfileRequest { RequestId = Guid.NewGuid().ToString("N"), Fetch = Guid.NewGuid().ToString("N") };
 var profileCall = loginNode.CallProfileAsync(profileRequest, stop);
@@ -106,18 +113,39 @@ retry.Input.Writer.Complete();
 router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
 
-var point = new WaitingSinglePoint();
-var gate = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), point, group);
-var initialization = gate.InitializeAsync(stop);
-if (point.Started.Task.IsCompleted)
+var business = new SinglePointRegistry([typeof(WaitingSinglePoint)]);
+using var gate = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
+try
 {
-    throw new Exception("Role initialization ran before the handshakes.");
+    await gate.InitializeSinglePointAsync(business, stop);
+    throw new Exception("SinglePoint initialization started before the engine was ready.");
+}
+catch (InvalidOperationException)
+{
+}
+
+if (WaitingSinglePoint.CreatedCount != 0 || gate.SinglePoint is not null)
+{
+    throw new Exception("A business SinglePoint was constructed before the handshakes.");
 }
 
 var login = new FrameStream();
 var basePeer = new FrameStream();
 var streams = Task.WhenAll(Open(gate, ServerProcess.FormatName(nameof(ProcessType.Login), 1), login), Open(gate, ServerProcess.FormatName(nameof(ProcessType.Base), 1), basePeer));
+await gate.FirstLinks.WaitAsync(stop);
+if (gate.Ready || gate.SinglePoint is not null)
+{
+    throw new Exception("Engine readiness must not create or initialize a business SinglePoint.");
+}
+
+await ExpectPong(Pong.Types.Status.Unavailable);
+var initialization = gate.InitializeSinglePointAsync(business, stop);
+var point = gate.SinglePoint as WaitingSinglePoint ?? throw new Exception("The registered business SinglePoint was not selected.");
 await point.Started.Task.WaitAsync(stop);
+if (!ReferenceEquals(point.State, gate.State))
+{
+    throw new Exception("SinglePoint initialization replaced the identity already registered by the engine.");
+}
 
 var context = new DefaultHttpContext();
 context.Features.Set<IHttpWebSocketFeature>(new WebSocketUpgrade());
@@ -141,9 +169,7 @@ if (gate.Ready)
 
 var cancelling = new WaitingSinglePoint();
 using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
-var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), _ =>
-{
-}, Task.CompletedTask, cancel.Token);
+var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), new SinglePointState(), cancel.Token);
 await cancelling.Started.Task.WaitAsync(stop);
 cancel.Cancel();
 try
@@ -159,8 +185,43 @@ if (cancelling.Initialized)
     throw new Exception("Cancelled SinglePoint became ready.");
 }
 
-var routes = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new RouterServerSinglePoint(), group);
-var routerInit = routes.InitializeAsync(stop);
+InitializationFailureSinglePoint failedPoint;
+using (var failedNode = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group))
+{
+    var failedLogin = new FrameStream();
+    var failedBase = new FrameStream();
+    var failedLinks = Task.WhenAll(Open(failedNode, ServerProcess.FormatName(nameof(ProcessType.Login), 1), failedLogin),
+        Open(failedNode, ServerProcess.FormatName(nameof(ProcessType.Base), 1), failedBase));
+    await failedNode.FirstLinks.WaitAsync(stop);
+
+    var failingRegistry = new SinglePointRegistry([typeof(InitializationFailureSinglePoint)]);
+    try
+    {
+        await failedNode.InitializeSinglePointAsync(failingRegistry, stop);
+        throw new Exception("Business initialization failure was hidden.");
+    }
+    catch (InvalidDataException)
+    {
+    }
+
+    failedPoint = failedNode.SinglePoint as InitializationFailureSinglePoint
+        ?? throw new Exception("A failed business SinglePoint was replaced with a default instance.");
+    if (failedNode.Ready || failedPoint.Initialized)
+    {
+        throw new Exception("A failed business SinglePoint became ready.");
+    }
+
+    failedLogin.Input.Writer.Complete();
+    failedBase.Input.Writer.Complete();
+    await failedLinks.WaitAsync(stop);
+}
+
+if (!failedPoint.Disposed)
+{
+    throw new Exception("Failed SinglePoint resources were not disposed with the engine node.");
+}
+
+using var routes = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
 var duplicateEntityId = Guid.NewGuid().ToString("N");
 string[][] invalidRegistrations = [[], [LegacyProbeEntityId], [duplicateEntityId, duplicateEntityId]];
 foreach (var ids in invalidRegistrations)
@@ -196,7 +257,8 @@ foreach (var pair in neighbors)
 }
 
 var routing = Task.WhenAll(routeTasks);
-await routerInit.WaitAsync(stop);
+await routes.FirstLinks.WaitAsync(stop);
+await routes.InitializeSinglePointAsync(defaults, stop);
 foreach (var stream in neighbors.Values)
 {
     var reply = await stream.Output.Reader.ReadAsync(stop);
@@ -274,7 +336,8 @@ foreach (var stream in neighbors.Values)
 }
 
 await routing.WaitAsync(stop);
-Console.WriteLine("PASS GUID-only initialization and registration, Profile routing and authorization, handshake retry, WSS/gRPC gating, cancellation, disconnect and missing entity");
+await GroupChecks.RunAsync(stop);
+Console.WriteLine("PASS engine-first initialization, optional business construction, failure disposal, Profile routing, handshake retry, WSS/gRPC gating, cancellation and disconnect.");
 return 0;
 
 async Task ExpectProfileRejected(string peer, ProfileRequest request)
@@ -301,7 +364,7 @@ Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null
 
 async Task ExpectPong(Pong.Types.Status status)
 {
-    var ping = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = point.State.EntityId, Entry = nameof(ProcessType.Gate) };
+    var ping = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = gate.State.EntityId, Entry = nameof(ProcessType.Gate) };
     login.Input.Writer.TryWrite(new Frame { Ping = ping });
     var response = (await login.Output.Reader.ReadAsync(stop)).Pong;
     if (response?.RequestId != ping.RequestId || response.Status != status)
@@ -310,8 +373,16 @@ async Task ExpectPong(Pong.Types.Status status)
     }
 }
 
+[SinglePointFor(ProcessType.Gate)]
 sealed class WaitingSinglePoint : ServerSinglePoint
 {
+    public static int CreatedCount { get; private set; }
+
+    public WaitingSinglePoint()
+    {
+        CreatedCount++;
+    }
+
     public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
