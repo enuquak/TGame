@@ -2,6 +2,7 @@ namespace TGame;
 
 public static class ServerLogEvents
 {
+    public const string EntityRpcFailed = "ENTITY_RPC_FAILED";
     public const string ProfilePrefix = "PROFILE_";
     public const string LegacyReady = "READY";
     public const string LegacyBaseSinglePointInit = "BASE_SINGLE_POINT_INIT";

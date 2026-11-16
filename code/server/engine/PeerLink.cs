@@ -7,7 +7,7 @@ namespace TGame.Server.Engine;
 
 public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWriter<Frame> output)
 {
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(12);
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(12);
 
     private bool closed;
     private readonly object pendingChanges = new();
@@ -34,10 +34,16 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
     public async Task<TReply> CallAsync<TReply>(IMessage message, string requestId, CancellationToken stop, Action? sent = null)
         where TReply : IMessage<TReply>, new()
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
-        stop.ThrowIfCancellationRequested();
-
         var request = new RpcRequest { RequestId = requestId, Payload = Any.Pack(message) };
+        var response = await CallAsync(request, stop, sent);
+        return ReadReply<TReply>(response);
+    }
+
+    internal async Task<RpcReply> CallAsync(RpcRequest request, CancellationToken stop, Action? sent = null)
+    {
+        RpcDispatcher.ValidateEnvelope(request.RequestId, request.Payload);
+        stop.ThrowIfCancellationRequested();
+        var requestId = request.RequestId;
         var reply = new TaskCompletionSource<RpcReply>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (pendingChanges)
         {
@@ -57,13 +63,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
             await WriteAsync(new Frame { Request = request }, stop);
             sent?.Invoke();
 
-            var response = await reply.Task.WaitAsync(RequestTimeout, stop);
-            if (!response.Payload.Is(new TReply().Descriptor))
-            {
-                throw new InvalidDataException("Unexpected RPC reply type.");
-            }
-
-            return response.Payload.Unpack<TReply>();
+            return await reply.Task.WaitAsync(RequestTimeout, stop);
         }
         finally
         {
@@ -74,6 +74,21 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         }
     }
 
+    internal static TReply ReadReply<TReply>(RpcReply response) where TReply : IMessage<TReply>, new()
+    {
+        if (response.Error is { } error)
+        {
+            throw new RpcException(new Status((StatusCode)error.StatusCode, error.Detail));
+        }
+
+        if (!response.Payload.Is(new TReply().Descriptor))
+        {
+            throw new InvalidDataException("Unexpected RPC reply type.");
+        }
+
+        return response.Payload.Unpack<TReply>();
+    }
+
     public Task ReplyAsync(IMessage message, string requestId, CancellationToken stop)
     {
         var reply = new RpcReply { RequestId = requestId, Payload = Any.Pack(message) };
@@ -82,7 +97,20 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
 
     public void Receive(RpcReply reply)
     {
-        RpcDispatcher.ValidateEnvelope(reply.RequestId, reply.Payload);
+        if (reply.Error is { } error)
+        {
+            if (string.IsNullOrWhiteSpace(reply.RequestId) ||
+                reply.Payload is not null ||
+                !System.Enum.IsDefined((StatusCode)error.StatusCode) ||
+                error.StatusCode == (int)StatusCode.OK)
+            {
+                throw new InvalidDataException("Invalid RPC error reply.");
+            }
+        }
+        else
+        {
+            RpcDispatcher.ValidateEnvelope(reply.RequestId, reply.Payload);
+        }
 
         TaskCompletionSource<RpcReply>? request;
         lock (pendingChanges)

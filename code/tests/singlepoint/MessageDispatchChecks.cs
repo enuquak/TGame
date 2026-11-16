@@ -37,7 +37,7 @@ internal static class MessageDispatchChecks
         var stream = new FrameStream();
         using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        stream.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Login), 1) });
+        stream.Input.Writer.TryWrite(TestNodes.Hello(ServerProcess.FormatName(nameof(ProcessType.Login), 1)));
         var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), linkId, [], stream, stream, lifetime.Token);
         try
         {
@@ -120,7 +120,7 @@ internal static class MessageDispatchChecks
         });
 
         using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
-        stream.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Login), 1) });
+        stream.Input.Writer.TryWrite(TestNodes.Hello(ServerProcess.FormatName(nameof(ProcessType.Login), 1)));
         var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
         var id = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
         stream.Input.Writer.TryWrite(RpcFrames.Request(new StringValue { Value = id }, id));

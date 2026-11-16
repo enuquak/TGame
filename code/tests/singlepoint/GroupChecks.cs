@@ -151,7 +151,7 @@ internal static class GroupChecks
 
         Task Open(string peer, FrameStream stream)
         {
-            stream.Input.Writer.TryWrite(new Frame { Hello = peer });
+            stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
             return gate.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
         }
     }
@@ -250,7 +250,7 @@ internal static class GroupChecks
         {
             var stream = new FrameStream();
             streams[peer] = stream;
-            stream.Input.Writer.TryWrite(new Frame { Hello = peer });
+            stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
             tasks[peer] = node.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
         }
     }
@@ -267,7 +267,7 @@ internal static class GroupChecks
             var entity = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
             streams.Add(peer, stream);
             ids.Add(peer, entity);
-            stream.Input.Writer.TryWrite(new Frame { Hello = peer });
+            stream.Input.Writer.TryWrite(TestNodes.Hello(peer, entity));
             tasks.Add(router.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [entity], stream, stream, stop));
             await stream.Output.Reader.ReadAsync(stop);
         }

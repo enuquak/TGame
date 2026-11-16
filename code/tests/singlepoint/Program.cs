@@ -15,6 +15,22 @@ const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
 const string LegacyProbeEntityId = "body-1";
 
+if (args is ["--routing"])
+{
+    using var routingDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    try
+    {
+        await EntityRoutingChecks.RunAsync(routingDeadline.Token);
+        await GroupChecks.RunAsync(routingDeadline.Token);
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error);
+        return 1;
+    }
+}
+
 await IdGeneratorChecks.RunAsync();
 if (args is ["--engine"])
 {
@@ -374,7 +390,7 @@ async Task ExpectProfileRejected(string peer, ProfileRequest request)
 
 Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null)
 {
-    stream.Input.Writer.TryWrite(new Frame { Hello = peer });
+    stream.Input.Writer.TryWrite(TestNodes.Hello(peer, ids?.FirstOrDefault()));
     return node.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), ids ?? [], stream, stream, stop);
 }
 

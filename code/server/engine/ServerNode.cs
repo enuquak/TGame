@@ -7,7 +7,7 @@ using TGame.Transport;
 
 namespace TGame.Server.Engine;
 
-public class ServerNode : IDisposable
+public partial class ServerNode : IDisposable
 {
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
@@ -34,6 +34,11 @@ public class ServerNode : IDisposable
         this.messages = messages;
         Role = group.GetProcess(name).Role;
         localEntities[State.EntityId] = 0;
+        if (Role == nameof(ProcessType.Router))
+        {
+            singlePointIds[ProcessType.Router] = [State.EntityId];
+        }
+
         expectedPeers = Topology.Peers(group, name);
         UpdateLinkReadiness();
     }
@@ -144,7 +149,7 @@ public class ServerNode : IDisposable
         }
 
         using var call = new ServerLink.ServerLinkClient(channel).Connect(headers, cancellationToken: stop);
-        await call.RequestStream.WriteAsync(new Frame { Hello = Name }, stop);
+        await call.RequestStream.WriteAsync(CreateHello(), stop);
         await RunLinkAsync(peer, id, [], call.ResponseStream, call.RequestStream, stop);
     }
 
@@ -172,6 +177,9 @@ public class ServerNode : IDisposable
             throw new IOException($"Link to {peer} closed before handshake.");
         }
 
+        var peerPoint = input.Current.SinglePointId;
+        ValidateSinglePoint(peer, peerPoint, entities);
+
         lock (linkChanges)
         {
             if (!sessions.Add(peer))
@@ -184,17 +192,18 @@ public class ServerNode : IDisposable
         {
             if (AcceptsIncoming(peer))
             {
-                await output.WriteAsync(new Frame { Hello = Name }, stop);
+                await output.WriteAsync(CreateHello(), stop);
             }
 
             lock (linkChanges)
             {
-                if (Role == nameof(ProcessType.Router) && entities.Any(owners.ContainsKey))
+                if (Role == nameof(ProcessType.Router) && entities.Any(entity => owners.ContainsKey(entity) || localEntities.ContainsKey(entity)))
                 {
                     throw new InvalidDataException($"Duplicate entity from {peer}.");
                 }
 
                 links[peer] = link;
+                RegisterPeerSinglePoint(peer, peerPoint);
                 if (Role == nameof(ProcessType.Router))
                 {
                     foreach (var entity in entities)
@@ -238,9 +247,54 @@ public class ServerNode : IDisposable
 
             async Task ServeAsync()
             {
-                await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
+                var running = new List<Task>();
+                try
                 {
-                    await messages.DispatchAsync(frame.Request, peer, link, transport.Token);
+                    await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
+                    {
+                        if (frame.Request.TargetCase == RpcRequest.TargetOneofCase.None && frame.Request.SourceProcess.Length == 0)
+                        {
+                            await messages.DispatchAsync(frame.Request, peer, link, transport.Token);
+                            continue;
+                        }
+
+                        for (int index = running.Count - 1; index >= 0; index--)
+                        {
+                            if (running[index].IsCompleted)
+                            {
+                                await running[index];
+                                running.RemoveAt(index);
+                            }
+                        }
+
+                        if (running.Count == RequestQueueCapacity)
+                        {
+                            var reply = ErrorReply(frame.Request.RequestId, StatusCode.ResourceExhausted, "Too many active entity RPCs.");
+                            await link.WriteAsync(new Frame { Reply = reply }, transport.Token);
+                            continue;
+                        }
+
+                        // Forwarding may call back through this stream before the original request completes.
+                        running.Add(ServeRoutedAsync(frame.Request));
+                    }
+                }
+                finally
+                {
+                    await Task.WhenAll(running);
+                }
+
+                async Task ServeRoutedAsync(RpcRequest request)
+                {
+                    try
+                    {
+                        var reply = await RouteReplyAsync(request, peer, transport.Token);
+                        await link.WriteAsync(new Frame { Reply = reply }, transport.Token);
+                    }
+                    catch
+                    {
+                        transport.Cancel();
+                        throw;
+                    }
                 }
             }
         }
@@ -251,6 +305,7 @@ public class ServerNode : IDisposable
                 sessions.Remove(peer);
                 if (links.TryRemove(peer, out _))
                 {
+                    RemovePeerSinglePoint(peer);
                     foreach (var entity in entities)
                     {
                         owners.TryRemove(entity, out _);
