@@ -74,14 +74,11 @@ internal static class MessageDispatchChecks
     private static async Task VerifyProfileReadinessAsync(CancellationToken stop)
     {
         var messages = new RpcDispatcher();
-        var stream = new FrameStream();
-        var link = new PeerLink(nameof(ProcessType.Gate), ServerProcess.FormatName(nameof(ProcessType.Login), 1), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), stream);
-        using var node = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
         ServerMessages.Register(messages, node);
         var profile = new ProfileRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), Fetch = node.State.EntityId };
-        await messages.DispatchAsync(RpcFrames.Request(profile).Request, ServerProcess.FormatName(nameof(ProcessType.Login), 1), link, stop);
-        var profileFrame = await stream.Output.Reader.ReadAsync(stop);
-        if (profileFrame.ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Unavailable)
+        var reply = (ProfileReply)await messages.DispatchEntityAsync(RpcFrames.Request(profile).Request, stop);
+        if (reply.Result != ProfileReply.Types.Result.Unavailable)
         {
             throw new Exception("Profile accepted a request before the node was ready.");
         }

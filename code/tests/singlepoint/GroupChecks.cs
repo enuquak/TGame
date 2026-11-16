@@ -283,7 +283,7 @@ internal static class GroupChecks
             RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
             Publish = new EntitySummary { EntityId = ids[secondBase], DisplayName = "Group check", Title = "Owner" }
         };
-        publisher.Input.Writer.TryWrite(RpcFrames.Request(request));
+        publisher.Input.Writer.TryWrite(ProfileRpcChecks.Request(secondBase, request));
         var forwarded = await profile.Output.Reader.ReadAsync(stop);
         if (forwarded.ReadRequest<ProfileRequest>().Publish?.EntityId != ids[secondBase])
         {
@@ -295,7 +295,7 @@ internal static class GroupChecks
             RequestId = request.RequestId,
             EntityId = ids[secondBase],
             Result = ProfileReply.Types.Result.Stored
-        }));
+        }, forwarded.Request.RequestId));
         if ((await publisher.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Stored)
         {
             throw new Exception("Profile reply did not return to the second Base instance.");
@@ -304,7 +304,7 @@ internal static class GroupChecks
         var firstBase = streams[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
         var foreign = request.Clone();
         foreign.RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        firstBase.Input.Writer.TryWrite(RpcFrames.Request(foreign));
+        firstBase.Input.Writer.TryWrite(ProfileRpcChecks.Request(ServerProcess.FormatName(nameof(ProcessType.Base), 1), foreign));
         if ((await firstBase.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Rejected ||
             profile.Output.Reader.TryRead(out _))
         {

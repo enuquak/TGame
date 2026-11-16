@@ -50,10 +50,10 @@
 | 待确认 | [profile.proto](../code/shared/protocols/profile.proto) | 理解请求 ID、发布/查询/撤回操作及响应结果。 |
 | 待确认 | [LinkService.cs](../code/server/engine/LinkService.cs) | 理解 gRPC 连接入口、来源检查和向 ServerNode 转交连接。 |
 | 待确认 | [PeerLink.cs](../code/server/engine/PeerLink.cs) | 按通用 CallAsync、WriteAsync、Receive、Close 阅读请求等待、响应匹配、超时与断线。 |
-| 待确认 | [GameServerNode.cs](../code/server/logic/node/GameServerNode.cs) | 理解业务节点如何继承引擎节点；SinglePoint 生命周期已由引擎基类提供。 |
 | 待确认 | [ServerNode.cs](../code/server/engine/ServerNode.cs) 与 [RpcDispatcher.cs](../code/server/engine/RpcDispatcher.cs) | 理解引擎中的请求入队、响应直接唤醒等待者，以及通用消息分发。 |
-| 待确认 | [PeerLink.Profile.cs](../code/server/logic/node/PeerLink.Profile.cs) | 理解业务扩展方法如何包装 Frame，以及响应实体校验。 |
-| 待确认 | [GameServerNode.Profile.cs](../code/server/logic/node/GameServerNode.Profile.cs) | 理解调用入口、Router 转发、来源/实体归属校验和存储调用。 |
+| 待确认 | [ServerNode.Routing.cs](../code/server/engine/ServerNode.Routing.cs) | 理解实体调用、SinglePoint 选择、转发和回包。 |
+| 待确认 | [ProfileMessages.cs](../code/server/logic/messages/ProfileMessages.cs) | 理解通用 RPC 调用、Router 写入归属校验与 Profile 处理器注册。 |
+| 待确认 | [ProfileServerSinglePoint.cs](../code/server/logic/entities/SinglePoint/ProfileServerSinglePoint.cs) | 理解存储初始化、业务处理和存储异常转换。 |
 | 待确认 | [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs) | 理解 Redis 查询、MongoDB 读取、缓存回填、更新与删除。 |
 | 待确认 | [SinglePoint 测试 Program.cs](../code/tests/singlepoint/Program.cs) | 找到 ProfileRequest 用例，对照发送请求、模拟回包和异步调用完成的过程。 |
 
@@ -64,7 +64,7 @@
 3. 请求超时、响应迟到、连接断开时，等待中的调用分别如何结束？
 4. 为什么响应直接交给等待者，而请求先进入处理队列？
 
-引擎 `ServerNode` 是基类，业务 `GameServerNode` 继承它；`GameServerNode` 的多个 partial 文件是同一个业务类的不同部分。引擎 `PeerLink` 与业务 `PeerLinkMessages` 已分开，`PeerLink.Profile.cs` 提供业务扩展方法，不再是引擎连接类的 partial。生成协议源码用于辅助跳转，日常阅读和修改以手写 `.proto` 为准。
+宿主统一创建引擎 `ServerNode`，业务通过消息处理器与可选的 SinglePoint 组合接入。`ProfileMessages` 使用通用 RPC，并负责业务校验及调用端结果转换；`ProfileServerSinglePoint` 执行存储处理。生成协议源码用于辅助跳转，日常阅读和修改以手写 `.proto` 为准。
 
 ## 已讨论的 C# 与项目概念
 

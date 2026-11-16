@@ -12,6 +12,21 @@ const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
 const string InvalidEntityId = "body-1";
 
+if (args is ["--profile"])
+{
+    using var profileDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
+    try
+    {
+        await ProfileRpcChecks.RunAsync(profileDeadline.Token);
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error);
+        return 1;
+    }
+}
+
 if (args is ["--routing"])
 {
     using var routingDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -63,9 +78,9 @@ RpcChecks.CheckTransportBoundary();
 await SinglePointChecks.RunAsync();
 
 var engineAssembly = typeof(Topology).Assembly;
-if (engineAssembly == typeof(GameServerNode).Assembly)
+if (engineAssembly == typeof(ServerMessages).Assembly)
 {
-    throw new Exception("Engine primitives and the business node must be compiled into separate assemblies.");
+    throw new Exception("Engine primitives and business handlers must be compiled into separate assemblies.");
 }
 
 Type[] engineTypes = [typeof(LinkService), typeof(ServerNode), typeof(PeerLink), typeof(ServiceRegistry),
@@ -78,7 +93,10 @@ foreach (var type in engineTypes)
     }
 }
 
-await MongoStorageChecks.RunAsync();
+if (args is not ["--node"])
+{
+    await MongoStorageChecks.RunAsync();
+}
 
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
 var stop = deadline.Token;
@@ -124,7 +142,10 @@ if (!loginNode.Ready || loginNode.SinglePoint?.GetType() != typeof(ServerSingleP
 var profileRequest = new ProfileRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), Fetch = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture) };
 var profileCall = loginNode.CallProfileAsync(profileRequest, stop);
 var profileFrame = await router.Output.Reader.ReadAsync(stop);
-if (profileFrame.ReadRequest<ProfileRequest>()?.RequestId != profileRequest.RequestId || profileFrame.ReadRequest<ProfileRequest>().Fetch != profileRequest.Fetch)
+if (profileFrame.Request.SinglePointType != nameof(ProcessType.Profile) ||
+    profileFrame.Request.SourceProcess != loginNode.Name ||
+    profileFrame.Request.RequestId == profileRequest.RequestId ||
+    !profileFrame.ReadRequest<ProfileRequest>().Equals(profileRequest))
 {
     throw new Exception("Profile request payload changed during transport.");
 }
@@ -134,15 +155,47 @@ router.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
         RequestId = profileRequest.RequestId,
         EntityId = profileRequest.Fetch,
         Result = ProfileReply.Types.Result.Missing
-    }));
+    }, profileFrame.Request.RequestId));
 if ((await profileCall.WaitAsync(stop)).Result != ProfileReply.Types.Result.Missing)
 {
     throw new Exception("Profile reply was not delivered to its caller.");
 }
 
+var failedCall = loginNode.CallProfileAsync(profileRequest, stop);
+var failedFrame = await router.Output.Reader.ReadAsync(stop);
+router.Input.Writer.TryWrite(new Frame
+{
+    Reply = new RpcReply
+    {
+        RequestId = failedFrame.Request.RequestId,
+        Error = new RpcError { StatusCode = (int)StatusCode.Unavailable, Detail = "Profile disconnected." }
+    }
+});
+if ((await failedCall).Result != ProfileReply.Types.Result.Unavailable)
+{
+    throw new Exception("Profile transport failure did not preserve Unavailable.");
+}
+
+using (var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop))
+{
+    cancelled.Cancel();
+    try
+    {
+        await loginNode.CallProfileAsync(profileRequest, cancelled.Token);
+        throw new Exception("Profile swallowed caller cancellation.");
+    }
+    catch (OperationCanceledException) when (cancelled.IsCancellationRequested)
+    {
+    }
+}
+
 retry.Input.Writer.Complete();
 router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
+if ((await loginNode.CallProfileAsync(profileRequest, stop)).Result != ProfileReply.Types.Result.Unavailable)
+{
+    throw new Exception("Disconnected Profile caller did not preserve Unavailable.");
+}
 
 var business = new SinglePointRegistry([typeof(WaitingSinglePoint)]);
 using var gate = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
@@ -308,7 +361,7 @@ var publish = new ProfileRequest
         Title = "Profile check"
     }
 };
-baseRoute.Input.Writer.TryWrite(RpcFrames.Request(publish));
+baseRoute.Input.Writer.TryWrite(ProfileRpcChecks.Request(ServerProcess.FormatName(nameof(ProcessType.Base), 1), publish));
 var forwarded = await profileRoute.Output.Reader.ReadAsync(stop);
 if (forwarded.ReadRequest<ProfileRequest>()?.RequestId != publish.RequestId || forwarded.ReadRequest<ProfileRequest>().Publish?.EntityId != publish.Publish.EntityId)
 {
@@ -320,7 +373,7 @@ profileRoute.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
         RequestId = publish.RequestId,
         EntityId = publish.Publish.EntityId,
         Result = ProfileReply.Types.Result.Stored
-    }));
+    }, forwarded.Request.RequestId));
 var published = (await baseRoute.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>();
 if (published?.RequestId != publish.RequestId || published.EntityId != publish.Publish.EntityId || published.Result != ProfileReply.Types.Result.Stored)
 {
@@ -371,7 +424,7 @@ return 0;
 async Task ExpectProfileRejected(string peer, ProfileRequest request)
 {
     var stream = neighbors[peer];
-    stream.Input.Writer.TryWrite(RpcFrames.Request(request));
+    stream.Input.Writer.TryWrite(ProfileRpcChecks.Request(peer, request));
     var reply = (await stream.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>();
     if (reply?.RequestId != request.RequestId || reply.Result != ProfileReply.Types.Result.Rejected || !routes.Ready)
     {
@@ -397,8 +450,9 @@ async Task ExpectProfileResult(ProfileReply.Types.Result result)
         RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
         Fetch = gate.State.EntityId
     };
-    login.Input.Writer.TryWrite(RpcFrames.Request(request));
-    var response = (await login.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>();
+    var messages = new RpcDispatcher();
+    ServerMessages.Register(messages, gate);
+    var response = (ProfileReply)await messages.DispatchEntityAsync(RpcFrames.Request(request).Request, stop);
     if (response.RequestId != request.RequestId || response.Result != result)
     {
         throw new Exception($"Expected {result} for the Profile request, got {response}.");

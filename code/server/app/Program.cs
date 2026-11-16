@@ -36,7 +36,7 @@ catch (Exception error)
 
 static async Task RunServerAsync(ServerProcess process, ServerGroup group, string runDir)
 {
-    var singlePoints = new SinglePointRegistry(typeof(GameServerNode).Assembly.GetTypes());
+    var singlePoints = new SinglePointRegistry(typeof(ServerMessages).Assembly.GetTypes());
     var role = process.Role;
     var processType = process.Type;
     var settings = ServerSettings.Current.Value;
@@ -45,7 +45,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     var messages = new RpcDispatcher();
     var idOptions = IdGeneratorOptions.Load(Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName), settings.ZooKeeper);
     await using var idGenerator = await SnowflakeIdGenerator.CreateAsync(idOptions);
-    using var node = new GameServerNode(process.Name, group, messages, idGenerator);
+    using var node = new ServerNode(process.Name, group, messages, idGenerator);
     ServerMessages.Register(messages, node);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;

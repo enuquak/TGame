@@ -20,9 +20,9 @@ public partial class ServerNode : IDisposable
     private readonly object linkChanges = new();
     private readonly HashSet<string> sessions = [];
     private readonly TaskCompletionSource firstLinks = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    protected readonly ConcurrentDictionary<string, byte> localEntities = new();
-    protected readonly ConcurrentDictionary<string, string> owners = new();
-    protected readonly ConcurrentDictionary<string, PeerLink> links = new();
+    private readonly ConcurrentDictionary<string, byte> localEntities = new();
+    private readonly ConcurrentDictionary<string, string> owners = new();
+    private readonly ConcurrentDictionary<string, PeerLink> links = new();
 
     public ServerNode(string name, ServerGroup group, RpcDispatcher messages, IIdGenerator idGenerator)
     {
@@ -51,6 +51,18 @@ public partial class ServerNode : IDisposable
     public SinglePointState State { get; }
     public IIdGenerator IdGenerator { get; }
     public ServerSinglePoint? SinglePoint => singlePoint;
+
+    public ProcessType GetProcessType(string process) => group.GetProcess(process).Type;
+
+    public bool IsEntityOwner(string process, string entityId)
+    {
+        if (process == Name)
+        {
+            return localEntities.ContainsKey(entityId);
+        }
+
+        return owners.TryGetValue(entityId, out var owner) && owner == process;
+    }
 
     public async Task InitializeSinglePointAsync(SinglePointRegistry registry, CancellationToken stop)
     {
@@ -105,7 +117,7 @@ public partial class ServerNode : IDisposable
         return Topology.Dials[group.GetProcess(peer).Role].Contains(Role);
     }
 
-    protected string PeerRole(string peer)
+    private string PeerRole(string peer)
     {
         if (peer == ServerPeerNames.Client)
         {
@@ -334,7 +346,4 @@ public partial class ServerNode : IDisposable
             firstLinks.TrySetResult();
         }
     }
-
-    protected static bool IsDeliveryFailure(Exception error) =>
-        error is IOException or RpcException or TimeoutException or InvalidOperationException or OperationCanceledException;
 }

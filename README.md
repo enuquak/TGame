@@ -59,7 +59,7 @@ dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --e
 
 服务端入口为 `code/server/app/Program.cs`，只接受 `<实例名> <运行目录>`，运行目录名称不要求 GUID；例如 `Base2 <运行目录>`；实例类型与预期数量从运行目录中的 `processes.json` 快照读取。
 
-服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类、业务节点 `GameServerNode`、Profile 处理位于 `code/server/logic/`；宿主负责提供业务类型集合、组装节点并按两个阶段启动服务。引擎可以单独构建，不引用宿主或业务实现。GM 进程使用引擎默认 SinglePoint，保留与 Router 的拓扑连接。
+服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类与 Profile 处理位于 `code/server/logic/`；宿主统一创建引擎 `ServerNode`，提供业务类型集合并按两个阶段启动服务。Profile 通过通用 RPC 调用，其参数与写入归属校验由 `ProfileMessages` 承担，存储处理由 `ProfileServerSinglePoint` 承担。引擎可以单独构建，不引用宿主或业务实现。GM 进程使用引擎默认 SinglePoint，保留与 Router 的拓扑连接。
 
 唯一 ID 统一调用引擎的 `idGenerator.GenId()`，使用雪花算法；ZooKeeper 自动分配进程编号，引擎与业务共用生成器。请求、实体、连接和缓存占用标记均已接入，详见[雪花 ID](docs/雪花ID.md)。
 

@@ -1,3 +1,5 @@
+using MongoDB.Driver;
+using TGame.Profile;
 using TGame.Server.Engine;
 
 namespace TGame.Server.Logic;
@@ -5,10 +7,24 @@ namespace TGame.Server.Logic;
 [SinglePointFor(ProcessType.Profile)]
 internal sealed class ProfileServerSinglePoint : ServerSinglePoint, IDisposable
 {
-    public ProfileStore Store { get; private set; } = null!;
+    private ProfileStore store = null!;
 
     protected override async Task InitializeRoleAsync(CancellationToken stop) =>
-        Store = await ProfileStore.OpenAsync(IdGenerator, stop);
+        store = await ProfileStore.OpenAsync(IdGenerator, stop);
 
-    public void Dispose() => Store?.Dispose();
+    internal async Task<ProfileReply> HandleAsync(ProfileRequest request, CancellationToken stop)
+    {
+        try
+        {
+            return await store.HandleAsync(request, stop);
+        }
+        catch (Exception error) when (error is MongoException or TimeoutException)
+        {
+            TraceLog.Event(ServerLogEvents.ProfileDbError, nameof(ProcessType.Profile), id: request.RequestId,
+                entity: ProfileStore.Subject(request), detail: error.GetType().Name);
+            return ProfileMessages.Failure(request, ProfileReply.Types.Result.Unavailable);
+        }
+    }
+
+    public void Dispose() => store?.Dispose();
 }

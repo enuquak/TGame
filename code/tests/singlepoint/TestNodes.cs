@@ -14,13 +14,13 @@ internal static class TestNodes
 
     public static ServerGroup DefaultGroup { get; } = new(Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1));
 
-    public static GameServerNode Create(string role) =>
+    public static ServerNode Create(string role) =>
         Create(ServerProcess.FormatName(role, 1), DefaultGroup);
 
-    public static GameServerNode Create(string name, ServerGroup group)
+    public static ServerNode Create(string name, ServerGroup group)
     {
         var messages = new RpcDispatcher();
-        var node = new GameServerNode(name, group, messages, TestIds.Generator);
+        var node = new ServerNode(name, group, messages, TestIds.Generator);
         ServerMessages.Register(messages, node);
         return node;
     }
