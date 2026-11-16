@@ -29,7 +29,7 @@ internal sealed partial class GameServerNode
             return await RouteGmPingAsync(from, ping, stop);
         }
 
-        var gateLocal = ping.Entry == nameof(ProcessType.Gate) && Role == nameof(ProcessType.Gate) && ping.EntityId == singlePoint.State.EntityId;
+        var gateLocal = ping.Entry == nameof(ProcessType.Gate) && Role == nameof(ProcessType.Gate) && ping.EntityId == State.EntityId;
         if (!Guid.TryParseExact(ping.RequestId, "N", out _) ||
             (!gateLocal && ping.Entry is not (nameof(ProcessType.Base) or nameof(ProcessType.Login))) ||
             !Guid.TryParseExact(ping.EntityId, "N", out _) ||
@@ -42,7 +42,7 @@ internal sealed partial class GameServerNode
         {
             if (ping.Storage)
             {
-                if (from != nameof(ProcessType.Base) || singlePoint is not DBMgrServerSinglePoint db)
+                if (from != nameof(ProcessType.Base) || SinglePoint is not DBMgrServerSinglePoint db)
                 {
                     throw new InvalidDataException("Storage probe did not use the dedicated link.");
                 }
@@ -134,7 +134,7 @@ internal sealed partial class GameServerNode
     private Task<ProfileReply> RunProfileProbeAsync(Ping ping, CancellationToken stop)
     {
         var request = new ProfileRequest { RequestId = ping.RequestId };
-        bool ownProbe = Role == nameof(ProcessType.Base) && ping.EntityId == singlePoint.State.EntityId && ping.ProfileSubject == ping.EntityId;
+        bool ownProbe = Role == nameof(ProcessType.Base) && ping.EntityId == State.EntityId && ping.ProfileSubject == ping.EntityId;
 
         switch (ping.ProfileProbe)
         {

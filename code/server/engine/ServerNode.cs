@@ -6,12 +6,13 @@ using TGame.Transport;
 
 namespace TGame.Server.Engine;
 
-public abstract class ServerNode(string role)
+public abstract class ServerNode : IDisposable
 {
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
 
     private volatile bool linksReady;
+    private volatile ServerSinglePoint? singlePoint;
     private readonly object linkChanges = new();
     private readonly HashSet<string> sessions = [];
     private readonly TaskCompletionSource firstLinks = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -19,11 +20,39 @@ public abstract class ServerNode(string role)
     protected readonly ConcurrentDictionary<string, string> owners = new();
     protected readonly ConcurrentDictionary<string, PeerLink> links = new();
 
-    public Task FirstLinks => firstLinks.Task;
-    public string Role => role;
-    public bool Ready => Initialized && linksReady;
+    protected ServerNode(string role)
+    {
+        Role = role;
+        localEntities[State.EntityId] = 0;
+    }
 
-    protected abstract bool Initialized { get; }
+    public Task FirstLinks => firstLinks.Task;
+    public string Role { get; }
+    public bool Ready => singlePoint?.Initialized == true && linksReady;
+    public SinglePointState State { get; } = new();
+    public ServerSinglePoint? SinglePoint => singlePoint;
+
+    public async Task InitializeSinglePointAsync(SinglePointRegistry registry, CancellationToken stop)
+    {
+        stop.ThrowIfCancellationRequested();
+        if (!firstLinks.Task.IsCompletedSuccessfully)
+        {
+            throw new InvalidOperationException("Engine connections must be initialized before the SinglePoint.");
+        }
+
+        if (singlePoint is not null)
+        {
+            throw new InvalidOperationException("SinglePoint initialization has already started.");
+        }
+
+        singlePoint = registry.Create(Enum.Parse<ProcessType>(Role));
+        await singlePoint.InitializeAsync(Role, State, stop);
+    }
+
+    public void Dispose()
+    {
+        (singlePoint as IDisposable)?.Dispose();
+    }
 
     protected abstract void ReceiveFrame(Frame frame, PeerLink link, ChannelWriter<Frame> requests);
 
@@ -56,22 +85,22 @@ public abstract class ServerNode(string role)
     {
         using var channel = GrpcChannel.ForAddress(address);
         var id = Guid.NewGuid().ToString("N");
-        var headers = new Metadata { { TransportProtocol.PeerHeader, role }, { TransportProtocol.LinkHeader, id } };
+        var headers = new Metadata { { TransportProtocol.PeerHeader, Role }, { TransportProtocol.LinkHeader, id } };
         if (peer == nameof(ProcessType.Router))
         {
             headers.Add(TransportProtocol.EntityHeader, string.Join(',', localEntities.Keys));
         }
 
         using var call = new ServerLink.ServerLinkClient(channel).Connect(headers, cancellationToken: stop);
-        await call.RequestStream.WriteAsync(new Frame { Hello = role }, stop);
+        await call.RequestStream.WriteAsync(new Frame { Hello = Role }, stop);
         await RunLinkAsync(peer, id, [], call.ResponseStream, call.RequestStream, stop);
     }
 
     public async Task RunLinkAsync(string peer, string id, string[] entities, IAsyncStreamReader<Frame> input,
         IAsyncStreamWriter<Frame> output, CancellationToken stop)
     {
-        var link = new PeerLink(role, peer, id, output);
-        if (role == nameof(ProcessType.Router))
+        var link = new PeerLink(Role, peer, id, output);
+        if (Role == nameof(ProcessType.Router))
         {
             bool hasInvalidIds = entities.Any(entity => !Guid.TryParseExact(entity, "N", out _));
             bool hasDuplicateIds = entities.Distinct().Count() != entities.Length;
@@ -96,29 +125,29 @@ public abstract class ServerNode(string role)
 
         try
         {
-            if (Topology.Dials[peer].Contains(role))
+            if (Topology.Dials[peer].Contains(Role))
             {
-                await output.WriteAsync(new Frame { Hello = role }, stop);
+                await output.WriteAsync(new Frame { Hello = Role }, stop);
             }
 
             lock (linkChanges)
             {
-                if (role == nameof(ProcessType.Router) && entities.Any(owners.ContainsKey))
+                if (Role == nameof(ProcessType.Router) && entities.Any(owners.ContainsKey))
                 {
                     throw new InvalidDataException($"Duplicate entity from {peer}.");
                 }
 
                 links[peer] = link;
-                if (role == nameof(ProcessType.Router))
+                if (Role == nameof(ProcessType.Router))
                 {
                     foreach (var entity in entities)
                     {
                         owners[entity] = peer;
-                        TraceLog.Event(ServerLogEvents.EntityRoute, role, peer, entity: entity, link: id);
+                        TraceLog.Event(ServerLogEvents.EntityRoute, Role, peer, entity: entity, link: id);
                     }
                 }
 
-                TraceLog.Event(ServerLogEvents.LinkUp, role, peer, link: id);
+                TraceLog.Event(ServerLogEvents.LinkUp, Role, peer, link: id);
                 UpdateLinkReadiness();
             }
 
@@ -180,14 +209,14 @@ public abstract class ServerNode(string role)
 
     private void UpdateLinkReadiness()
     {
-        bool complete = links.Count == Topology.Degree(role);
+        bool complete = links.Count == Topology.Degree(Role);
         if (complete == linksReady)
         {
             return;
         }
 
         linksReady = complete;
-        TraceLog.Event(complete ? ServerLogEvents.LinksReady : ServerLogEvents.LinksLost, role, detail: links.Count.ToString());
+        TraceLog.Event(complete ? ServerLogEvents.LinksReady : ServerLogEvents.LinksLost, Role, detail: links.Count.ToString());
         if (complete)
         {
             firstLinks.TrySetResult();

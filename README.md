@@ -48,9 +48,9 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 验收程序跑两轮常规探针，按请求 ID 核对每一跳的收发及复用的 9 条 gRPC 双向流。普通 DBMgr 消息走 Router，存盘探针走 Base 的专线并执行 MongoDB `ping`。协议源文件见 [pingpong.proto](code/shared/protocols/pingpong.proto)。
 
-每个服务进程按类声明上的 `SinglePointFor` 标注创建本进程的 SinglePoint。`SINGLE_POINT_INIT` 与 `SINGLE_POINT_READY` 记录角色初始化的开始与成功，均带实际类名和 EntityId。`LINKS_READY` 单独记录连接齐备。八个 SinglePoint 会分别收到定向探针，五种 Game 进程和 GM 会核对 Router 的位置登记。
+每个服务进程先完成引擎初始化（监听、ZooKeeper 注册和首次拓扑连接），再按 `SinglePointFor` 标注创建并初始化本进程的 SinglePoint。业务实现可选；没有注册实现的角色使用引擎 `ServerSinglePoint` 默认类。目前 DBMgr、Profile 和 GM 提供业务子类，其余角色使用默认类。`SINGLE_POINT_INIT` 与 `SINGLE_POINT_READY` 记录初始化的开始与成功，均带实际类名和 EntityId。`LINKS_READY` 单独记录连接齐备。八个 SinglePoint 会分别收到定向探针，五种 Game 进程和 GM 会核对 Router 的位置登记。
 
-正常初始化只登记 SinglePoint 自身生成的 EntityId。Router 只接受非空、无重复的 GUID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。联通脚本从本轮启动日志读取实际 EntityId 来生成测试用例，正式流程不再登记或依赖固定的测试 ID，旧版固定 ID 请求也不再接受。
+引擎提前生成并登记本进程的 EntityId，随后创建的 SinglePoint 复用同一份身份。Router 只接受非空、无重复的 GUID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。联通脚本从本轮启动日志读取实际 EntityId 来生成测试用例，正式流程不再登记或依赖固定的测试 ID，旧版固定 ID 请求也不再接受。
 
 Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[测试存储地址](code/server/config/storage.test.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
 
@@ -62,7 +62,7 @@ Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显�
 
 服务端入口为 `code/server/app/Program.cs`，只接受 `<角色> <运行目录>`。探测客户端入口为 `code/tests/probe-client/Program.cs`，其工程 `TGame.ProbeClient.csproj` 只引用 `code/shared/TGame.Shared.csproj`，不依赖服务端工程。它接受 `<运行目录> <WSS地址> <证书SHA256指纹>` 三个参数，由验收脚本自动调用；服务端程序不再提供 `client` 子命令。
 
-服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理和服务发现，使用 `TGame.Server.Engine` 命名空间。具体进程的 SinglePoint、业务节点 `GameServerNode`、Profile 和诊断处理位于 `code/server/logic/`；宿主负责将业务节点注入引擎并启动服务。引擎可以单独构建，不引用宿主或业务实现。
+服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类、业务节点 `GameServerNode`、Profile 和诊断处理位于 `code/server/logic/`；宿主负责提供业务类型集合、组装节点并按两个阶段启动服务。引擎可以单独构建，不引用宿主或业务实现。
 
 共享的日志格式、WebSocket 读帧与诊断数据分别属于 `TGame.Logging`、`TGame.Transport` 和 `TGame.Diagnostics`。连接服务与帧定义在 [transport.proto](code/shared/protocols/transport.proto)，消息分发集中在 `logic/node/GameServerNode.Messages.cs`。Profile 请求直接使用自身消息，不需要经过 Ping/Pong 包装。当前共享 Frame 仍包含诊断和 Profile 消息，构建时统一生成到 `code/shared/generated/protocols/`。
 

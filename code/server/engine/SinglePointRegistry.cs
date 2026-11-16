@@ -1,9 +1,8 @@
 using System.Reflection;
-using TGame.Server.Logic;
 
-namespace TGame.Server;
+namespace TGame.Server.Engine;
 
-internal sealed class SinglePointRegistry
+public sealed class SinglePointRegistry
 {
     private readonly Dictionary<ProcessType, Type> bindings = [];
 
@@ -36,16 +35,20 @@ internal sealed class SinglePointRegistry
                 throw new InvalidOperationException($"Duplicate SinglePoint for {label.Role}: {bindings[label.Role].FullName} and {type.FullName}.");
             }
         }
-
-        foreach (var role in Enum.GetValues<ProcessType>())
-        {
-            if (!bindings.ContainsKey(role))
-            {
-                throw new InvalidOperationException($"Missing SinglePoint for {role}.");
-            }
-        }
     }
 
-    public ServerSinglePoint Create(ProcessType role) =>
-        (ServerSinglePoint)Activator.CreateInstance(bindings[role])!;
+    public ServerSinglePoint Create(ProcessType role)
+    {
+        if (!Enum.IsDefined(role))
+        {
+            throw new ArgumentOutOfRangeException(nameof(role));
+        }
+
+        if (!bindings.TryGetValue(role, out var type))
+        {
+            return new ServerSinglePoint();
+        }
+
+        return (ServerSinglePoint)Activator.CreateInstance(type)!;
+    }
 }
