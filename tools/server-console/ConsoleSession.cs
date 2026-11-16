@@ -49,7 +49,14 @@ internal sealed class ConsoleSession : IDisposable
             throw new InvalidDataException("控制台当前会话记录无效。");
         }
 
-        var group = LoadRunGroup(saved);
+        if (HasLegacyRun(saved))
+        {
+            var configured = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
+            Instances = CreateInstances(configured);
+            return;
+        }
+
+        var group = ServerGroup.Load(Path.Combine(sessions, saved, ServerGroup.FileName));
         Instances = CreateInstances(group);
         Open(saved);
     }
@@ -57,25 +64,31 @@ internal sealed class ConsoleSession : IDisposable
     private static ServerInstance[] CreateInstances(ServerGroup group) =>
         group.Processes.Select(process => new ServerInstance(process.Role, process.Number)).ToArray();
 
-    private ServerGroup LoadRunGroup(string id)
+    private bool HasLegacyRun(string id)
     {
-        var path = Path.Combine(sessions, id, ServerGroup.FileName);
-        if (File.Exists(path))
-        {
-            return ServerGroup.Load(path);
-        }
-
-        // Before count configuration, each saved role apphost represented exactly one instance.
-        var counts = new Dictionary<ProcessType, int>();
+        bool legacy = false;
         foreach (var type in Enum.GetValues<ProcessType>())
         {
-            var executable = Path.Combine(Snapshot(id), type + "Server.exe");
-            counts.Add(type, File.Exists(executable) ? 1 : 0);
+            var legacyExecutable = Path.Combine(Snapshot(id), type + "Server.exe");
+            if (!File.Exists(legacyExecutable))
+            {
+                continue;
+            }
+
+            legacy = true;
+            foreach (var candidate in Process.GetProcessesByName(type + "Server"))
+            {
+                using (candidate)
+                {
+                    if (!candidate.HasExited && string.Equals(candidate.MainModule?.FileName, legacyExecutable, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidDataException("该运行组使用旧的无编号实例名，请先用旧版控制台停止整组，再创建新的运行组。");
+                    }
+                }
+            }
         }
 
-        var group = new ServerGroup(counts);
-        group.Save(path);
-        return group;
+        return legacy;
     }
 
     public void Refresh()

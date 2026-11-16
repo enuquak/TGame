@@ -63,9 +63,9 @@ internal sealed partial class GameServerNode
 
         string? target = Role switch
         {
-            nameof(ProcessType.Gate) when fromRole == ServerPeerNames.Client => ping.Entry,
-            nameof(ProcessType.Base) when fromRole == nameof(ProcessType.Gate) && ping.Storage => nameof(ProcessType.DBMgr),
-            nameof(ProcessType.Base) or nameof(ProcessType.Login) when fromRole == nameof(ProcessType.Gate) => nameof(ProcessType.Router),
+            nameof(ProcessType.Gate) when fromRole == ServerPeerNames.Client => ServerProcess.FormatName(ping.Entry, 1),
+            nameof(ProcessType.Base) when fromRole == nameof(ProcessType.Gate) && ping.Storage => ServerProcess.FormatName(nameof(ProcessType.DBMgr), 1),
+            nameof(ProcessType.Base) or nameof(ProcessType.Login) when fromRole == nameof(ProcessType.Gate) => ServerProcess.FormatName(nameof(ProcessType.Router), 1),
             nameof(ProcessType.Router) when !ping.Storage => owners.GetValueOrDefault(ping.EntityId),
             _ => throw new InvalidDataException($"No route from {from} through {Role} to {ping.EntityId}.")
         };

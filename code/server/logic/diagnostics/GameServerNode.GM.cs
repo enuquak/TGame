@@ -5,7 +5,7 @@ namespace TGame.Server.Logic;
 internal sealed partial class GameServerNode
 {
     // Only the GM HTTP handler constructs this command; it accepts no storage or profile operations.
-    internal Task<Pong> GmPingAsync(Ping ping, CancellationToken stop) => ForwardPingAsync(nameof(ProcessType.Router), ping, stop);
+    internal Task<Pong> GmPingAsync(Ping ping, CancellationToken stop) => ForwardPingAsync(ServerProcess.FormatName(nameof(ProcessType.Router), 1), ping, stop);
 
     private async Task<Pong> RouteGmPingAsync(string from, Ping ping, CancellationToken stop)
     {

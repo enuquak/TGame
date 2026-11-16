@@ -9,6 +9,7 @@ internal static class GroupChecks
 {
     public static async Task RunAsync(CancellationToken stop)
     {
+        CheckInstanceNames();
         await CheckBaseRoutersAsync(stop);
 
         var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1);
@@ -16,12 +17,12 @@ internal static class GroupChecks
         counts[ProcessType.Base] = 3;
         var group = new ServerGroup(counts);
         var point = new WaitingSinglePoint();
-        var gate = new GameServerNode(nameof(ProcessType.Gate), point, group);
+        var gate = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), point, group);
         var initialization = gate.InitializeAsync(stop);
         var streams = new Dictionary<string, FrameStream>();
         var tasks = new List<Task>();
 
-        foreach (var peer in new[] { nameof(ProcessType.Login), nameof(ProcessType.Base) })
+        foreach (var peer in new[] { ServerProcess.FormatName(nameof(ProcessType.Login), 1), ServerProcess.FormatName(nameof(ProcessType.Base), 1) })
         {
             var stream = new FrameStream();
             streams.Add(peer, stream);
@@ -33,16 +34,16 @@ internal static class GroupChecks
             throw new Exception("Gate became ready after only 1 Login and 1 Base; configuration requires 2 Login and 3 Base.");
         }
 
-        await Rejected(nameof(ProcessType.Login), StatusCode.AlreadyExists);
+        await Rejected(ServerProcess.FormatName(nameof(ProcessType.Login), 1), StatusCode.AlreadyExists);
         await Rejected(ServerProcess.FormatName(nameof(ProcessType.Login), 3), StatusCode.InvalidArgument);
-        await Rejected(nameof(ProcessType.Router), StatusCode.InvalidArgument);
+        await Rejected(ServerProcess.FormatName(nameof(ProcessType.Router), 1), StatusCode.InvalidArgument);
 
         foreach (var peer in group.Processes.Where(peer => peer.Number > 1 && peer.Type is ProcessType.Login or ProcessType.Base))
         {
             if (peer.Type == ProcessType.Base && peer.Number == 3)
             {
                 var failed = new FrameStream();
-                failed.Input.Writer.TryWrite(new Frame { Hello = nameof(ProcessType.Base) });
+                failed.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Base), 1) });
                 try
                 {
                     await gate.RunLinkAsync(peer.Name, Guid.NewGuid().ToString("N"), [], failed, failed, stop);
@@ -107,7 +108,7 @@ internal static class GroupChecks
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var cancelledPoint = new WaitingSinglePoint();
-        var cancelledNode = new GameServerNode(nameof(ProcessType.Gate), cancelledPoint, group);
+        var cancelledNode = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), cancelledPoint, group);
         var cancelledInit = cancelledNode.InitializeAsync(cancellation.Token);
         cancellation.Cancel();
         try
@@ -126,7 +127,7 @@ internal static class GroupChecks
 
         var isolatedCounts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
         isolatedCounts[ProcessType.Router] = 1;
-        var isolated = new GameServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint(), new ServerGroup(isolatedCounts));
+        var isolated = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new RouterServerSinglePoint(), new ServerGroup(isolatedCounts));
         await isolated.InitializeAsync(stop);
         if (!isolated.Ready)
         {
@@ -153,6 +154,23 @@ internal static class GroupChecks
             stream.Input.Writer.TryWrite(new Frame { Hello = peer });
             return gate.RunLinkAsync(peer, Guid.NewGuid().ToString("N"), [], stream, stream, stop);
         }
+    }
+
+    private static void CheckInstanceNames()
+    {
+        var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1);
+        counts[ProcessType.Router] = 2;
+        var group = new ServerGroup(counts);
+        string[] expected = [nameof(ProcessType.Router) + "1", nameof(ProcessType.Router) + "2"];
+        var routers = group.Processes.Where(process => process.Type == ProcessType.Router);
+        if (!routers.Select(process => process.Name).SequenceEqual(expected) ||
+            group.GetProcess(nameof(ProcessType.Base) + "1").Number != 1 ||
+            group.Contains(nameof(ProcessType.Router)))
+        {
+            throw new Exception("Every instance must include its number, including a single instance and instance 1.");
+        }
+
+        Console.WriteLine("PASS explicit instance numbering starts at 1 for every process type.");
     }
 
     private static async Task CheckBaseRoutersAsync(CancellationToken stop)
@@ -243,7 +261,7 @@ internal static class GroupChecks
 
     private static async Task CheckRoutingAsync(ServerGroup group, CancellationToken stop)
     {
-        var router = new GameServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint(), group);
+        var router = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new RouterServerSinglePoint(), group);
         var initialization = router.InitializeAsync(stop);
         var streams = new Dictionary<string, FrameStream>();
         var ids = new Dictionary<string, string>();
@@ -262,7 +280,7 @@ internal static class GroupChecks
         await initialization.WaitAsync(stop);
         var secondBase = ServerProcess.FormatName(nameof(ProcessType.Base), 2);
         var publisher = streams[secondBase];
-        var profile = streams[nameof(ProcessType.Profile)];
+        var profile = streams[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
         var request = new ProfileRequest
         {
             RequestId = Guid.NewGuid().ToString("N"),
@@ -289,7 +307,7 @@ internal static class GroupChecks
             throw new Exception("Profile reply did not return to the second Base instance.");
         }
 
-        var firstBase = streams[nameof(ProcessType.Base)];
+        var firstBase = streams[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
         var foreign = request.Clone();
         foreign.RequestId = Guid.NewGuid().ToString("N");
         firstBase.Input.Writer.TryWrite(new Frame { ProfileRequest = foreign });

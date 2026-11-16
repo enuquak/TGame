@@ -17,7 +17,7 @@ public sealed record ServerProcess(ProcessType Type, int Number)
             throw new ArgumentOutOfRangeException(nameof(number));
         }
 
-        return number == 1 ? role : role + number;
+        return role + number;
     }
 }
 

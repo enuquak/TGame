@@ -54,7 +54,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 Profile 验收使用本轮 Base 的唯一 EntityId。Base 经 Router 发布显示名和称号，Scene 首次拉取读回 MongoDB，Login 再次拉取命中 Redis，Base 撤回后 Scene 查到 Missing。验收核对调用方实际收到的摘要、两跳收发记录及存储侧日志。见[摘要协议](code/shared/protocols/profile.proto)、[测试存储地址](code/server/config/storage.test.yaml)和[云主机容量评估](docs/环境配置落地记录.md#profile-存储容量评估)。
 
-服务进程直接写入 `logs/server/<实例名称>Server/`，例如 `logs/server/BaseServer/` 和 `logs/server/GMServer/`。每行是一条 JSON 事件，可按 `runId`、`pid`、请求 `id` 查询。每个实例使用 `<运行ID>-<PID>-yyyyMMddHH.log`，按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
+服务进程直接写入 `logs/server/<实例名称>Server/`，例如 `logs/server/Base1Server/` 和 `logs/server/GM1Server/`。每行是一条 JSON 事件，可按 `runId`、`pid`、请求 `id` 查询。每个实例使用 `<运行ID>-<PID>-yyyyMMddHH.log`，按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
 
 验收材料在 `logs/tools/pingpong/<运行ID>/`。`result.log` 汇总链路和协议验证结果，`server-logs.json` 定位本轮服务日志，`Client.log` 是测试客户端输出。服务进程的致命异常以 `PROCESS_FAILED` 记录，启动器捕获的原始标准错误保存在验收目录的 `<角色>.stderr.log`。成功末行为 `PASS processes=8 grpc_links=9 wss_sessions=1 rounds=2 pong=25 mongo_ping=2 gm_http=5`。失败返回非零退出码。已有旧版验收目录仍可通过 `Test-PingPongLogs.ps1 -RunDirectory <目录>` 复核。
 
@@ -86,7 +86,7 @@ DBMgr 使用 [dbmgr-storage.yaml](code/server/config/dbmgr-storage.yaml) 配置 
 Invoke-RestMethod -Method Post -Uri "$gmAddress/gm/commands/ping/$entityId" -Headers @{ Authorization = "Bearer $env:TGAME_GM_TOKEN" }
 ```
 
-有效指令返回 200，响应包含实际回包进程。鉴权失败返回 401，ID 格式错误返回 400，目标未登记返回 404，路由暂不可用返回 503。`logs/server/GMServer/` 中的 `GM_COMMAND` 记录执行人、目标、请求 ID 与状态码。
+有效指令返回 200，响应包含实际回包进程。鉴权失败返回 401，ID 格式错误返回 400，目标未登记返回 404，路由暂不可用返回 503。`logs/server/GM1Server/` 中的 `GM_COMMAND` 记录执行人、目标、请求 ID 与状态码。
 
 ## 云服务器连接
 

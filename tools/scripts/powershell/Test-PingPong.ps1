@@ -107,7 +107,7 @@ try
     $roles = @($instances.Name)
     foreach ($required in [Enum]::GetNames([TGame.ProcessType]))
     {
-        if ($required -cnotin $roles)
+        if ($required -cnotin $instances.Role)
         {
             throw "The full protocol smoke test requires at least one $required instance."
         }
@@ -201,7 +201,10 @@ try
             throw "Expected one startup Entity in $role."
         }
 
-        $pointIds[$role] = $point[0].entity
+        if (($instances | Where-Object Name -CEQ $role).Number -eq 1)
+        {
+            $pointIds[$point[0].role] = $point[0].entity
+        }
     }
 
     $cases = @(foreach ($round in 1..2)
@@ -269,7 +272,7 @@ try
     }
 
     $cases | ConvertTo-Json -Depth $caseJsonDepth -AsArray | Set-Content -LiteralPath "$runDir/cases.json" -Encoding utf8
-    $listen = & $readLog $runDir $gateRole -Event ([TGame.ServerLogEvents]::Listen)
+    $listen = & $readLog $runDir ([TGame.ServerProcess]::FormatName($gateRole, 1)) -Event ([TGame.ServerLogEvents]::Listen)
     $endpoint = 'wss://localhost:{0}/probe' -f ([uri]$listen.detail).Port
     & $dotnet $clientDll $runDir $endpoint $listen.link > "$runDir/Client.log" 2> "$runDir/Client.err.log"
     if ($LASTEXITCODE -ne 0)
@@ -277,7 +280,7 @@ try
         throw "Client failed. See Client.err.log."
     }
 
-    $gmListen = & $readLog $runDir $gmRole -Event ([TGame.ServerLogEvents]::Listen)
+    $gmListen = & $readLog $runDir ([TGame.ServerProcess]::FormatName($gmRole, 1)) -Event ([TGame.ServerLogEvents]::Listen)
     $gmUri = [uri]$gmListen.detail
     if ($gmUri.Host -ne '127.0.0.1' -or $gmUri.Scheme -ne 'http')
     {

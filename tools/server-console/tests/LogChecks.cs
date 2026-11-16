@@ -14,10 +14,11 @@ internal static class LogChecks
     // A private executable waiting on stdin supplies a real image path, PID and creation time.
     public static void Run(string checkout)
     {
+        var name = ServerProcess.FormatName(ProcessName, 1);
         var id = Guid.NewGuid().ToString("N");
         var run = Directory.CreateDirectory(Path.Combine(checkout, "build", "log-check", id)).FullName;
-        var logs = Directory.CreateDirectory(Path.Combine(run, ProcessName + "Server")).FullName;
-        var exe = Path.Combine(run, ProcessName + "Server.exe");
+        var logs = Directory.CreateDirectory(Path.Combine(run, name + "Server")).FullName;
+        var exe = Path.Combine(run, name + "Server.exe");
         File.Copy(Path.Combine(Environment.SystemDirectory, "sort.exe"), exe);
         using var child = Process.Start(new ProcessStartInfo(exe)
         {
@@ -28,7 +29,7 @@ internal static class LogChecks
         })!;
         try
         {
-            var identity = Path.Combine(run, ProcessName + ".json");
+            var identity = Path.Combine(run, name + ".json");
             long ticks = child.StartTime.ToUniversalTime().Ticks;
             string prefix = Path.Combine(logs, $"{id}-{child.Id}-2026110712");
 
@@ -39,6 +40,7 @@ internal static class LogChecks
                     runId = runId ?? id,
                     pid = pid ?? child.Id,
                     role = ProcessName,
+                    instance = name,
                     time = new DateTimeOffset(time ?? DateTime.UtcNow.Ticks, TimeSpan.Zero),
                     ev,
                     detail

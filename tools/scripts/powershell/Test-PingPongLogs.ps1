@@ -23,8 +23,20 @@ else
     }
 }
 
-$hasProfile = ([TGame.ProcessType]::Profile.ToString()) -in $roles
-$hasGM = ([TGame.ProcessType]::GM.ToString()) -in $roles
+function Get-FirstInstanceName([string]$Type)
+{
+    $numbered = [TGame.ServerProcess]::FormatName($Type, 1)
+    if ($numbered -cin $roles)
+    {
+        return $numbered
+    }
+
+    # Historical logs used bare type names, and the external Client has no instance number.
+    return $Type
+}
+
+$hasProfile = (Get-FirstInstanceName ([TGame.ProcessType]::Profile.ToString())) -in $roles
+$hasGM = (Get-FirstInstanceName ([TGame.ProcessType]::GM.ToString())) -in $roles
 $records = @(foreach ($role in ($roles + ([TGame.ServerPeerNames]::Client)))
     {
         & "$PSScriptRoot/Read-PingPongLog.ps1" $RunDirectory $role
@@ -82,7 +94,7 @@ foreach ($role in $expectedRoles)
     $id = $point[0].entity
     $routes = @($records | Where-Object { $_.ev -eq ([TGame.ServerLogEvents]::EntityRoute) -and $_.role -eq ([TGame.ProcessType]::Router.ToString()) -and $_.peer -eq $role -and $_.entity -ceq $id })
     $routed = $point[0].role -in ([TGame.ProcessType]::Login.ToString()),([TGame.ProcessType]::Base.ToString()),([TGame.ProcessType]::Scene.ToString()),([TGame.ProcessType]::DBMgr.ToString()),([TGame.ProcessType]::Profile.ToString()),([TGame.ProcessType]::GM.ToString())
-    $probes = @($cases | Where-Object { !$_.ProfileAction -and $_.Entity -ceq $id -and $_.Path[-1] -eq $role -and (!$routed -or $_.Path -contains ([TGame.ProcessType]::Router.ToString())) })
+    $probes = @($cases | Where-Object { !$_.ProfileAction -and $_.Entity -ceq $id -and $_.Path[-1] -eq $point[0].role -and (!$routed -or $_.Path -contains ([TGame.ProcessType]::Router.ToString())) })
     $type = $point[0].detail
     if ($point[0].ev -eq ([TGame.ServerLogEvents]::LegacyBaseSinglePointInit))
     {
@@ -90,7 +102,7 @@ foreach ($role in $expectedRoles)
     }
 
     # Multiple route cases may now target the same real SinglePoint.
-    $requiresProbe = $role -ceq $point[0].role
+    $requiresProbe = $role -ceq (Get-FirstInstanceName $point[0].role)
     if (!$type -or $id -cnotmatch '^[0-9a-f]{32}$' -or $routes.Count -ne ([int]$routed * $routerCount) -or ($requiresProbe -and $probes.Count -lt 1))
     {
         throw "Incomplete SinglePoint initialization, registration or probe evidence for $role."
@@ -198,6 +210,7 @@ if ($gateSessions.Count -ne 1 -or !$gateSessions[0])
 
 foreach ($case in $cases)
 {
+    $path = @($case.Path | ForEach-Object { Get-FirstInstanceName $_ })
     $events = @($records | Where-Object ([TGame.ServerLogFields]::Id) -eq $case.Id)
     if ($case.ProfileAction)
     {
@@ -209,7 +222,8 @@ foreach ($case in $cases)
             throw "Missing storage/cache evidence for $($case.Id)."
         }
 
-        $inner = @($case.Path[-1], ([TGame.ProcessType]::Router.ToString()), ([TGame.ProcessType]::Profile.ToString()))
+        $innerRoles = @($case.Path[-1], ([TGame.ProcessType]::Router.ToString()), ([TGame.ProcessType]::Profile.ToString()))
+        $inner = @($innerRoles | ForEach-Object { Get-FirstInstanceName $_ })
 
         for ($i = 1; $i -lt $inner.Count; $i++)
         {
@@ -222,7 +236,7 @@ foreach ($case in $cases)
             ))
             {
                 $kind,$sender,$peer = $expected.Split(' ')
-                $match = @($profileEvents | Where-Object { $_.ev -ceq $kind -and $_.role -eq $sender -and $_.peer -eq $peer -and
+                $match = @($profileEvents | Where-Object { $_.ev -ceq $kind -and $_.instance -eq $sender -and $_.peer -eq $peer -and
                         $_.entity -ceq $case.ProfileSubject -and $_.link -eq $activeLinks["$src/$dst"] })
                 if ($match.Count -ne 1)
                 {
@@ -241,7 +255,7 @@ foreach ($case in $cases)
 
     for ($i = 1; $i -lt $case.Path.Count; $i++)
     {
-        $src, $dst = $case.Path[$i-1], $case.Path[$i]
+        $src, $dst = $path[$i-1], $path[$i]
         foreach ($expected in @(
             "$([TGame.ServerLogEvents]::PingTx) $src $dst"
             "$([TGame.ServerLogEvents]::PingRx) $dst $src"
@@ -250,7 +264,13 @@ foreach ($case in $cases)
         ))
         {
             $kind,$sender,$peer = $expected.Split(' ')
-            $found = @($events | Where-Object { $_.ev -eq $kind -and $_.role -eq $sender -and $_.peer -eq $peer -and $_.entity -ceq $case.Entity })
+            $expectedPeer = $peer
+            if ($sender -ceq [TGame.ServerPeerNames]::Client)
+            {
+                $expectedPeer = $case.Path[$i]
+            }
+
+            $found = @($events | Where-Object { $_.ev -eq $kind -and $_.instance -eq $sender -and $_.peer -eq $expectedPeer -and $_.entity -ceq $case.Entity })
             if ($found.Count -ne 1)
             {
                 throw "Missing or duplicate $expected for $($case.Id)."
@@ -303,6 +323,7 @@ if ($hasGM)
             }
         }
 
+        $path = @($path | ForEach-Object { Get-FirstInstanceName $_ })
         if ($audit.Count -ne 1 -or $events.Count -ne (1 + 4 * ($path.Count - 1)))
         {
             throw "GM audit mismatch for $($check.Check)."
@@ -319,7 +340,7 @@ if ($hasGM)
             ))
             {
                 $kind,$sender,$peer = $expected.Split(' ')
-                if (@($events | Where-Object { $_.ev -ceq $kind -and $_.role -eq $sender -and $_.peer -eq $peer -and
+                if (@($events | Where-Object { $_.ev -ceq $kind -and $_.instance -eq $sender -and $_.peer -eq $peer -and
                             $_.entity -ceq $check.Entity -and $_.link -ceq $activeLinks["$src/$dst"] }).Count -ne 1)
                 {
                     throw "Missing GM hop $expected."

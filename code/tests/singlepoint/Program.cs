@@ -51,12 +51,12 @@ foreach (var processType in Enum.GetValues<ProcessType>())
     }
 }
 
-var loginNode = new GameServerNode(nameof(ProcessType.Login), new LoginServerSinglePoint(), group);
+var loginNode = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Login), 1), new LoginServerSinglePoint(), group);
 var loginInit = loginNode.InitializeAsync(stop);
 var router = new FrameStream();
-var routerLink = Open(loginNode, nameof(ProcessType.Router), router);
+var routerLink = Open(loginNode, ServerProcess.FormatName(nameof(ProcessType.Router), 1), router);
 var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-var pendingGate = Open(loginNode, nameof(ProcessType.Gate), new FrameStream { BeforeWrite = handshake.Task });
+var pendingGate = Open(loginNode, ServerProcess.FormatName(nameof(ProcessType.Gate), 1), new FrameStream { BeforeWrite = handshake.Task });
 if (await Task.WhenAny(loginInit, Task.Delay(HandshakeObservationMilliseconds, stop)) == loginInit)
 {
     Console.Error.WriteLine("Login became available before it sent its handshake reply.");
@@ -77,7 +77,7 @@ if (loginNode.Ready)
 }
 
 var retry = new FrameStream();
-var accepted = Open(loginNode, nameof(ProcessType.Gate), retry);
+var accepted = Open(loginNode, ServerProcess.FormatName(nameof(ProcessType.Gate), 1), retry);
 await loginInit.WaitAsync(stop);
 
 var profileRequest = new ProfileRequest { RequestId = Guid.NewGuid().ToString("N"), Fetch = Guid.NewGuid().ToString("N") };
@@ -107,7 +107,7 @@ router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
 
 var point = new WaitingSinglePoint();
-var gate = new GameServerNode(nameof(ProcessType.Gate), point, group);
+var gate = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), point, group);
 var initialization = gate.InitializeAsync(stop);
 if (point.Started.Task.IsCompleted)
 {
@@ -116,7 +116,7 @@ if (point.Started.Task.IsCompleted)
 
 var login = new FrameStream();
 var basePeer = new FrameStream();
-var streams = Task.WhenAll(Open(gate, nameof(ProcessType.Login), login), Open(gate, nameof(ProcessType.Base), basePeer));
+var streams = Task.WhenAll(Open(gate, ServerProcess.FormatName(nameof(ProcessType.Login), 1), login), Open(gate, ServerProcess.FormatName(nameof(ProcessType.Base), 1), basePeer));
 await point.Started.Task.WaitAsync(stop);
 
 var context = new DefaultHttpContext();
@@ -159,7 +159,7 @@ if (cancelling.Initialized)
     throw new Exception("Cancelled SinglePoint became ready.");
 }
 
-var routes = new GameServerNode(nameof(ProcessType.Router), new RouterServerSinglePoint(), group);
+var routes = new GameServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new RouterServerSinglePoint(), group);
 var routerInit = routes.InitializeAsync(stop);
 var duplicateEntityId = Guid.NewGuid().ToString("N");
 string[][] invalidRegistrations = [[], [LegacyProbeEntityId], [duplicateEntityId, duplicateEntityId]];
@@ -167,7 +167,7 @@ foreach (var ids in invalidRegistrations)
 {
     try
     {
-        await Open(routes, nameof(ProcessType.Base), new FrameStream(), ids).WaitAsync(stop);
+        await Open(routes, ServerProcess.FormatName(nameof(ProcessType.Base), 1), new FrameStream(), ids).WaitAsync(stop);
         throw new Exception("Router accepted an empty, non-GUID or duplicate entity registration.");
     }
     catch (RpcException error) when (error.StatusCode == StatusCode.InvalidArgument)
@@ -184,8 +184,9 @@ foreach (var pair in Topology.Dials)
         continue;
     }
 
-    neighbors.Add(pair.Key, new FrameStream());
-    neighborIds.Add(pair.Key, Guid.NewGuid().ToString("N"));
+    var peer = ServerProcess.FormatName(pair.Key, 1);
+    neighbors.Add(peer, new FrameStream());
+    neighborIds.Add(peer, Guid.NewGuid().ToString("N"));
 }
 
 var routeTasks = new List<Task>();
@@ -199,20 +200,20 @@ await routerInit.WaitAsync(stop);
 foreach (var stream in neighbors.Values)
 {
     var reply = await stream.Output.Reader.ReadAsync(stop);
-    if (reply.Hello != nameof(ProcessType.Router))
+    if (reply.Hello != routes.Name)
     {
         throw new Exception("Router did not acknowledge a GUID-only registration.");
     }
 }
 
-var baseRoute = neighbors[nameof(ProcessType.Base)];
-var profileRoute = neighbors[nameof(ProcessType.Profile)];
+var baseRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
+var profileRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
 var publish = new ProfileRequest
 {
     RequestId = Guid.NewGuid().ToString("N"),
     Publish = new EntitySummary
     {
-        EntityId = neighborIds[nameof(ProcessType.Base)],
+        EntityId = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)],
         DisplayName = ProfileProbeData.DisplayName,
         Title = ProfileProbeData.Title
     }
@@ -241,22 +242,22 @@ if (published?.RequestId != publish.RequestId || published.EntityId != publish.P
 
 var foreignPublish = publish.Clone();
 foreignPublish.RequestId = Guid.NewGuid().ToString("N");
-foreignPublish.Publish.EntityId = neighborIds[nameof(ProcessType.Scene)];
-await ExpectProfileRejected(nameof(ProcessType.Base), foreignPublish);
-await ExpectProfileRejected(nameof(ProcessType.Base), new ProfileRequest
+foreignPublish.Publish.EntityId = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Scene), 1)];
+await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), foreignPublish);
+await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), new ProfileRequest
 {
     RequestId = Guid.NewGuid().ToString("N"),
-    Withdraw = neighborIds[nameof(ProcessType.Scene)]
+    Withdraw = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Scene), 1)]
 });
-await ExpectProfileRejected(nameof(ProcessType.Base), new ProfileRequest
+await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), new ProfileRequest
 {
     RequestId = Guid.NewGuid().ToString("N"),
     Fetch = LegacyProbeEntityId
 });
-await ExpectProfileRejected(nameof(ProcessType.GM), new ProfileRequest
+await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.GM), 1), new ProfileRequest
 {
     RequestId = Guid.NewGuid().ToString("N"),
-    Fetch = neighborIds[nameof(ProcessType.Base)]
+    Fetch = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)]
 });
 
 var missing = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = Guid.NewGuid().ToString("N"), Entry = nameof(ProcessType.Base) };

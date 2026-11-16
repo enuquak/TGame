@@ -43,7 +43,7 @@ try
     await session.StopAsync([selected]);
     await UntilAsync("Base stopped, Gate still running with a missing link", () =>
         selected.Status == ServerStatus.Stopped &&
-        session.Instances.Single(i => i.Name == nameof(ProcessType.Gate)).Status == ServerStatus.Disconnected);
+        session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.Gate), 1)).Status == ServerStatus.Disconnected);
     await session.StartAsync();
     await UntilAsync("Base rejoined", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
     if (selected.Pid == pids[selected.Name] || session.Instances.Any(i => i.Name != selected.Name && i.Pid != pids[i.Name]))
@@ -64,7 +64,7 @@ try
         throw new InvalidOperationException("Restarting the Router instance retained its old PID.");
     }
 
-    var gm = session.Instances.Single(i => i.Name == nameof(ProcessType.GM));
+    var gm = session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.GM), 1));
     await session.StopAsync([gm]);
     var originalToken = Environment.GetEnvironmentVariable(ServerEnvironment.GMToken);
     try
@@ -84,7 +84,7 @@ try
     await session.StartAsync();
     await UntilAsync("GM role initialization recovered", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
 
-    var dbMgr = session.Instances.Single(i => i.Name == nameof(ProcessType.DBMgr));
+    var dbMgr = session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.DBMgr), 1));
     await session.StopAsync([dbMgr]);
     var originalMongoPassword = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
     try

@@ -75,9 +75,14 @@ internal static class GroupConfigChecks
         File.Delete(Path.Combine(run, ServerGroup.FileName));
         using var legacy = new ConsoleSession(root);
         if (legacy.Instances.Count != Enum.GetValues<ProcessType>().Length ||
-            !File.Exists(Path.Combine(run, ServerGroup.FileName)))
+            legacy.Instances.Any(instance => instance.Alive || instance.Name != instance.Role + "1"))
         {
-            throw new Exception("The console could not recover an old single-instance group from its apphost snapshot.");
+            throw new Exception("A stopped unnumbered group did not prepare new numbered instances.");
+        }
+
+        if (File.Exists(Path.Combine(run, ServerGroup.FileName)))
+        {
+            throw new Exception("The console rewrote an incompatible group's configuration.");
         }
 
         Console.WriteLine("PASS configured 2 Login and 3 Base instances.");

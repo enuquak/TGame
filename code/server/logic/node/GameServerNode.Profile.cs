@@ -11,7 +11,7 @@ internal sealed partial class GameServerNode
     private const int MaxProfileTextLength = 80;
 
     internal Task<ProfileReply> CallProfileAsync(ProfileRequest request, CancellationToken stop) =>
-        ForwardProfileAsync(nameof(ProcessType.Router), request, stop);
+        ForwardProfileAsync(ServerProcess.FormatName(nameof(ProcessType.Router), 1), request, stop);
 
     private async Task<ProfileReply> ForwardProfileAsync(string peer, ProfileRequest request, CancellationToken stop)
     {
@@ -67,7 +67,7 @@ internal sealed partial class GameServerNode
                 return Failure(Result.Rejected);
             }
 
-            return await ForwardProfileAsync(nameof(ProcessType.Profile), request, stop);
+            return await ForwardProfileAsync(ServerProcess.FormatName(nameof(ProcessType.Profile), 1), request, stop);
         }
 
         if (singlePoint is not ProfileServerSinglePoint profile || PeerRole(from) != nameof(ProcessType.Router))
