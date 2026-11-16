@@ -18,6 +18,8 @@ using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeou
 var stop = deadline.Token;
 var group = new ServerGroup(Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1));
 
+RpcChecks.CheckTransportBoundary();
+await RpcChecks.RunAsync(stop);
 await GroupChecks.RunAsync(stop);
 
 foreach (var processType in Enum.GetValues<ProcessType>())
@@ -65,20 +67,18 @@ await loginInit.WaitAsync(stop);
 var profileRequest = new ProfileRequest { RequestId = Guid.NewGuid().ToString("N"), Fetch = Guid.NewGuid().ToString("N") };
 var profileCall = loginNode.CallProfileAsync(profileRequest, stop);
 var profileFrame = await router.Output.Reader.ReadAsync(stop);
-if (profileFrame.ProfileRequest?.RequestId != profileRequest.RequestId || profileFrame.ProfileRequest.Fetch != profileRequest.Fetch)
+var receivedProfile = profileFrame.ReadRequest<ProfileRequest>();
+if (receivedProfile.RequestId != profileRequest.RequestId || receivedProfile.Fetch != profileRequest.Fetch)
 {
     throw new Exception("Profile requests must use their own transport message without a Ping wrapper.");
 }
 
-router.Input.Writer.TryWrite(new Frame
+router.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
 {
-    ProfileReply = new ProfileReply
-    {
-        RequestId = profileRequest.RequestId,
-        EntityId = profileRequest.Fetch,
-        Result = ProfileReply.Types.Result.Missing
-    }
-});
+    RequestId = profileRequest.RequestId,
+    EntityId = profileRequest.Fetch,
+    Result = ProfileReply.Types.Result.Missing
+}));
 if ((await profileCall.WaitAsync(stop)).Result != ProfileReply.Types.Result.Missing)
 {
     throw new Exception("Profile reply was not delivered independently of Ping/Pong.");
@@ -199,23 +199,21 @@ var publish = new ProfileRequest
         Title = ProfileProbeData.Title
     }
 };
-baseRoute.Input.Writer.TryWrite(new Frame { ProfileRequest = publish });
+baseRoute.Input.Writer.TryWrite(RpcFrames.Request(publish));
 var forwarded = await profileRoute.Output.Reader.ReadAsync(stop);
-if (forwarded.ProfileRequest?.RequestId != publish.RequestId || forwarded.ProfileRequest.Publish?.EntityId != publish.Publish.EntityId)
+var forwardedProfile = forwarded.ReadRequest<ProfileRequest>();
+if (forwardedProfile.RequestId != publish.RequestId || forwardedProfile.Publish?.EntityId != publish.Publish.EntityId)
 {
     throw new Exception("Router did not forward an owned GUID entity to the Profile role.");
 }
 
-profileRoute.Input.Writer.TryWrite(new Frame
+profileRoute.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
 {
-    ProfileReply = new ProfileReply
-    {
-        RequestId = publish.RequestId,
-        EntityId = publish.Publish.EntityId,
-        Result = ProfileReply.Types.Result.Stored
-    }
-});
-var published = (await baseRoute.Output.Reader.ReadAsync(stop)).ProfileReply;
+    RequestId = publish.RequestId,
+    EntityId = publish.Publish.EntityId,
+    Result = ProfileReply.Types.Result.Stored
+}));
+var published = (await baseRoute.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>();
 if (published?.RequestId != publish.RequestId || published.EntityId != publish.Publish.EntityId || published.Result != ProfileReply.Types.Result.Stored)
 {
     throw new Exception("Profile reply did not return to the owner of the GUID entity.");
@@ -242,8 +240,8 @@ await ExpectProfileRejected(nameof(ProcessType.GM), new ProfileRequest
 });
 
 var missing = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = Guid.NewGuid().ToString("N"), Entry = nameof(ProcessType.Base) };
-baseRoute.Input.Writer.TryWrite(new Frame { Ping = missing });
-var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).Pong;
+baseRoute.Input.Writer.TryWrite(RpcFrames.Request(missing));
+var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).ReadReply<Pong>();
 if (notFound?.RequestId != missing.RequestId || notFound.Status != Pong.Types.Status.NotFound || !routes.Ready)
 {
     throw new Exception("A missing entity interrupted a healthy stream.");
@@ -261,8 +259,8 @@ return 0;
 async Task ExpectProfileRejected(string peer, ProfileRequest request)
 {
     var stream = neighbors[peer];
-    stream.Input.Writer.TryWrite(new Frame { ProfileRequest = request });
-    var reply = (await stream.Output.Reader.ReadAsync(stop)).ProfileReply;
+    stream.Input.Writer.TryWrite(RpcFrames.Request(request));
+    var reply = (await stream.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>();
     if (reply?.RequestId != request.RequestId || reply.Result != ProfileReply.Types.Result.Rejected || !routes.Ready)
     {
         throw new Exception("Profile accepted an invalid subject, foreign mutation or unauthorized caller.");
@@ -283,8 +281,8 @@ Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null
 async Task ExpectPong(Pong.Types.Status status)
 {
     var ping = new Ping { RequestId = Guid.NewGuid().ToString("N"), EntityId = point.State.EntityId, Entry = nameof(ProcessType.Gate) };
-    login.Input.Writer.TryWrite(new Frame { Ping = ping });
-    var response = (await login.Output.Reader.ReadAsync(stop)).Pong;
+    login.Input.Writer.TryWrite(RpcFrames.Request(ping));
+    var response = (await login.Output.Reader.ReadAsync(stop)).ReadReply<Pong>();
     if (response?.RequestId != ping.RequestId || response.Status != status)
     {
         throw new Exception($"Expected {status} for the Gate entity, got {response}.");

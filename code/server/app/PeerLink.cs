@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using TGame.Transport;
 
@@ -8,8 +9,12 @@ internal sealed partial class PeerLink(string role, string peer, string id, IAsy
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(12);
 
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<Frame>> waiting = new();
+    private bool closed;
+    private readonly object pendingChanges = new();
+    private readonly Dictionary<string, TaskCompletionSource<RpcReply>> waiting = new();
     private readonly SemaphoreSlim writer = new(1);
+
+    public string Id => id;
 
     private async Task WriteAsync(Frame frame, CancellationToken stop)
     {
@@ -24,44 +29,84 @@ internal sealed partial class PeerLink(string role, string peer, string id, IAsy
         }
     }
 
-    private async Task<Frame> CallAsync(Frame frame, string requestId, string entity, string ev, CancellationToken stop)
+    internal async Task<TReply> CallAsync<TReply>(IMessage message, string requestId, CancellationToken stop, Action? sent = null)
+        where TReply : IMessage<TReply>, new()
     {
-        var reply = new TaskCompletionSource<Frame>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!waiting.TryAdd(requestId, reply))
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        stop.ThrowIfCancellationRequested();
+
+        var request = new RpcRequest { RequestId = requestId, Payload = Any.Pack(message) };
+        var reply = new TaskCompletionSource<RpcReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (pendingChanges)
         {
-            throw new InvalidDataException("Duplicate request ID.");
+            if (closed)
+            {
+                throw new IOException($"Link {role}-{peer} closed.");
+            }
+
+            if (!waiting.TryAdd(requestId, reply))
+            {
+                throw new InvalidDataException("Duplicate request ID.");
+            }
         }
 
         try
         {
-            await WriteAsync(frame, stop);
-            TraceLog.Event(ev, role, peer, requestId, entity, id);
-            return await reply.Task.WaitAsync(RequestTimeout, stop);
+            await WriteAsync(new Frame { Request = request }, stop);
+            sent?.Invoke();
+
+            var response = await reply.Task.WaitAsync(RequestTimeout, stop);
+            if (!response.Payload.Is(new TReply().Descriptor))
+            {
+                throw new InvalidDataException("Unexpected RPC reply type.");
+            }
+
+            return response.Payload.Unpack<TReply>();
         }
         finally
         {
-            waiting.TryRemove(requestId, out _);
+            lock (pendingChanges)
+            {
+                waiting.Remove(requestId);
+            }
         }
     }
 
-    public void Receive(Frame frame, string requestId, string entity, string ev)
+    internal Task ReplyAsync(IMessage message, string requestId, CancellationToken stop)
     {
-        if (!waiting.TryGetValue(requestId, out var request))
+        var reply = new RpcReply { RequestId = requestId, Payload = Any.Pack(message) };
+        return WriteAsync(new Frame { Reply = reply }, stop);
+    }
+
+    public void Receive(RpcReply reply)
+    {
+        RpcDispatcher.ValidateEnvelope(reply.RequestId, reply.Payload);
+
+        TaskCompletionSource<RpcReply>? request;
+        lock (pendingChanges)
+        {
+            waiting.TryGetValue(reply.RequestId, out request);
+        }
+
+        if (request is null)
         {
             // A timed-out call has already relinquished its slot on this shared stream.
-            TraceLog.Event(ServerLogEvents.UnmatchedReply, role, peer, requestId, entity, id);
+            TraceLog.Event(ServerLogEvents.UnmatchedReply, role, peer, reply.RequestId, link: id);
             return;
         }
 
-        TraceLog.Event(ev, role, peer, requestId, entity, id);
-        request.TrySetResult(frame);
+        request.TrySetResult(reply);
     }
 
     public void Close()
     {
-        foreach (var pending in waiting.Values)
+        lock (pendingChanges)
         {
-            pending.TrySetException(new IOException($"Link {role}-{peer} closed."));
+            closed = true;
+            foreach (var pending in waiting.Values)
+            {
+                pending.TrySetException(new IOException($"Link {role}-{peer} closed."));
+            }
         }
     }
 }

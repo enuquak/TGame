@@ -10,6 +10,19 @@ internal sealed partial class ServerNode
     private const int MaxProfileEntityIdLength = 128;
     private const int MaxProfileTextLength = 80;
 
+    private void RegisterProfileRpc()
+    {
+        rpc.Register<ProfileRequest>(request => request.RequestId, ServeProfileAsync);
+    }
+
+    private async Task ServeProfileAsync(string peer, ProfileRequest request, PeerLink link, CancellationToken stop)
+    {
+        TraceLog.Event(ServerLogEvents.ProfileRequestRx, role, peer, request.RequestId, ProfileStore.Subject(request), link.Id);
+
+        var reply = await RouteProfileAsync(peer, request, stop);
+        await link.ReplyAsync(reply, stop);
+    }
+
     internal Task<ProfileReply> CallProfileAsync(ProfileRequest request, CancellationToken stop) =>
         ForwardProfileAsync(nameof(ProcessType.Router), request, stop);
 

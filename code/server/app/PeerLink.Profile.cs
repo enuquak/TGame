@@ -1,5 +1,4 @@
 using TGame.Profile;
-using TGame.Transport;
 
 namespace TGame.Server;
 
@@ -8,18 +7,21 @@ internal sealed partial class PeerLink
     public async Task<ProfileReply> ProfileAsync(ProfileRequest request, CancellationToken stop)
     {
         var subject = ProfileStore.Subject(request);
-        var frame = await CallAsync(new Frame { ProfileRequest = request }, request.RequestId, subject, ServerLogEvents.ProfileRequestTx, stop);
-        if (frame.ProfileReply?.EntityId != subject)
+        var reply = await CallAsync<ProfileReply>(request, request.RequestId, stop,
+            () => TraceLog.Event(ServerLogEvents.ProfileRequestTx, role, peer, request.RequestId, subject, id));
+        TraceLog.Event(ServerLogEvents.ProfileReplyRx, role, peer, reply.RequestId, reply.EntityId, id);
+
+        if (reply.RequestId != request.RequestId || reply.EntityId != subject)
         {
-            throw new InvalidDataException("Profile reply entity mismatch.");
+            throw new InvalidDataException("Profile reply request or entity mismatch.");
         }
 
-        return frame.ProfileReply;
+        return reply;
     }
 
     public async Task ReplyAsync(ProfileReply reply, CancellationToken stop)
     {
-        await WriteAsync(new Frame { ProfileReply = reply }, stop);
+        await ReplyAsync(reply, reply.RequestId, stop);
         TraceLog.Event(ServerLogEvents.ProfileReplyTx, role, peer, reply.RequestId, reply.EntityId, id);
     }
 }

@@ -7,13 +7,17 @@ using TGame.Transport;
 
 namespace TGame.Server;
 
-internal sealed partial class ServerNode(string name, ServerSinglePoint singlePoint, ServerGroup group)
+internal sealed partial class ServerNode
 {
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
 
-    private readonly string role = group.GetProcess(name).Role;
-    private readonly HashSet<string> expectedPeers = Topology.Peers(group, name);
+    private readonly string name;
+    private readonly string role;
+    private readonly ServerSinglePoint singlePoint;
+    private readonly ServerGroup group;
+    private readonly HashSet<string> expectedPeers;
+    private readonly RpcDispatcher rpc = new();
     private volatile bool linksReady;
     private readonly object linkChanges = new();
     private readonly HashSet<string> sessions = [];
@@ -21,6 +25,18 @@ internal sealed partial class ServerNode(string name, ServerSinglePoint singlePo
     private readonly ConcurrentDictionary<string, byte> localEntities = new();
     private readonly ConcurrentDictionary<string, string> owners = new();
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
+
+    public ServerNode(string name, ServerSinglePoint singlePoint, ServerGroup group)
+    {
+        this.name = name;
+        this.singlePoint = singlePoint;
+        this.group = group;
+        role = group.GetProcess(name).Role;
+        expectedPeers = Topology.Peers(group, name);
+
+        RegisterProfileRpc();
+        RegisterDiagnosticRpc();
+    }
 
     public Task FirstLinks => firstLinks.Task;
     public string Name => name;
@@ -195,7 +211,7 @@ internal sealed partial class ServerNode(string name, ServerSinglePoint singlePo
             {
                 await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
                 {
-                    await ServeFrameAsync(frame, peer, id, link, transport.Token);
+                    await rpc.DispatchAsync(frame.Request, peer, link, transport.Token);
                 }
             }
         }
