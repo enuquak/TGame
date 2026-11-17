@@ -14,7 +14,6 @@ public sealed class LinkService(ServerNode node) : ServerLink.ServerLinkBase
             throw new RpcException(new Status(StatusCode.InvalidArgument, "Unexpected link."));
         }
 
-        var entities = context.RequestHeaders.GetValue(TransportProtocol.EntityHeader)?.Split(',') ?? [];
-        return node.RunLinkAsync(peer, link, entities, input, output, context.CancellationToken);
+        return node.RunLinkAsync(peer, link, input, output, context.CancellationToken);
     }
 }

@@ -266,31 +266,9 @@ public partial class ServerNode
         }
     }
 
-    private Frame CreateHello() => new()
-    {
-        Hello = Name,
-        SinglePointId = Role == nameof(ProcessType.Gate) ? "" : State.EntityId
-    };
+    private Frame CreateHello() => new() { Hello = Name };
 
-    private void ValidateSinglePoint(string peer, string entityId, string[] entities)
-    {
-        if (PeerRole(peer) == nameof(ProcessType.Gate))
-        {
-            if (entityId.Length != 0)
-            {
-                throw new InvalidDataException("Gate must not advertise an RPC SinglePoint.");
-            }
-
-            return;
-        }
-
-        if (!IdText.IsValid(entityId) || (Role == nameof(ProcessType.Router) && !entities.Contains(entityId)))
-        {
-            throw new InvalidDataException("SinglePoint identity is missing from the peer's entity registration.");
-        }
-    }
-
-    // Called with linkChanges held, alongside connection and entity ownership updates.
+    // 与连接及实体归属的更新共用 linkChanges 锁。
     private void RegisterPeerSinglePoint(string peer, string entityId)
     {
         if (entityId.Length == 0)

@@ -22,9 +22,10 @@ internal static class ProfileRpcChecks
         var running = new List<Task>();
         foreach (var (peer, stream) in peers)
         {
-            stream.Input.Writer.TryWrite(TestNodes.Hello(peer, entities[peer]));
-            running.Add(node.RunLinkAsync(peer, NewId(), [entities[peer]], stream, stream, lifetime.Token));
+            stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
+            running.Add(node.RunLinkAsync(peer, NewId(), stream, stream, lifetime.Token));
             await stream.Output.Reader.ReadAsync(stop);
+            await TestNodes.RegisterAsync(stream, [entities[peer]], stop);
         }
 
         try

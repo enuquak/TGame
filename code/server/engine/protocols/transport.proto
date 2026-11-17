@@ -5,18 +5,23 @@ option csharp_namespace = "TGame.Transport";
 
 // Each pair of server processes shares one bidirectional stream.
 message Frame {
-  reserved 1, 2, 4, 5;
-  reserved "ping", "pong", "profile_request", "profile_reply";
+  reserved 1, 2, 4, 5, 8;
+  reserved "ping", "pong", "profile_request", "profile_reply", "single_point_id";
 
   oneof body {
-    string hello = 3;     // Exchanges process instance names before serving requests.
+    string hello = 3;     // 握手只交换进程实例名，实体由 SinglePoint 初始化后单独注册。
     RpcRequest request = 6;
     RpcReply reply = 7;
   }
-
-  // Present on Hello frames for callable processes; Gate has no RPC target.
-  string single_point_id = 8;
 }
+
+// 在已建立的连接上注册实体，收到确认后才能完成 SinglePoint 初始化。
+message RegisterEntitiesRequest {
+  string single_point_id = 1;
+  repeated string entity_ids = 2;
+}
+
+message RegisterEntitiesReply {}
 
 message RpcRequest {
   string request_id = 1;

@@ -47,6 +47,7 @@ if (args is ["--routing"])
     using var routingDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
     try
     {
+        await EntityRegistrationChecks.RunAsync(routingDeadline.Token);
         await EntityRoutingChecks.RunAsync(routingDeadline.Token);
         await GroupChecks.RunAsync(routingDeadline.Token);
         return 0;
@@ -243,7 +244,7 @@ var point = gate.SinglePoint as WaitingSinglePoint ?? throw new Exception("The r
 await point.Started.Task.WaitAsync(stop);
 if (!ReferenceEquals(point.State, gate.State))
 {
-    throw new Exception("SinglePoint initialization replaced the identity already registered by the engine.");
+    throw new Exception("SinglePoint initialization replaced the identity prepared by the engine.");
 }
 
 await ExpectProfileResult(ProfileReply.Types.Result.Unavailable);
@@ -265,7 +266,7 @@ if (gate.Ready)
 
 var cancelling = new WaitingSinglePoint();
 using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
-var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), new SinglePointState(TestIds.Generator), TestIds.Generator, cancel.Token);
+var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), new SinglePointState(TestIds.Generator), TestIds.Generator, _ => Task.CompletedTask, cancel.Token);
 await cancelling.Started.Task.WaitAsync(stop);
 cancel.Cancel();
 try
@@ -322,13 +323,21 @@ var duplicateEntityId = TestIds.Generator.GenId();
 string[][] invalidRegistrations = [[], [InvalidEntityId], [duplicateEntityId, duplicateEntityId]];
 foreach (var ids in invalidRegistrations)
 {
+    var stream = new FrameStream();
+    var running = Open(routes, ServerProcess.FormatName(nameof(ProcessType.Base), 1), stream);
+    await stream.Output.Reader.ReadAsync(stop);
     try
     {
-        await Open(routes, ServerProcess.FormatName(nameof(ProcessType.Base), 1), new FrameStream(), ids).WaitAsync(stop);
+        await TestNodes.RegisterAsync(stream, ids, stop);
         throw new Exception("Router accepted an empty, non-GUID or duplicate entity registration.");
     }
     catch (RpcException error) when (error.StatusCode == StatusCode.InvalidArgument)
     {
+    }
+    finally
+    {
+        stream.Input.Writer.Complete();
+        await running.WaitAsync(stop);
     }
 }
 
@@ -349,21 +358,19 @@ foreach (var pair in Topology.Dials)
 var routeTasks = new List<Task>();
 foreach (var pair in neighbors)
 {
-    routeTasks.Add(Open(routes, pair.Key, pair.Value, [neighborIds[pair.Key]]));
+    routeTasks.Add(Open(routes, pair.Key, pair.Value));
+    var hello = await pair.Value.Output.Reader.ReadAsync(stop);
+    if (hello.Hello != routes.Name)
+    {
+        throw new Exception("Router did not acknowledge the process handshake.");
+    }
+
+    await TestNodes.RegisterAsync(pair.Value, [neighborIds[pair.Key]], stop);
 }
 
 var routing = Task.WhenAll(routeTasks);
 await routes.FirstLinks.WaitAsync(stop);
 await routes.InitializeSinglePointAsync(defaults, stop);
-foreach (var stream in neighbors.Values)
-{
-    var reply = await stream.Output.Reader.ReadAsync(stop);
-    if (reply.Hello != routes.Name)
-    {
-        throw new Exception("Router did not acknowledge a GUID-only registration.");
-    }
-}
-
 var baseRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
 var profileRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
 var publish = new ProfileRequest
@@ -452,10 +459,10 @@ async Task ExpectProfileRejected(string peer, ProfileRequest request)
     }
 }
 
-Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null)
+Task Open(ServerNode node, string peer, FrameStream stream)
 {
-    stream.Input.Writer.TryWrite(TestNodes.Hello(peer, ids?.FirstOrDefault()));
-    return node.RunLinkAsync(peer, TestIds.Generator.GenId(), ids ?? [], stream, stream, stop);
+    stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
+    return node.RunLinkAsync(peer, TestIds.Generator.GenId(), stream, stream, stop);
 }
 
 async Task ExpectProfileResult(ProfileReply.Types.Result result)
@@ -504,11 +511,18 @@ sealed class FrameStream : IAsyncStreamReader<Frame>, IAsyncStreamWriter<Frame>
         get; set;
     }
 
-    public Task WriteAsync(Frame frame) => Output.Writer.WriteAsync(frame).AsTask();
+    public bool AcknowledgeRegistration { get; init; } = true;
+    public Task WriteAsync(Frame frame) => WriteAsync(frame, CancellationToken.None);
     public Task BeforeWrite { get; init; } = Task.CompletedTask;
     public async Task WriteAsync(Frame frame, CancellationToken stop)
     {
         await BeforeWrite.WaitAsync(stop);
+        if (AcknowledgeRegistration && frame.Request?.Payload?.Is(RegisterEntitiesRequest.Descriptor) == true)
+        {
+            await Input.Writer.WriteAsync(RpcFrames.Reply(new RegisterEntitiesReply(), frame.Request.RequestId), stop);
+            return;
+        }
+
         await Output.Writer.WriteAsync(frame, stop);
     }
 

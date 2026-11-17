@@ -31,11 +31,6 @@ public partial class ServerNode : IDisposable
         this.group = group;
         this.messages = messages;
         Role = group.GetProcess(name).Role;
-        if (Role == nameof(ProcessType.Router))
-        {
-            singlePointIds[ProcessType.Router] = [State.EntityId];
-        }
-
         expectedPeers = Topology.Peers(group, name);
         UpdateLinkReadiness();
     }
@@ -44,7 +39,7 @@ public partial class ServerNode : IDisposable
 
     public Task FirstLinks => firstLinks.Task;
     public string Role { get; }
-    public bool Ready => singlePoint?.Initialized == true && linksReady;
+    public bool Ready => singlePoint?.Initialized == true && linksReady && RegistrationsComplete;
     public SinglePointState State { get; }
     public IIdGenerator IdGenerator { get; }
     public ServerSinglePoint? SinglePoint => singlePoint;
@@ -75,7 +70,7 @@ public partial class ServerNode : IDisposable
         }
 
         singlePoint = registry.Create(Enum.Parse<ProcessType>(Role));
-        await singlePoint.InitializeAsync(Role, State, IdGenerator, stop);
+        await singlePoint.InitializeAsync(Role, State, IdGenerator, RegisterEntitiesAsync, stop);
     }
 
     public void Dispose()
@@ -152,17 +147,13 @@ public partial class ServerNode : IDisposable
         using var channel = GrpcChannel.ForAddress(address);
         var id = IdGenerator.GenId();
         var headers = new Metadata { { TransportProtocol.PeerHeader, Name }, { TransportProtocol.LinkHeader, id } };
-        if (PeerRole(peer) == nameof(ProcessType.Router))
-        {
-            headers.Add(TransportProtocol.EntityHeader, string.Join(',', State.LocalEntityIds));
-        }
 
         using var call = new ServerLink.ServerLinkClient(channel).Connect(headers, cancellationToken: stop);
         await call.RequestStream.WriteAsync(CreateHello(), stop);
-        await RunLinkAsync(peer, id, [], call.ResponseStream, call.RequestStream, stop);
+        await RunLinkAsync(peer, id, call.ResponseStream, call.RequestStream, stop);
     }
 
-    public async Task RunLinkAsync(string peer, string id, string[] entities, IAsyncStreamReader<Frame> input,
+    public async Task RunLinkAsync(string peer, string id, IAsyncStreamReader<Frame> input,
         IAsyncStreamWriter<Frame> output, CancellationToken stop)
     {
         if (!expectedPeers.Contains(peer))
@@ -171,23 +162,10 @@ public partial class ServerNode : IDisposable
         }
 
         var link = new PeerLink(Role, peer, id, output);
-        if (Role == nameof(ProcessType.Router))
-        {
-            bool hasInvalidIds = entities.Any(entity => !IdText.IsValid(entity));
-            bool hasDuplicateIds = entities.Distinct().Count() != entities.Length;
-            if (entities.Length == 0 || hasInvalidIds || hasDuplicateIds)
-            {
-                throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid entity registration from {peer}."));
-            }
-        }
-
         if (!await input.MoveNext(stop) || input.Current.Hello != peer)
         {
             throw new IOException($"Link to {peer} closed before handshake.");
         }
-
-        var peerPoint = input.Current.SinglePointId;
-        ValidateSinglePoint(peer, peerPoint, entities);
 
         lock (linkChanges)
         {
@@ -206,22 +184,7 @@ public partial class ServerNode : IDisposable
 
             lock (linkChanges)
             {
-                if (Role == nameof(ProcessType.Router) && entities.Any(entity => owners.ContainsKey(entity) || State.ContainsEntity(entity)))
-                {
-                    throw new InvalidDataException($"Duplicate entity from {peer}.");
-                }
-
                 links[peer] = link;
-                RegisterPeerSinglePoint(peer, peerPoint);
-                if (Role == nameof(ProcessType.Router))
-                {
-                    foreach (var entity in entities)
-                    {
-                        owners[entity] = peer;
-                        TraceLog.Event(ServerLogEvents.EntityRoute, Role, peer, entity: entity, link: id);
-                    }
-                }
-
                 TraceLog.Event(ServerLogEvents.LinkUp, Role, peer, link: id);
                 UpdateLinkReadiness();
             }
@@ -232,14 +195,15 @@ public partial class ServerNode : IDisposable
             var queue = Channel.CreateBounded<Frame>(new BoundedChannelOptions(RequestQueueCapacity) { SingleReader = true, SingleWriter = true });
             var read = ReadAsync();
             var serve = ServeAsync();
-            var finished = await Task.WhenAny(read, serve);
+            var registration = RestoreRegistrationAsync();
+            var finished = await Task.WhenAny(read, serve, registration);
 
             transport.Cancel();
             queue.Writer.TryComplete();
             link.Close();
             try
             {
-                await Task.WhenAll(read, serve);
+                await Task.WhenAll(read, serve, registration);
             }
             catch (OperationCanceledException) when (!stop.IsCancellationRequested)
             {
@@ -254,6 +218,17 @@ public partial class ServerNode : IDisposable
                 }
             }
 
+            async Task RestoreRegistrationAsync()
+            {
+                // 已初始化的 SinglePoint 在新连接上重新登记，握手本身不注册实体。
+                if (Role != nameof(ProcessType.Gate) && State.ContainsEntity(State.EntityId))
+                {
+                    await EnsureRegistrationAsync(link, transport.Token);
+                }
+
+                await Task.Delay(Timeout.Infinite, transport.Token);
+            }
+
             async Task ServeAsync()
             {
                 var running = new List<Task>();
@@ -261,6 +236,12 @@ public partial class ServerNode : IDisposable
                 {
                     await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
                     {
+                        if (frame.Request.Payload?.Is(RegisterEntitiesRequest.Descriptor) == true)
+                        {
+                            await HandleRegistrationAsync(frame.Request, link, transport.Token);
+                            continue;
+                        }
+
                         if (frame.Request.TargetCase == RpcRequest.TargetOneofCase.None && frame.Request.SourceProcess.Length == 0)
                         {
                             await messages.DispatchAsync(frame.Request, peer, link, transport.Token);
@@ -315,11 +296,16 @@ public partial class ServerNode : IDisposable
                 if (links.TryRemove(peer, out _))
                 {
                     RemovePeerSinglePoint(peer);
-                    foreach (var entity in entities)
+                    if (peerEntities.Remove(peer, out var entities))
                     {
-                        owners.TryRemove(entity, out _);
+                        foreach (var entity in entities)
+                        {
+                            owners.TryRemove(entity, out _);
+                        }
                     }
 
+                    registrations.Remove(link);
+                    registeredLinks.Remove(link);
                     UpdateLinkReadiness();
                 }
             }
@@ -330,7 +316,13 @@ public partial class ServerNode : IDisposable
 
     private void UpdateLinkReadiness()
     {
-        bool complete = expectedPeers.All(links.ContainsKey);
+        bool connected = expectedPeers.All(links.ContainsKey);
+        if (connected)
+        {
+            firstLinks.TrySetResult();
+        }
+
+        bool complete = connected && (singlePoint?.Initialized != true || RegistrationsComplete);
         if (complete == linksReady)
         {
             return;
@@ -338,9 +330,5 @@ public partial class ServerNode : IDisposable
 
         linksReady = complete;
         TraceLog.Event(complete ? ServerLogEvents.LinksReady : ServerLogEvents.LinksLost, Role, detail: links.Count.ToString());
-        if (complete)
-        {
-            firstLinks.TrySetResult();
-        }
     }
 }

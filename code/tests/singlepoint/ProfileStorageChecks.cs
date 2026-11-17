@@ -24,7 +24,7 @@ internal static class ProfileStorageChecks
         var source = ServerProcess.FormatName(nameof(ProcessType.Login), 1);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         stream.Input.Writer.TryWrite(TestNodes.Hello(router));
-        var running = node.RunLinkAsync(router, NewId(), [], stream, stream, lifetime.Token);
+        var running = node.RunLinkAsync(router, NewId(), stream, stream, lifetime.Token);
         string subject = NewId();
         ProfileServerSinglePoint? point = null;
         try

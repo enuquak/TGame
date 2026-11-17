@@ -45,7 +45,7 @@ internal static class GroupChecks
                 failed.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Base), 1) });
                 try
                 {
-                    await gate.RunLinkAsync(peer.Name, TestIds.Generator.GenId(), [], failed, failed, stop);
+                    await gate.RunLinkAsync(peer.Name, TestIds.Generator.GenId(), failed, failed, stop);
                     throw new Exception("A handshake from a different instance was accepted.");
                 }
                 catch (IOException)
@@ -153,7 +153,7 @@ internal static class GroupChecks
         Task Open(string peer, FrameStream stream)
         {
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-            return gate.RunLinkAsync(peer, TestIds.Generator.GenId(), [], stream, stream, stop);
+            return gate.RunLinkAsync(peer, TestIds.Generator.GenId(), stream, stream, stop);
         }
     }
 
@@ -234,9 +234,10 @@ internal static class GroupChecks
         }
 
         Open(missing);
-        if (!node.Ready)
+        const int RegistrationPollMilliseconds = 10;
+        while (!node.Ready)
         {
-            throw new Exception("Base did not recover when Router2 reconnected.");
+            await Task.Delay(RegistrationPollMilliseconds, stop);
         }
 
         foreach (var stream in streams.Values)
@@ -252,7 +253,7 @@ internal static class GroupChecks
             var stream = new FrameStream();
             streams[peer] = stream;
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-            tasks[peer] = node.RunLinkAsync(peer, TestIds.Generator.GenId(), [], stream, stream, stop);
+            tasks[peer] = node.RunLinkAsync(peer, TestIds.Generator.GenId(), stream, stream, stop);
         }
     }
 
@@ -268,9 +269,10 @@ internal static class GroupChecks
             var entity = TestIds.Generator.GenId();
             streams.Add(peer, stream);
             ids.Add(peer, entity);
-            stream.Input.Writer.TryWrite(TestNodes.Hello(peer, entity));
-            tasks.Add(router.RunLinkAsync(peer, TestIds.Generator.GenId(), [entity], stream, stream, stop));
+            stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
+            tasks.Add(router.RunLinkAsync(peer, TestIds.Generator.GenId(), stream, stream, stop));
             await stream.Output.Reader.ReadAsync(stop);
+            await TestNodes.RegisterAsync(stream, [entity], stop);
         }
 
         await router.FirstLinks.WaitAsync(stop);

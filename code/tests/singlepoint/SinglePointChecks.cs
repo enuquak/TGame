@@ -16,7 +16,7 @@ internal static class SinglePointChecks
                 throw new Exception("A role without a business implementation must use the engine default SinglePoint.");
             }
 
-            await singlePoint.InitializeAsync(role.ToString(), state, TestIds.Generator, CancellationToken.None);
+            await singlePoint.InitializeAsync(role.ToString(), state, TestIds.Generator, _ => Task.CompletedTask, CancellationToken.None);
             if (!singlePoint.Initialized || !ReferenceEquals(singlePoint.State, state) ||
                 !ReferenceEquals(singlePoint.IdGenerator, TestIds.Generator))
             {

@@ -89,6 +89,9 @@ internal static class EntityRoutingChecks
 
         await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue(), stop));
 
+        await network.ReconnectProfileAsync();
+        await CheckReply(gate, first, gate, "reconnected");
+
         async Task CheckReply(ServerNode caller, ServerNode target, ServerNode source, string value)
         {
             var result = await caller.CallEntityAsync<StringValue>(target.State.EntityId, new StringValue { Value = value }, stop);
@@ -101,8 +104,13 @@ internal static class EntityRoutingChecks
         await using var network = await Network.CreateAsync(ProcessType.Login, stop, initializeProfile: false);
         var gate = network.Node(ProcessType.Gate);
         var profile = network.Node(ProcessType.Profile);
-        await ExpectStatus(StatusCode.Unavailable, () => gate.CallEntityAsync<StringValue>(profile.State.EntityId, new StringValue(), stop));
+        Check(!profile.State.LocalEntityIds.Any(), "Engine startup registered local entities before SinglePoint initialization.");
+        Check(!network.Node(ProcessType.Router).IsEntityOwner(profile.Name, profile.State.EntityId),
+            "Router registered an entity from the connection handshake.");
+        await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(profile.State.EntityId, new StringValue(), stop));
         await profile.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+        Check(network.Node(ProcessType.Router).IsEntityOwner(profile.Name, profile.State.EntityId),
+            "SinglePoint initialization completed before Router acknowledged its entity.");
         var response = await gate.CallEntityAsync<StringValue>(profile.State.EntityId, new StringValue { Value = "ready" }, stop);
         Check(response.Value.EndsWith("|ready", StringComparison.Ordinal), "Initialized target did not accept its next request.");
     }
@@ -134,7 +142,7 @@ internal static class EntityRoutingChecks
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(gate));
-        var running = node.RunLinkAsync(gate, NewId(), [], stream, stream, lifetime.Token);
+        var running = node.RunLinkAsync(gate, NewId(), stream, stream, lifetime.Token);
         try
         {
             await stream.Output.Reader.ReadAsync(stop);
@@ -194,18 +202,18 @@ internal static class EntityRoutingChecks
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
         using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group, new RpcDispatcher(), TestIds.Generator);
         var stream = new FrameStream();
-        stream.Input.Writer.TryWrite(TestNodes.Hello(profile, router.State.EntityId));
-        stream.Input.Writer.Complete();
+        stream.Input.Writer.TryWrite(TestNodes.Hello(profile));
+        var running = router.RunLinkAsync(profile, NewId(), stream, stream, stop);
+        await stream.Output.Reader.ReadAsync(stop);
         try
         {
-            await router.RunLinkAsync(profile, NewId(), [router.State.EntityId], stream, stream, stop);
+            await ExpectStatus(StatusCode.AlreadyExists, () => TestNodes.RegisterAsync(stream, [router.State.EntityId], stop));
         }
-        catch (InvalidDataException)
+        finally
         {
-            return;
+            stream.Input.Writer.Complete();
+            await running.WaitAsync(stop);
         }
-
-        throw new Exception("Router accepted a peer advertising the Router's own entity ID.");
     }
 
     private static async Task ExpectStatus(StatusCode status, Func<Task> action)
@@ -310,25 +318,16 @@ internal static class EntityRoutingChecks
                     var connection = new Connection(stop);
                     connections.Add(connection);
                     var receiver = nodes[peer];
-                    string[] entities = [];
-                    if (receiver.Role == nameof(ProcessType.Router))
+                    if (caller == Node(ProcessType.Profile) && receiver.Role == nameof(ProcessType.Router))
                     {
-                        entities = caller.State.LocalEntityIds.ToArray();
-                        if (caller == Node(ProcessType.Profile))
-                        {
-                            entities = [StaleEntityId, .. entities];
-                        }
+                        connection.Caller.ExtraRegistrationEntity = StaleEntityId;
                     }
 
-                    await connection.Caller.WriteAsync(new Frame
-                    {
-                        Hello = caller.Name,
-                        SinglePointId = caller.Role == nameof(ProcessType.Gate) ? "" : caller.State.EntityId
-                    }, stop);
+                    await connection.Caller.WriteAsync(TestNodes.Hello(caller.Name), stop);
                     connection.Name = caller.Name;
                     connection.Running = Task.WhenAll(
-                        receiver.RunLinkAsync(caller.Name, NewId(), entities, connection.Receiver, connection.Receiver, connection.Stop),
-                        caller.RunLinkAsync(receiver.Name, NewId(), [], connection.Caller, connection.Caller, connection.Stop));
+                        receiver.RunLinkAsync(caller.Name, NewId(), connection.Receiver, connection.Receiver, connection.Stop),
+                        caller.RunLinkAsync(receiver.Name, NewId(), connection.Caller, connection.Caller, connection.Stop));
                 }
             }
 
@@ -349,6 +348,26 @@ internal static class EntityRoutingChecks
         }
 
         public Task DisconnectProfileAsync() => connections.Single(connection => connection.Name == Node(ProcessType.Profile).Name).StopAsync();
+
+        public async Task ReconnectProfileAsync()
+        {
+            var profile = Node(ProcessType.Profile);
+            var router = Node(ProcessType.Router);
+            var connection = new Connection(stop) { Name = profile.Name };
+            connections.Add(connection);
+            await connection.Caller.WriteAsync(TestNodes.Hello(profile.Name), stop);
+            connection.Running = Task.WhenAll(
+                router.RunLinkAsync(profile.Name, NewId(), connection.Receiver, connection.Receiver, connection.Stop),
+                profile.RunLinkAsync(router.Name, NewId(), connection.Caller, connection.Caller, connection.Stop));
+
+            const int RegistrationPollMilliseconds = 10;
+            while (!profile.Ready || !router.Ready)
+            {
+                await Task.Delay(RegistrationPollMilliseconds, stop);
+            }
+
+            Check(router.IsEntityOwner(profile.Name, profile.State.EntityId), "Reconnected SinglePoint did not restore its entity route.");
+        }
 
         public async ValueTask DisposeAsync()
         {
@@ -399,9 +418,20 @@ internal static class EntityRoutingChecks
     {
         public Frame Current { get; private set; } = null!;
         public WriteOptions? WriteOptions { get; set; }
+        public string? ExtraRegistrationEntity { get; set; }
         public Task WriteAsync(Frame frame) => WriteAsync(frame, CancellationToken.None);
-        public Task WriteAsync(Frame frame, CancellationToken stop) =>
-            output.Writer.WriteAsync(Frame.Parser.ParseFrom(frame.ToByteArray()), stop).AsTask();
+        public Task WriteAsync(Frame frame, CancellationToken stop)
+        {
+            var copy = Frame.Parser.ParseFrom(frame.ToByteArray());
+            if (ExtraRegistrationEntity is not null && copy.Request?.Payload?.Is(RegisterEntitiesRequest.Descriptor) == true)
+            {
+                var registration = copy.Request.Payload.Unpack<RegisterEntitiesRequest>();
+                registration.EntityIds.Add(ExtraRegistrationEntity);
+                copy.Request.Payload = Any.Pack(registration);
+            }
+
+            return output.Writer.WriteAsync(copy, stop).AsTask();
+        }
 
         public async Task<bool> MoveNext(CancellationToken stop)
         {

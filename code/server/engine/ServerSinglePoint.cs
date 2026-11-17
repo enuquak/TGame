@@ -8,9 +8,11 @@ public class ServerSinglePoint
     public bool Initialized => Volatile.Read(ref initialized);
     private bool initialized;
 
-    public async Task InitializeAsync(string role, SinglePointState state, IIdGenerator idGenerator, CancellationToken stop)
+    public async Task InitializeAsync(string role, SinglePointState state, IIdGenerator idGenerator,
+        Func<CancellationToken, Task> registerEntities, CancellationToken stop)
     {
         ArgumentNullException.ThrowIfNull(idGenerator);
+        ArgumentNullException.ThrowIfNull(registerEntities);
         State = state;
         IdGenerator = idGenerator;
         TraceLog.Event(ServerLogEvents.SinglePointInit, role, entity: State.EntityId, detail: GetType().Name);
@@ -20,15 +22,22 @@ public class ServerSinglePoint
             stop.ThrowIfCancellationRequested();
             await InitializeRoleAsync(stop);
             stop.ThrowIfCancellationRequested();
+
+            // 业务初始化成功后才登记实体，并等待对端确认。
+            State.RegisterSinglePoint();
+            await registerEntities(stop);
+            stop.ThrowIfCancellationRequested();
             Volatile.Write(ref initialized, true);
             TraceLog.Event(ServerLogEvents.SinglePointReady, role, entity: State.EntityId, detail: GetType().Name);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
+            State.UnregisterSinglePoint();
             throw;
         }
         catch (Exception error)
         {
+            State.UnregisterSinglePoint();
             TraceLog.Event(ServerLogEvents.SinglePointFailed, role, entity: State.EntityId, detail: error.Message);
             throw;
         }

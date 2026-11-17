@@ -17,7 +17,7 @@
 
 - [ ] [IIdGenerator.cs](../code/server/engine/identifiers/IIdGenerator.cs)、[IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)、[id-generator.json](../code/server/config/id-generator.json)：先看接口和参数来源。
 - [ ] [SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)、[SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)、[IdText.cs](../code/server/engine/identifiers/IdText.cs)：再看序列生成、时钟回退、ZooKeeper 编号占用、会话失效及 ID 文本校验。
-- [ ] [SinglePointState.cs](../code/server/engine/SinglePointState.cs)、[ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：理解本地实体名单由 `SinglePointState` 管理；引擎先准备身份与名单，业务 SinglePoint 复用同一份状态。
+- [ ] [SinglePointState.cs](../code/server/engine/SinglePointState.cs)、[ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：理解本地实体名单由 `SinglePointState` 管理；引擎只预分配身份，SinglePoint 在业务初始化成功后登记本地实体并发起远端注册，收到确认后才标记初始化完成。
 - [ ] [SinglePointForAttribute.cs](../code/server/engine/SinglePointForAttribute.cs)、[SinglePointRegistry.cs](../code/server/engine/SinglePointRegistry.cs)：理解标注注册、默认实现、重复映射和初始化失败。
 
 读完应能回答：进程名称、连接 ID、RPC 请求 ID、实体 ID 分别表示什么？没有业务 SinglePoint 子类的进程为什么也能启动？
@@ -27,7 +27,7 @@
 - [ ] [Program.cs](../code/server/app/Program.cs)：从参数解析进入 `RunServerAsync`，跟踪节点组装、监听、ZooKeeper 注册、连接维护、`InitializeEngineAsync`、`InitializeSinglePointAsync` 和退出监督。
 - [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：重点看构造函数、`FirstLinks`、`Ready`、`InitializeSinglePointAsync`、`Dispose`。
 
-当前顺序为：生成身份 → 监听与服务注册 → 建立首次拓扑连接 → 创建并初始化 SinglePoint → 连接齐备且业务初始化成功后就绪。`FirstLinks` 表示首次连接齐备，`Ready` 反映当前状态，断线会撤销当前就绪状态。
+当前顺序为：生成身份 → 监听与服务注册 → 建立首次拓扑连接（只交换进程名）→ 创建并初始化 SinglePoint → 登记本地实体并发送实体注册请求 → 收到注册确认且当前连接齐备后就绪。`FirstLinks` 表示首次连接齐备，`Ready` 还要求 SinglePoint 初始化及当前连接上的实体注册完成；断线后撤销就绪，重连需重新登记。
 
 宿主直接创建 `ServerNode`。当前不存在 `GameServerNode`；具体业务实现放在 `logic/entities/SinglePoint/`。
 
@@ -36,13 +36,15 @@
 - [ ] [Topology.cs](../code/server/engine/Topology.cs)：从类型间连接关系展开每个实例的连接目标和预期邻居。
 - [ ] [ServiceRegistry.cs](../code/server/engine/ServiceRegistry.cs)：跟踪 `RegisterAsync`、`ResolveAsync`、重复注册失败及会话释放。
 - [ ] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[LinkService.cs](../code/server/engine/LinkService.cs)：理解接入元数据、来源检查和连接交接。
-- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：按 `MaintainLinkAsync` → `ConnectAsync` → `RunLinkAsync` 阅读握手、实体登记、断开清理与就绪更新。
+- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：按 `MaintainLinkAsync` → `ConnectAsync` → `RunLinkAsync` 阅读进程握手、重连注册、断开清理与就绪更新。
+
+- [ ] [ServerNode.Entities.cs](../code/server/engine/ServerNode.Entities.cs)：跟踪 SinglePoint 发起的 `RegisterEntitiesAsync`、注册确认、重复身份校验和重连后的重新注册。
 
 读完应能回答：进程地址来自哪里？实体归属在哪里维护？为什么少一个配置实例也不能就绪？Base 与 DBMgr 的现有长连接和 Router 转发各自承担什么？
 
 ## 5. 通用 RPC：先看信封，再看等待与回包
 
-- [ ] [transport.proto](../code/server/engine/protocols/transport.proto)：区分握手、请求、响应；理解 `Any`、目标、来源、截止时间和错误结果。通用协议编译到 Engine，不导入业务协议。
+- [ ] [transport.proto](../code/server/engine/protocols/transport.proto)：区分进程握手、请求、响应，以及独立的实体注册请求与确认；理解 `Any`、目标、来源、截止时间和错误结果。通用协议编译到 Engine，不导入业务协议。
 - [ ] [EntityRpcContext.cs](../code/server/engine/EntityRpcContext.cs)：区分原始调用进程 `SourceProcess` 与本跳来源 `PeerProcess`。
 - [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：按 `CallAsync`、`WriteAsync`、`Receive`、`ReadReply`、`Close` 跟踪请求关联、超时、取消和断线。
 - [ ] [RpcDispatcher.cs](../code/server/engine/RpcDispatcher.cs)：比较普通消息注册与 `RegisterEntity`；理解可选的转发前校验回调、业务拒绝响应和未注册消息错误。
@@ -108,6 +110,7 @@ RPC 目标是执行方法的 **Profile SinglePoint**，业务请求中的实体 
 | Engine 不引用业务 Shared、通用协议和基础类型归属正确 | [RpcChecks.CheckTransportBoundary](../code/tests/singlepoint/RpcChecks.cs)，随 `--engine` 小范围检查运行 |
 | 默认实现、注册错误与两阶段初始化 | [SinglePointChecks.cs](../code/tests/singlepoint/SinglePointChecks.cs)、[Program.cs](../code/tests/singlepoint/Program.cs) |
 | ID 并发、回退、会话丢失与真实编号分配 | [IdGeneratorChecks.cs](../code/tests/singlepoint/IdGeneratorChecks.cs) |
+| SinglePoint 注册时机、确认、拒绝、初始化失败与重连 | [EntityRegistrationChecks.cs](../code/tests/singlepoint/EntityRegistrationChecks.cs)，随 `--routing` 小范围检查运行 |
 | 服务注册冲突与重新注册 | [ServiceRegistryChecks.cs](../code/tests/singlepoint/ServiceRegistryChecks.cs) |
 | 消息关联、嵌套调用、排队与取消 | [RpcChecks.cs](../code/tests/singlepoint/RpcChecks.cs)、[MessageDispatchChecks.cs](../code/tests/singlepoint/MessageDispatchChecks.cs) |
 | Gate 接入、实例选择、错误和路由清理 | [EntityRoutingChecks.cs](../code/tests/singlepoint/EntityRoutingChecks.cs)、[GroupChecks.cs](../code/tests/singlepoint/GroupChecks.cs) |
