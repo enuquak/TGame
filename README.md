@@ -59,11 +59,11 @@ dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --e
 
 服务端入口为 `code/server/app/Program.cs`，只接受 `<实例名> <运行目录>`，运行目录名称不要求 GUID；例如 `Base2 <运行目录>`；实例类型与预期数量从运行目录中的 `processes.json` 快照读取。
 
-服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类与 Profile 处理位于 `code/server/logic/`；宿主统一创建引擎 `ServerNode`，提供业务类型集合并按两个阶段启动服务。Profile 通过通用 RPC 调用，其参数与写入归属校验由 `ProfileMessages` 承担，存储处理由 `ProfileServerSinglePoint` 承担。引擎可以单独构建，不引用宿主或业务实现。GM 进程使用引擎默认 SinglePoint，保留与 Router 的拓扑连接。
+服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类与 Profile 处理位于 `code/server/logic/`；宿主统一创建引擎 `ServerNode`，提供业务类型集合并按两个阶段启动服务。Profile 通过通用 RPC 提供只读查询，目标 `ServerNode` 直接调用 `ProfileServerSinglePoint.HandleRequestAsync`，由业务实例校验查询参数并访问存储；实体修改请求应发给实体自身。引擎可以单独构建，不引用宿主或业务实现。GM 进程使用引擎默认 SinglePoint，保留与 Router 的拓扑连接。
 
 唯一 ID 统一调用引擎的 `IdGenerator.GenId()`，使用雪花算法；宿主启动时初始化进程内唯一实例，ZooKeeper 自动分配进程编号。引擎与业务直接使用静态入口，无需通过构造函数传递生成器。请求、实体、连接和缓存占用标记均已接入，详见[雪花 ID](docs/雪花ID.md)。
 
-日志 JSON 格式由 Engine 中的 `TGame.Logging` 维护。连接服务与通用 RPC 帧定义在 [transport.proto](code/server/engine/protocols/transport.proto)，请求与响应通过 Protobuf `Any` 承载。`RpcDispatcher` 根据消息类型分发，`logic/messages/ServerMessages.cs` 注册 Profile 处理器。引擎协议生成到 `code/server/engine/generated/protocols/`，业务 [profile.proto](code/shared/protocols/profile.proto) 生成到 `code/shared/generated/protocols/`；控制台导出命令同时处理两者。宿主显式引用 Engine 和业务 Shared，Engine 不引用 Shared。
+日志 JSON 格式由 Engine 中的 `TGame.Logging` 维护。连接服务与通用 RPC 帧定义在 [transport.proto](code/server/engine/protocols/transport.proto)，请求与响应通过 Protobuf `Any` 承载。`RpcDispatcher` 分发无实体目标的连接消息；实体请求直接交给目标 SinglePoint，不需要 Profile 消息注册层。引擎协议生成到 `code/server/engine/generated/protocols/`，业务 [profile.proto](code/shared/protocols/profile.proto) 生成到 `code/shared/generated/protocols/`；控制台导出命令同时处理两者。宿主显式引用 Engine 和业务 Shared，Engine 不引用 Shared。
 
 内部 gRPC 服务为 `tgame.transport.ServerLink`，服务发现采用固定的 `server-<实例名>` 节点；各进程须使用统一重新构建的版本，不能混用仍带运行 ID 的旧构建。控制台的“编译并重启”会统一构建、启动各角色。强制终止后若 ZooKeeper 会话尚未过期，新进程会起服失败，待旧节点消失后再启动。可运行 `dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --registry` 检查节点冲突与正常退出后的重新注册；该检查需要 ZooKeeper 隧道。
 

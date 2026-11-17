@@ -35,7 +35,7 @@ catch (Exception error)
 
 static async Task RunServerAsync(ServerProcess process, ServerGroup group, string runDir)
 {
-    var singlePoints = new SinglePointRegistry(typeof(ServerMessages).Assembly.GetTypes());
+    var singlePoints = new SinglePointRegistry(typeof(ProfileServerSinglePoint).Assembly.GetTypes());
     var role = process.Role;
     var processType = process.Type;
     var settings = ServerSettings.Current.Value;
@@ -45,7 +45,6 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     var messages = new RpcDispatcher();
     await using var idLifetime = await InitializeSingletonsAsync();
     using var node = new ServerNode(process.Name, group, messages);
-    ServerMessages.Register(messages, node);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>

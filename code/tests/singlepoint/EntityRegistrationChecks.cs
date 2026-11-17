@@ -140,7 +140,7 @@ internal static class EntityRegistrationChecks
 }
 
 [SinglePointFor(ProcessType.Profile)]
-sealed class RegistrationWaitingSinglePoint : ServerSinglePoint
+sealed class RegistrationWaitingSinglePoint : TestRequestSinglePoint
 {
     public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

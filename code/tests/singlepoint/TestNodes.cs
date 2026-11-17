@@ -37,7 +37,6 @@ internal static class TestNodes
     {
         var messages = new RpcDispatcher();
         var node = new ServerNode(name, group, messages);
-        ServerMessages.Register(messages, node);
         return node;
     }
 }

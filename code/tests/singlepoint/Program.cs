@@ -48,6 +48,13 @@ await IdGeneratorLifecycleChecks.RunAsync();
 await using var idLifetime = await IdGenerator.InitializeAsync(
     _ => Task.FromResult(new SnowflakeIdGenerator(TestWorkerId, TimeProvider.System)));
 
+if (args is ["--singlepoint-dispatch"])
+{
+    using var dispatchDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
+    await SinglePointDispatchChecks.RunAsync(dispatchDeadline.Token);
+    return 0;
+}
+
 if (args is ["--profile"])
 {
     using var profileDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
@@ -117,7 +124,7 @@ RpcChecks.CheckTransportBoundary();
 await SinglePointChecks.RunAsync();
 
 var engineAssembly = typeof(Topology).Assembly;
-if (engineAssembly == typeof(ServerMessages).Assembly)
+if (engineAssembly == typeof(ProfileServerSinglePoint).Assembly)
 {
     throw new Exception("Engine primitives and business handlers must be compiled into separate assemblies.");
 }
@@ -179,7 +186,7 @@ if (!loginNode.Ready || loginNode.SinglePoint?.GetType() != typeof(ServerSingleP
 }
 
 var profileRequest = new ProfileRequest { RequestId = IdGenerator.GenId(), Fetch = IdGenerator.GenId() };
-var profileCall = loginNode.CallProfileAsync(profileRequest, stop);
+var profileCall = loginNode.CallSinglePointAsync<ProfileReply>(ProcessType.Profile, profileRequest, stop);
 var profileFrame = await router.Output.Reader.ReadAsync(stop);
 if (profileFrame.Request.SinglePointType != nameof(ProcessType.Profile) ||
     profileFrame.Request.SourceProcess != loginNode.Name ||
@@ -200,7 +207,7 @@ if ((await profileCall.WaitAsync(stop)).Result != ProfileReply.Types.Result.Miss
     throw new Exception("Profile reply was not delivered to its caller.");
 }
 
-var failedCall = loginNode.CallProfileAsync(profileRequest, stop);
+var failedCall = loginNode.CallSinglePointAsync<ProfileReply>(ProcessType.Profile, profileRequest, stop);
 var failedFrame = await router.Output.Reader.ReadAsync(stop);
 router.Input.Writer.TryWrite(new Frame
 {
@@ -210,9 +217,13 @@ router.Input.Writer.TryWrite(new Frame
         Error = new RpcError { StatusCode = (int)StatusCode.Unavailable, Detail = "Profile disconnected." }
     }
 });
-if ((await failedCall).Result != ProfileReply.Types.Result.Unavailable)
+try
 {
-    throw new Exception("Profile transport failure did not preserve Unavailable.");
+    await failedCall;
+    throw new Exception("Profile transport failure was not returned to the caller.");
+}
+catch (RpcException error) when (error.StatusCode == StatusCode.Unavailable)
+{
 }
 
 using (var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop))
@@ -220,7 +231,7 @@ using (var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop))
     cancelled.Cancel();
     try
     {
-        await loginNode.CallProfileAsync(profileRequest, cancelled.Token);
+        await loginNode.CallSinglePointAsync<ProfileReply>(ProcessType.Profile, profileRequest, cancelled.Token);
         throw new Exception("Profile swallowed caller cancellation.");
     }
     catch (OperationCanceledException) when (cancelled.IsCancellationRequested)
@@ -231,9 +242,13 @@ using (var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop))
 retry.Input.Writer.Complete();
 router.Input.Writer.Complete();
 await Task.WhenAll(accepted, routerLink).WaitAsync(stop);
-if ((await loginNode.CallProfileAsync(profileRequest, stop)).Result != ProfileReply.Types.Result.Unavailable)
+try
 {
-    throw new Exception("Disconnected Profile caller did not preserve Unavailable.");
+    await loginNode.CallSinglePointAsync<ProfileReply>(ProcessType.Profile, profileRequest, stop);
+    throw new Exception("Disconnected Profile caller did not report Unavailable.");
+}
+catch (RpcException error) when (error.StatusCode == StatusCode.Unavailable)
+{
 }
 
 var business = new SinglePointRegistry([typeof(WaitingSinglePoint)]);
@@ -261,7 +276,6 @@ if (gate.Ready || gate.SinglePoint is not null)
     throw new Exception("Engine readiness must not create or initialize a business SinglePoint.");
 }
 
-await ExpectProfileResult(ProfileReply.Types.Result.Unavailable);
 var initialization = gate.InitializeSinglePointAsync(business, stop);
 var point = gate.SinglePoint as WaitingSinglePoint ?? throw new Exception("The registered business SinglePoint was not selected.");
 await point.Started.Task.WaitAsync(stop);
@@ -270,7 +284,6 @@ if (!IdText.IsValid(point.EntityId) || point.LocalEntityIds.Any())
     throw new Exception("A SinglePoint must own its identity without registering before business initialization completes.");
 }
 
-await ExpectProfileResult(ProfileReply.Types.Result.Unavailable);
 point.Release.SetResult();
 await initialization.WaitAsync(stop);
 if (!gate.Ready)
@@ -278,7 +291,6 @@ if (!gate.Ready)
     throw new Exception("Gate remained unavailable after role initialization.");
 }
 
-await ExpectProfileResult(ProfileReply.Types.Result.Rejected);
 login.Input.Writer.Complete();
 basePeer.Input.Writer.Complete();
 await streams.WaitAsync(stop);
@@ -397,64 +409,28 @@ await routes.FirstLinks.WaitAsync(stop);
 await routes.InitializeSinglePointAsync(defaults, stop);
 var baseRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
 var profileRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
-var publish = new ProfileRequest
+var query = new ProfileRequest
 {
     RequestId = IdGenerator.GenId(),
-    Publish = new EntitySummary
-    {
-        EntityId = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)],
-        DisplayName = "TGame profile",
-        Title = "Profile check"
-    }
+    Fetch = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Scene), 1)]
 };
-baseRoute.Input.Writer.TryWrite(ProfileRpcChecks.Request(ServerProcess.FormatName(nameof(ProcessType.Base), 1), publish));
+baseRoute.Input.Writer.TryWrite(ProfileRpcChecks.Request(ServerProcess.FormatName(nameof(ProcessType.Base), 1), query));
 var forwarded = await profileRoute.Output.Reader.ReadAsync(stop);
-if (forwarded.ReadRequest<ProfileRequest>()?.RequestId != publish.RequestId || forwarded.ReadRequest<ProfileRequest>().Publish?.EntityId != publish.Publish.EntityId)
+if (!forwarded.ReadRequest<ProfileRequest>().Equals(query))
 {
-    throw new Exception("Router did not forward an owned GUID entity to the Profile role.");
+    throw new Exception("Router did not forward the query to the Profile role.");
 }
 
 profileRoute.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
     {
-        RequestId = publish.RequestId,
-        EntityId = publish.Publish.EntityId,
-        Result = ProfileReply.Types.Result.Stored
+        RequestId = query.RequestId,
+        EntityId = query.Fetch,
+        Result = ProfileReply.Types.Result.Missing
     }, forwarded.Request.RequestId));
-var published = (await baseRoute.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>();
-if (published?.RequestId != publish.RequestId || published.EntityId != publish.Publish.EntityId || published.Result != ProfileReply.Types.Result.Stored)
+var queried = (await baseRoute.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>();
+if (queried.RequestId != query.RequestId || queried.EntityId != query.Fetch || queried.Result != ProfileReply.Types.Result.Missing)
 {
-    throw new Exception("Profile reply did not return to the owner of the GUID entity.");
-}
-
-var foreignPublish = publish.Clone();
-foreignPublish.RequestId = IdGenerator.GenId();
-foreignPublish.Publish.EntityId = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Scene), 1)];
-await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), foreignPublish);
-await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), new ProfileRequest
-{
-    RequestId = IdGenerator.GenId(),
-    Withdraw = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Scene), 1)]
-});
-await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), new ProfileRequest
-{
-    RequestId = IdGenerator.GenId(),
-    Fetch = InvalidEntityId
-});
-await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.GM), 1), new ProfileRequest
-{
-    RequestId = IdGenerator.GenId(),
-    Fetch = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)]
-});
-
-var missing = RpcFrames.Request(new Empty(), IdGenerator.GenId());
-missing.Request.SourceProcess = ServerProcess.FormatName(nameof(ProcessType.Base), 1);
-missing.Request.EntityId = IdGenerator.GenId();
-missing.Request.DeadlineUnixMs = DateTimeOffset.UtcNow.Add(PeerLink.RequestTimeout).ToUnixTimeMilliseconds();
-baseRoute.Input.Writer.TryWrite(missing);
-var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).Reply;
-if (notFound.RequestId != missing.Request.RequestId || notFound.Error?.StatusCode != (int)StatusCode.NotFound || !routes.Ready)
-{
-    throw new Exception("A missing entity interrupted a healthy stream.");
+    throw new Exception("Profile reply did not return to the query caller.");
 }
 
 foreach (var stream in neighbors.Values)
@@ -467,42 +443,10 @@ await GroupChecks.RunAsync(stop);
 Console.WriteLine("PASS engine-first initialization, optional business construction, failure disposal, Profile routing, handshake retry, readiness gating, cancellation and disconnect.");
 return 0;
 
-async Task ExpectProfileRejected(string peer, ProfileRequest request)
-{
-    var stream = neighbors[peer];
-    stream.Input.Writer.TryWrite(ProfileRpcChecks.Request(peer, request));
-    var reply = (await stream.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>();
-    if (reply?.RequestId != request.RequestId || reply.Result != ProfileReply.Types.Result.Rejected || !routes.Ready)
-    {
-        throw new Exception("Profile accepted an invalid subject, foreign mutation or unauthorized caller.");
-    }
-
-    if (profileRoute.Output.Reader.TryRead(out _))
-    {
-        throw new Exception("Rejected Profile request reached the Profile service.");
-    }
-}
-
 Task Open(ServerNode node, string peer, FrameStream stream)
 {
     stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
     return node.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, stop);
-}
-
-async Task ExpectProfileResult(ProfileReply.Types.Result result)
-{
-    var request = new ProfileRequest
-    {
-        RequestId = IdGenerator.GenId(),
-        Fetch = IdGenerator.GenId()
-    };
-    var messages = new RpcDispatcher();
-    ServerMessages.Register(messages, gate);
-    var response = (ProfileReply)await messages.DispatchEntityAsync(RpcFrames.Request(request).Request, stop);
-    if (response.RequestId != request.RequestId || response.Result != result)
-    {
-        throw new Exception($"Expected {result} for the Profile request, got {response}.");
-    }
 }
 
 [SinglePointFor(ProcessType.Gate)]

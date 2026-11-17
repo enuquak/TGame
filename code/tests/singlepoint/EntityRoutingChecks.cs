@@ -133,6 +133,10 @@ internal static class EntityRoutingChecks
         Check(!network.Node(ProcessType.Router).IsEntityOwner(profile.Name, point.EntityId),
             "Router registered an entity from the connection handshake.");
         await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(point.EntityId, new StringValue(), stop));
+        point.Handler = (_, payload, _) => Task.FromResult<IMessage>(new StringValue
+        {
+            Value = "initialized|" + payload.Unpack<StringValue>().Value
+        });
         point.Release.SetResult();
         await initialization.WaitAsync(stop);
         Check(network.Node(ProcessType.Router).IsEntityOwner(profile.Name, point.EntityId),
@@ -151,19 +155,6 @@ internal static class EntityRoutingChecks
         var gate = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);
         var login = ServerProcess.FormatName(nameof(ProcessType.Login), 1);
         var expiredHandler = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        dispatcher.RegisterEntity<Empty, StringValue>((context, _, _) => Task.FromResult(new StringValue { Value = context.SourceProcess }));
-        dispatcher.RegisterEntity<StringValue, StringValue>(async (_, request, token) =>
-        {
-            try
-            {
-                await Task.Delay(Timeout.Infinite, token);
-                return request;
-            }
-            finally
-            {
-                expiredHandler.TrySetResult();
-            }
-        });
         using var node = new ServerNode(login, group, dispatcher);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var stream = new FrameStream();
@@ -173,7 +164,24 @@ internal static class EntityRoutingChecks
         {
             await stream.Output.Reader.ReadAsync(stop);
             await node.FirstLinks.WaitAsync(stop);
-            await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+            await node.InitializeSinglePointAsync(new SinglePointRegistry([typeof(RoutingLoginSinglePoint)]), stop);
+            ((RoutingLoginSinglePoint)node.SinglePoint!).Handler = async (context, payload, token) =>
+            {
+                if (payload.Is(Empty.Descriptor))
+                {
+                    return new StringValue { Value = context.SourceProcess };
+                }
+
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, token);
+                    return payload.Unpack<StringValue>();
+                }
+                finally
+                {
+                    expiredHandler.TrySetResult();
+                }
+            };
             var forged = new RpcRequest
             {
                 RequestId = NewId(), SourceProcess = login,
@@ -271,6 +279,7 @@ internal static class EntityRoutingChecks
     private sealed class Network : IAsyncDisposable
     {
         private readonly Dictionary<string, ServerNode> nodes = [];
+        private readonly Dictionary<string, Func<EntityRpcContext, Any, CancellationToken, Task<IMessage>>> handlers = [];
         private readonly List<Connection> connections = [];
         private readonly CancellationToken stop;
         private readonly ProcessType entryType;
@@ -316,8 +325,14 @@ internal static class EntityRoutingChecks
                 var dispatcher = new RpcDispatcher();
                 var node = new ServerNode(process.Name, group, dispatcher);
                 nodes.Add(process.Name, node);
-                dispatcher.RegisterEntity<StringValue, StringValue>(async (context, request, token) =>
+                handlers.Add(process.Name, async (context, payload, token) =>
                 {
+                    if (!payload.Is(StringValue.Descriptor))
+                    {
+                        throw new RpcException(new Status(StatusCode.Unimplemented, "Unsupported test request."));
+                    }
+
+                    var request = payload.Unpack<StringValue>();
                     if (request.Value == "nested")
                     {
                         return await node.CallEntityAsync<StringValue>(Node(entryType).SinglePoint!.EntityId, new StringValue { Value = "callback" }, token);
@@ -364,7 +379,13 @@ internal static class EntityRoutingChecks
                 await node.FirstLinks.WaitAsync(stop);
                 if (initializeProfile || node != Node(ProcessType.Profile))
                 {
-                    await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+                    var registry = new SinglePointRegistry([typeof(RoutingLoginSinglePoint),
+                        typeof(RoutingBaseSinglePoint), typeof(RoutingProfileSinglePoint)]);
+                    await node.InitializeSinglePointAsync(registry, stop);
+                    if (node.SinglePoint is TestRequestSinglePoint point)
+                    {
+                        point.Handler = handlers[node.Name];
+                    }
                 }
             }
         }

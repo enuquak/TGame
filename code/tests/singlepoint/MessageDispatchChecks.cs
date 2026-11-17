@@ -11,9 +11,9 @@ internal static class MessageDispatchChecks
     public static async Task RunAsync(CancellationToken stop)
     {
         await VerifyNestedDispatchAsync(stop);
-        await VerifyProfileReadinessAsync(stop);
+        await SinglePointDispatchChecks.RunAsync(stop);
         await VerifyQueueLimitAsync(stop);
-        Console.WriteLine("PASS nested RPC dispatch, Profile readiness and bounded request queues.");
+        Console.WriteLine("PASS nested RPC dispatch, direct SinglePoint dispatch and bounded request queues.");
     }
 
     private static async Task VerifyNestedDispatchAsync(CancellationToken stop)
@@ -68,19 +68,6 @@ internal static class MessageDispatchChecks
             catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
             {
             }
-        }
-    }
-
-    private static async Task VerifyProfileReadinessAsync(CancellationToken stop)
-    {
-        var messages = new RpcDispatcher();
-        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages);
-        ServerMessages.Register(messages, node);
-        var profile = new ProfileRequest { RequestId = IdGenerator.GenId(), Fetch = IdGenerator.GenId() };
-        var reply = (ProfileReply)await messages.DispatchEntityAsync(RpcFrames.Request(profile).Request, stop);
-        if (reply.Result != ProfileReply.Types.Result.Unavailable)
-        {
-            throw new Exception("Profile accepted a request before the node was ready.");
         }
     }
 

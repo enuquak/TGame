@@ -15,7 +15,7 @@
 - [x] [EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs)、[ServerEnvironment.cs](../code/shared/csharp/ServerEnvironment.cs)：区分引擎日志目录、运行标记与宿主业务配置、存储凭据变量。
 - [x] [ServerSettings.cs](../code/server/app/ServerSettings.cs)、[server.local.yaml](../code/server/config/server.local.yaml)：理解环境选择、配置快照、凭据变量名与配置校验。
 
-读完应能回答：所有角色为何运行同一个程序？业务代码编译到哪个程序集？`ServerMessages` 为什么能作为业务类型扫描入口？移除业务 Shared 后 Engine 为什么仍能独立编译？
+读完应能回答：所有角色为何运行同一个程序？业务代码编译到哪个程序集？宿主如何通过业务程序集扫描 SinglePoint 类型？移除业务 Shared 后 Engine 为什么仍能独立编译？
 
 ## 2. 身份与 SinglePoint（当前起点）
 
@@ -57,7 +57,7 @@
 
 ## 3. 沿启动流程读一遍
 
-- [ ] [Program.cs](../code/server/app/Program.cs)：从参数解析进入 `RunServerAsync`，按 `SinglePointRegistry` → `IdGenerator.InitializeAsync` → `ServerNode` 与消息注册 → `app.StartAsync` → 服务注册和工作任务阅读。再追局部函数 `InitializeAsync` 中的 `InitializeEngineAsync` → `node.InitializeSinglePointAsync`，最后看 `WatchIdLeaseAsync`、`SuperviseAsync` 和资源释放。
+- [ ] [Program.cs](../code/server/app/Program.cs)：从参数解析进入 `RunServerAsync`，按 `SinglePointRegistry` → `IdGenerator.InitializeAsync` → `ServerNode` 创建 → `app.StartAsync` → 服务注册和工作任务阅读。再追局部函数 `InitializeAsync` 中的 `InitializeEngineAsync` → `node.InitializeSinglePointAsync`，最后看 `WatchIdLeaseAsync`、`SuperviseAsync` 和资源释放。
 - [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数只准备进程信息和拓扑，不创建 SinglePoint 或分配其实体 ID；`InitializeSinglePointAsync` 在 `FirstLinks` 成功后创建 SinglePoint，并调用 `singlePoint.InitializeAsync(this, stop)`，传入所属节点。再看 `Ready` 与 `Dispose`。
 
 当前顺序为：初始化进程 ID 生成器 → 监听与 ZooKeeper 服务注册 → 建立首次拓扑连接（只交换进程名）→ 创建 SinglePoint 并生成身份 → 执行业务初始化 → SinglePoint 登记本地实体并发起远端注册 → 收到注册确认 → 标记 SinglePoint 初始化完成。
@@ -91,7 +91,7 @@ Router 保存实体到进程的归属及按类型选择 SinglePoint 的索引；
 - [ ] 对照 `Frame` 与 `RegisterEntitiesRequest` / `RegisterEntitiesReply`：`Frame.hello` 只是进程实例名字符串，旧 `Frame.single_point_id` 已移除并保留原字段名与编号；SinglePoint ID 和实体名单现在放在独立注册请求中，通过已有 RPC 信封发送和关联回包。
 - [ ] [EntityRpcContext.cs](../code/server/engine/EntityRpcContext.cs)：区分原始调用进程 `SourceProcess` 与本跳来源 `PeerProcess`。
 - [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：按 `CallAsync`、`WriteAsync`、`Receive`、`ReadReply`、`Close` 跟踪请求关联、超时、取消和断线。
-- [ ] [RpcDispatcher.cs](../code/server/engine/RpcDispatcher.cs)：比较普通消息注册与 `RegisterEntity`；理解可选的转发前校验回调、业务拒绝响应和未注册消息错误。
+- [ ] [RpcDispatcher.cs](../code/server/engine/RpcDispatcher.cs)：理解无目标连接消息的注册、解包与未知消息错误；实体请求由 ServerNode 直接投递给 SinglePoint。
 - [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：看读循环如何直接处理响应、请求如何排队，以及实体请求如何支持嵌套调用。
 
 读完应能画出：发起调用 → 保存等待项 → 写出请求 → 接收响应 → 找到等待项 → 完成原来的 `Task`。
@@ -114,9 +114,8 @@ Router 保存实体到进程的归属及按类型选择 SinglePoint 的索引；
 
 ## 7. 以一次 Profile 查询串起业务链路
 
-- [ ] [profile.proto](../code/shared/protocols/profile.proto)：发布、查询、撤回及结果枚举。
-- [ ] [ServerMessages.cs](../code/server/logic/messages/ServerMessages.cs)、[ProfileMessages.cs](../code/server/logic/messages/ProfileMessages.cs)：先看注册，再看 `CallProfileAsync`、`ValidateRoute`、`HandleAsync`、参数与响应校验。
-- [ ] [ProfileServerSinglePoint.cs](../code/server/logic/entities/SinglePoint/ProfileServerSinglePoint.cs)：存储初始化、请求执行、异常转换与释放。
+- [ ] [profile.proto](../code/shared/protocols/profile.proto)：查询请求及结果枚举。历史 publish/withdraw 字段保留，但 Profile RPC 入口拒绝写入。
+- [ ] [ProfileServerSinglePoint.cs](../code/server/logic/entities/SinglePoint/ProfileServerSinglePoint.cs)：存储初始化、HandleRequestAsync 的协议解包与只读校验、查询执行、异常转换与释放。
 - [ ] [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs)、[StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs)：MongoDB 持久化、Redis 命中和回填、缓存占用标记、更新后的缓存失效。
 
 ```mermaid
@@ -126,18 +125,18 @@ sequenceDiagram
     participant P as Profile SinglePoint
     participant S as ProfileStore
     L->>R: CallSinglePointAsync(Profile, request)
-    R->>R: ProfileMessages 校验来源、参数和写入归属
     R->>R: 选择 Profile 实体并路由
-    R->>P: 通用 RPC 请求
-    P->>S: HandleAsync
+    R->>P: ServerNode 调用 HandleRequestAsync
+    P->>P: 解包并校验查询参数
+    P->>S: HandleAsync（Fetch）
     S-->>P: ProfileReply
     P-->>R: 通用 RPC 回包
     R-->>L: 完成调用
 ```
 
-RPC 目标是执行方法的 **Profile SinglePoint**，业务请求中的实体 ID 是要读写的 **摘要所属实体**。通用 RPC 的请求 ID 负责运输关联，Profile 的业务请求 ID 原样保留在业务响应中。
+RPC 目标是执行方法的 **Profile SinglePoint**，业务请求中的实体 ID 是要查询的 **摘要所属实体**。通用 RPC 的请求 ID 负责运输关联，Profile 的业务请求 ID 原样保留在业务响应中。
 
-写入归属检查仍在 Router 上执行，但规则定义在 `ProfileMessages`。引擎只调用通用校验回调。Profile 服务端要求请求来自 Router；调用端保留 `Rejected` / `Unavailable` 等业务结果及响应 ID 校验。
+Router 只负责通用路由与来源校验。Profile 的业务入口只接受查询；实体修改应通过实体 RPC 交给实体自身。调用方直接使用 CallSinglePointAsync，通用传输错误以 RpcException 返回，业务查询的 Rejected / Unavailable 等结果由 Profile 返回。
 
 ## 8. DBMgr、日志和控制台
 

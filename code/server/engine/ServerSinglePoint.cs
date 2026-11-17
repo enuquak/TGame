@@ -1,4 +1,7 @@
 using System.Collections.Concurrent;
+using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
+using Grpc.Core;
 
 namespace TGame.Server.Engine;
 
@@ -45,6 +48,12 @@ public class ServerSinglePoint
     }
 
     public bool ContainsEntity(string entityId) => localEntities.ContainsKey(entityId);
+
+    public virtual Task<IMessage> HandleRequestAsync(EntityRpcContext context, Any payload, CancellationToken stop)
+    {
+        throw new RpcException(new Status(StatusCode.Unimplemented,
+            $"Unsupported SinglePoint request type {Any.GetTypeName(payload.TypeUrl)}."));
+    }
 
     private void RegisterSinglePoint() => localEntities[EntityId] = 0;
 

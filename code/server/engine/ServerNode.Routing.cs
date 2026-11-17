@@ -109,12 +109,6 @@ public partial class ServerNode
         RpcDispatcher.ValidateEnvelope(request.RequestId, request.Payload);
         ValidateSource(request.SourceProcess, peer);
 
-        var rejection = messages.ValidateEntity(request, peer);
-        if (rejection is not null)
-        {
-            return new RpcReply { RequestId = request.RequestId, Payload = Any.Pack(rejection) };
-        }
-
         if (request.TargetCase == RpcRequest.TargetOneofCase.SinglePointType)
         {
             if (!Enum.TryParse<ProcessType>(request.SinglePointType, out var type) ||
@@ -136,7 +130,8 @@ public partial class ServerNode
             throw new RpcException(new Status(StatusCode.InvalidArgument, "Invalid RPC target entity."));
         }
 
-        if (request.TargetCase == RpcRequest.TargetOneofCase.EntityId && singlePoint?.ContainsEntity(request.EntityId) == true)
+        var point = singlePoint;
+        if (request.TargetCase == RpcRequest.TargetOneofCase.EntityId && point?.ContainsEntity(request.EntityId) == true)
         {
             if (Role == nameof(ProcessType.Gate))
             {
@@ -148,7 +143,8 @@ public partial class ServerNode
                 throw new RpcException(new Status(StatusCode.Unavailable, "Target entity is not ready."));
             }
 
-            var response = await messages.DispatchEntityAsync(request, stop, peer);
+            var context = new EntityRpcContext(request.RequestId, request.SourceProcess, request.EntityId, peer);
+            var response = await point.HandleRequestAsync(context, request.Payload, stop);
             return new RpcReply { RequestId = request.RequestId, Payload = Any.Pack(response) };
         }
 

@@ -2,6 +2,9 @@ using Any = Google.Protobuf.WellKnownTypes.Any;
 using TGame;
 using TGame.Profile;
 using TGame.Server.Engine;
+using TGame.Server.Logic;
+using Grpc.Core;
+using Empty = Google.Protobuf.WellKnownTypes.Empty;
 using TGame.Transport;
 using Result = TGame.Profile.ProfileReply.Types.Result;
 
@@ -44,7 +47,7 @@ internal static class ProfileRpcChecks
             {
                 RequestId = NewId(), Publish = new EntitySummary { EntityId = foreign, DisplayName = "foreign" }
             });
-            await RejectedAsync(forbidden, new ProfileRequest { RequestId = NewId(), Fetch = owned });
+            await ForwardedAsync(new ProfileRequest { RequestId = NewId(), Fetch = owned }, owned, Result.Missing, forbidden);
             await RejectedAsync(source, new ProfileRequest { RequestId = NewId(), Fetch = "invalid-id" });
             await RejectedAsync(source, new ProfileRequest { RequestId = "invalid-id", Fetch = owned });
             await RejectedAsync(source, new ProfileRequest
@@ -60,41 +63,46 @@ internal static class ProfileRpcChecks
                 RequestId = NewId(), Publish = new EntitySummary { EntityId = owned, DisplayName = "valid", Title = new string('x', 81) }
             });
 
-            await ForwardedAsync(new ProfileRequest
+            await RejectedAsync(source, new ProfileRequest
             {
                 RequestId = NewId(), Publish = new EntitySummary { EntityId = owned, DisplayName = "owned" }
-            }, owned, Result.Stored);
+            });
             await ForwardedAsync(new ProfileRequest { RequestId = NewId(), Fetch = foreign }, foreign, Result.Found);
-            await ForwardedAsync(new ProfileRequest { RequestId = NewId(), Withdraw = owned }, owned, Result.Removed);
-
-            async Task RejectedAsync(string from, ProfileRequest request)
+            await RejectedAsync(source, new ProfileRequest { RequestId = NewId(), Withdraw = owned });
+            await RejectedAsync(source, new ProfileRequest { RequestId = NewId() });
+            using (var point = new ProfileServerSinglePoint())
             {
-                var frame = Request(from, request);
-                peers[from].Input.Writer.TryWrite(frame);
-                var reads = profiles.Select(stream => stream.Output.Reader.WaitToReadAsync(stop).AsTask()).ToList();
-                reads.Add(peers[from].Output.Reader.WaitToReadAsync(stop).AsTask());
-                await Task.WhenAny(reads).WaitAsync(stop);
-                if (!peers[from].Output.Reader.TryRead(out var response))
+                try
                 {
-                    throw new Exception("Invalid Profile mutation was forwarded instead of rejected by Router.");
+                    await point.HandleRequestAsync(new EntityRpcContext(NewId(), source, point.EntityId), Any.Pack(new Empty()), stop);
+                    throw new Exception("Profile accepted an unsupported RPC type.");
                 }
-
-                var reply = response.ReadReply<ProfileReply>();
-                if (response.Reply.RequestId != frame.Request.RequestId || reply.RequestId != request.RequestId || reply.Result != Result.Rejected)
+                catch (RpcException error) when (error.StatusCode == StatusCode.Unimplemented)
                 {
-                    throw new Exception("Profile rejection lost its business result or RPC correlation.");
                 }
             }
 
-            async Task ForwardedAsync(ProfileRequest request, string subject, Result result)
+            async Task RejectedAsync(string from, ProfileRequest request)
             {
-                var frame = Request(source, request);
-                peers[source].Input.Writer.TryWrite(frame);
+                using var point = new ProfileServerSinglePoint();
+                var context = new EntityRpcContext(NewId(), from, point.EntityId);
+                var reply = (ProfileReply)await point.HandleRequestAsync(context, Any.Pack(request), stop);
+                if (reply.RequestId != request.RequestId || reply.Result != Result.Rejected)
+                {
+                    throw new Exception("Profile must reject invalid queries and writes in its own request entry.");
+                }
+            }
+
+            async Task ForwardedAsync(ProfileRequest request, string subject, Result result, string? from = null)
+            {
+                from ??= source;
+                var frame = Request(from, request);
+                peers[from].Input.Writer.TryWrite(frame);
                 await Task.WhenAny(profiles.Select(stream => stream.Output.Reader.WaitToReadAsync(stop).AsTask())).WaitAsync(stop);
                 var index = Array.FindIndex(profiles, stream => stream.Output.Reader.TryPeek(out _));
                 var forwarded = await profiles[index].Output.Reader.ReadAsync(stop);
                 if (forwarded.Request.RequestId != frame.Request.RequestId ||
-                    forwarded.Request.SourceProcess != source ||
+                    forwarded.Request.SourceProcess != from ||
                     forwarded.Request.EntityId != entities[profileNames[index]] ||
                     !forwarded.ReadRequest<ProfileRequest>().Equals(request))
                 {
@@ -105,7 +113,7 @@ internal static class ProfileRpcChecks
                 {
                     RequestId = request.RequestId, EntityId = subject, Result = result
                 }, forwarded.Request.RequestId));
-                var response = await peers[source].Output.Reader.ReadAsync(stop);
+                var response = await peers[from].Output.Reader.ReadAsync(stop);
                 var reply = response.ReadReply<ProfileReply>();
                 if (response.Reply.RequestId != frame.Request.RequestId || reply.RequestId != request.RequestId || reply.EntityId != subject || reply.Result != result)
                 {
@@ -125,7 +133,7 @@ internal static class ProfileRpcChecks
             }
         }
 
-        Console.WriteLine("PASS Profile generic RPC routing, ownership, validation and reply correlation.");
+        Console.WriteLine("PASS Profile routing without business registration, read-only business validation and reply correlation.");
     }
 
     internal static Frame Request(string source, ProfileRequest request) => new()

@@ -283,11 +283,11 @@ internal static class GroupChecks
         var request = new ProfileRequest
         {
             RequestId = IdGenerator.GenId(),
-            Publish = new EntitySummary { EntityId = ids[secondBase], DisplayName = "Group check", Title = "Owner" }
+            Fetch = ids[secondBase]
         };
         publisher.Input.Writer.TryWrite(ProfileRpcChecks.Request(secondBase, request));
         var forwarded = await profile.Output.Reader.ReadAsync(stop);
-        if (forwarded.ReadRequest<ProfileRequest>().Publish?.EntityId != ids[secondBase])
+        if (forwarded.ReadRequest<ProfileRequest>().Fetch != ids[secondBase])
         {
             throw new Exception("Router lost the entity owner of the second Base instance.");
         }
@@ -296,9 +296,9 @@ internal static class GroupChecks
         {
             RequestId = request.RequestId,
             EntityId = ids[secondBase],
-            Result = ProfileReply.Types.Result.Stored
+            Result = ProfileReply.Types.Result.Missing
         }, forwarded.Request.RequestId));
-        if ((await publisher.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Stored)
+        if ((await publisher.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Missing)
         {
             throw new Exception("Profile reply did not return to the second Base instance.");
         }
@@ -307,10 +307,19 @@ internal static class GroupChecks
         var foreign = request.Clone();
         foreign.RequestId = IdGenerator.GenId();
         firstBase.Input.Writer.TryWrite(ProfileRpcChecks.Request(ServerProcess.FormatName(nameof(ProcessType.Base), 1), foreign));
-        if ((await firstBase.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Rejected ||
-            profile.Output.Reader.TryRead(out _))
+        var foreignQuery = await profile.Output.Reader.ReadAsync(stop);
+        if (!foreignQuery.ReadRequest<ProfileRequest>().Equals(foreign))
         {
-            throw new Exception("One Base instance was allowed to publish another Base instance's entity.");
+            throw new Exception("Router changed a query for another Base instance's entity.");
+        }
+
+        profile.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
+        {
+            RequestId = foreign.RequestId, EntityId = foreign.Fetch, Result = ProfileReply.Types.Result.Missing
+        }, foreignQuery.Request.RequestId));
+        if ((await firstBase.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().RequestId != foreign.RequestId)
+        {
+            throw new Exception("Query response did not return to the first Base instance.");
         }
 
         var thirdBase = ServerProcess.FormatName(nameof(ProcessType.Base), 3);
