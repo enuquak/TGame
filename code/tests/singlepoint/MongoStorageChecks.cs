@@ -64,11 +64,12 @@ internal static class MongoStorageChecks
             Environment.SetEnvironmentVariable(ServerEnvironment.Config, profileConfig);
             Environment.SetEnvironmentVariable(ServerEnvironment.MongoPassword, TestPassword);
             Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, null);
-            using (var missingCredential = new DBMgrServerSinglePoint())
+            var registry = new SinglePointRegistry([typeof(DBMgrServerSinglePoint)]);
+            using (var missingCredential = TestNodes.CreateIsolated(ProcessType.DBMgr))
             {
-                await ExpectAsync<InvalidOperationException>(() => missingCredential.InitializeAsync(
-                    nameof(ProcessType.DBMgr), _ => Task.CompletedTask, CancellationToken.None));
-                if (missingCredential.Initialized)
+                await ExpectAsync<InvalidOperationException>(() => missingCredential.InitializeSinglePointAsync(
+                    registry, CancellationToken.None));
+                if (missingCredential.Ready || missingCredential.SinglePoint?.Initialized == true)
                 {
                     throw new Exception("DBMgr became ready without its own credential.");
                 }
@@ -76,10 +77,9 @@ internal static class MongoStorageChecks
 
             Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, TestPassword);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
-            using var unavailable = new DBMgrServerSinglePoint();
-            await ExpectAsync<TimeoutException>(() => unavailable.InitializeAsync(
-                nameof(ProcessType.DBMgr), _ => Task.CompletedTask, deadline.Token));
-            if (unavailable.Initialized)
+            using var unavailable = TestNodes.CreateIsolated(ProcessType.DBMgr);
+            await ExpectAsync<TimeoutException>(() => unavailable.InitializeSinglePointAsync(registry, deadline.Token));
+            if (unavailable.Ready || unavailable.SinglePoint?.Initialized == true)
             {
                 throw new Exception("DBMgr became ready before its database connection check succeeded.");
             }

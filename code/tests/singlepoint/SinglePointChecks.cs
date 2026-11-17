@@ -30,8 +30,12 @@ internal static class SinglePointChecks
                 throw new Exception("A new SinglePoint must own its identity without registering it yet.");
             }
 
-            await singlePoint.InitializeAsync(role.ToString(), _ => Task.CompletedTask, CancellationToken.None);
-            if (!singlePoint.Initialized || !singlePoint.ContainsEntity(singlePoint.EntityId) ||
+            using var node = TestNodes.CreateIsolated(role);
+            await node.InitializeSinglePointAsync(registry, CancellationToken.None);
+            singlePoint = node.SinglePoint!;
+            if (!node.Ready ||
+                !singlePoint.Initialized ||
+                !singlePoint.ContainsEntity(singlePoint.EntityId) ||
                 !singlePoint.LocalEntityIds.SequenceEqual([singlePoint.EntityId]))
             {
                 throw new Exception("The default SinglePoint must register its own identity after initialization.");

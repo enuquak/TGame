@@ -65,7 +65,7 @@ public partial class ServerNode : IDisposable
         }
 
         singlePoint = registry.Create(Enum.Parse<ProcessType>(Role));
-        await singlePoint.InitializeAsync(Role, RegisterEntitiesAsync, stop);
+        await singlePoint.InitializeAsync(this, stop);
     }
 
     public void Dispose()

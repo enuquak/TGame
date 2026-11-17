@@ -27,6 +27,12 @@ internal static class TestNodes
     public static ServerNode Create(string role) =>
         Create(ServerProcess.FormatName(role, 1), DefaultGroup);
 
+    public static ServerNode CreateIsolated(ProcessType type)
+    {
+        var counts = Enum.GetValues<ProcessType>().ToDictionary(current => current, current => current == type ? 1 : 0);
+        return Create(ServerProcess.FormatName(type.ToString(), 1), new ServerGroup(counts));
+    }
+
     public static ServerNode Create(string name, ServerGroup group)
     {
         var messages = new RpcDispatcher();

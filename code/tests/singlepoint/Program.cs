@@ -286,9 +286,10 @@ if (gate.Ready)
     throw new Exception("Gate remained available after a peer disconnected.");
 }
 
-var cancelling = new WaitingSinglePoint();
+using var cancellingNode = TestNodes.CreateIsolated(ProcessType.Gate);
 using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
-var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), _ => Task.CompletedTask, cancel.Token);
+var pending = cancellingNode.InitializeSinglePointAsync(business, cancel.Token);
+var cancelling = (WaitingSinglePoint)cancellingNode.SinglePoint!;
 await cancelling.Started.Task.WaitAsync(stop);
 cancel.Cancel();
 try
@@ -299,7 +300,7 @@ try
 catch (OperationCanceledException) when (cancel.IsCancellationRequested && !stop.IsCancellationRequested)
 {
 }
-if (cancelling.Initialized)
+if (cancelling.Initialized || cancellingNode.Ready || cancelling.LocalEntityIds.Any())
 {
     throw new Exception("Cancelled SinglePoint became ready.");
 }

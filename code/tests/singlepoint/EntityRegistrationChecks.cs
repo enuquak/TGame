@@ -5,15 +5,22 @@ using TGame.Transport;
 
 internal static class EntityRegistrationChecks
 {
+    private enum InitializationOutcome
+    {
+        Success,
+        RegistrationRejected,
+        BusinessFailed
+    }
+
     public static async Task RunAsync(CancellationToken stop)
     {
-        await CheckInitializationAsync(false, stop);
-        await CheckInitializationAsync(true, stop);
-        await CheckBusinessFailureAsync(stop);
+        await CheckInitializationAsync(InitializationOutcome.Success, stop);
+        await CheckInitializationAsync(InitializationOutcome.RegistrationRejected, stop);
+        await CheckInitializationAsync(InitializationOutcome.BusinessFailed, stop);
         Console.WriteLine("PASS SinglePoint-owned registration: handshake isolation, acknowledgement, rejection, failed initialization and reconnect.");
     }
 
-    private static async Task CheckInitializationAsync(bool reject, CancellationToken stop)
+    private static async Task CheckInitializationAsync(InitializationOutcome outcome, CancellationToken stop)
     {
         var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
         counts[ProcessType.Router] = 1;
@@ -38,6 +45,23 @@ internal static class EntityRegistrationChecks
             Check(IdText.IsValid(point.EntityId) && !point.LocalEntityIds.Any() && !stream.Output.Reader.TryPeek(out _),
                 "Entities were published while business initialization was still pending.");
 
+            if (outcome == InitializationOutcome.BusinessFailed)
+            {
+                point.Release.SetException(new InvalidDataException("Business initialization failed."));
+                try
+                {
+                    await initialization.WaitAsync(stop);
+                    throw new Exception("Business initialization failure was hidden.");
+                }
+                catch (InvalidDataException)
+                {
+                }
+
+                Check(!point.Initialized && !node.Ready && !point.LocalEntityIds.Any() && !stream.Output.Reader.TryPeek(out _),
+                    "Failed business initialization registered local or remote entities.");
+                return;
+            }
+
             point.Release.SetResult();
             var frame = await stream.Output.Reader.ReadAsync(stop);
             var request = frame.ReadRequest<RegisterEntitiesRequest>();
@@ -46,7 +70,7 @@ internal static class EntityRegistrationChecks
             Check(!point.Initialized && !node.Ready && !initialization.IsCompleted,
                 "SinglePoint initialization completed before registration was acknowledged.");
 
-            if (reject)
+            if (outcome == InitializationOutcome.RegistrationRejected)
             {
                 stream.Input.Writer.TryWrite(new Frame
                 {
@@ -102,27 +126,6 @@ internal static class EntityRegistrationChecks
             {
             }
         }
-    }
-
-    private static async Task CheckBusinessFailureAsync(CancellationToken stop)
-    {
-        var point = new InitializationFailureSinglePoint();
-        bool registered = false;
-        try
-        {
-            await point.InitializeAsync(nameof(ProcessType.Gate), _ =>
-            {
-                registered = true;
-                return Task.CompletedTask;
-            }, stop);
-            throw new Exception("Business initialization failure was hidden.");
-        }
-        catch (InvalidDataException)
-        {
-        }
-
-        Check(!registered && !point.Initialized && !point.LocalEntityIds.Any(),
-            "Failed business initialization registered local or remote entities.");
     }
 
     private static string NewId() => IdGenerator.GenId();

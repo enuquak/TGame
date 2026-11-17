@@ -1,6 +1,6 @@
 # 代码 Review 路径
 
-更新时间：2026-11-17（Asia/Shanghai）。本次按 `review-1117` 分支的 `4e5b707` 核对：Engine 与业务 Shared 已分离，使用进程级 `IdGenerator.GenId()`，SinglePoint 直接持有身份和本地实体集合，实体在业务初始化后单独注册；日志支持配置最低等级。
+更新时间：2026-11-17（Asia/Shanghai）。本次按 `review-1117` 分支当前代码核对：Engine 与业务 Shared 已分离，使用进程级 `IdGenerator.GenId()`，SinglePoint 直接持有身份和本地实体集合，初始化时传入所属 `ServerNode`，实体在业务初始化后直接调用节点方法注册；日志支持配置最低等级。
 
 当前进度：**第一节已读完**（用户于 2026-11-17 确认），第二节起待阅读或待复读。只有用户明确确认读完后才勾选；详细确认记录保留在[代码 Review 进度](代码Review进度.md)。
 
@@ -22,15 +22,15 @@
 ### 2.1 先读 ServerSinglePoint：它持有什么，何时初始化完成
 
 - [ ] [ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：先看 `localEntities`、`EntityId`、`LocalEntityIds`、`Initialized` 和 `ContainsEntity`。创建实例时调用 `IdGenerator.GenId()` 生成身份，此时集合仍为空。
-- [ ] 同文件先看 `InitializeRoleAsync` 的默认实现，再顺着 `InitializeAsync` 阅读：执行业务初始化 → `RegisterSinglePoint` 登记自身 → 等待 `registerEntities` 回调 → 设置 `Initialized`。两个异常分支都会撤销本地登记并继续抛出异常。
-- [ ] 区分两种操作：`RegisterSinglePoint` 只是把自己的 ID 加入本地集合；远端注册由传入的回调完成，下一步在 `ServerNode.InitializeSinglePointAsync` 找到它。当前集合的写入仅用于 SinglePoint 自身，没有对外开放普通实体增删接口。
+- [ ] 同文件先看 `InitializeRoleAsync` 的默认实现，再顺着 `InitializeAsync(ServerNode node, CancellationToken stop)` 阅读：从 `node.Role` 取得角色 → 执行业务初始化 → `RegisterSinglePoint` 登记自身 → 等待 `node.RegisterEntitiesAsync(stop)` → 设置 `Initialized`。两个异常分支都会撤销本地登记并继续抛出异常。
+- [ ] 区分两种操作：`RegisterSinglePoint` 只是把自己的 ID 加入本地集合；远端注册由所属节点的 `RegisterEntitiesAsync` 完成；下一步在 `ServerNode.InitializeSinglePointAsync` 确认节点如何把 `this` 传入 SinglePoint。当前集合的写入仅用于 SinglePoint 自身，没有对外开放普通实体增删接口。
 
 先用下面的状态表核对理解；`Ready` 的完整计算在第 3 节阅读。
 
 | 阶段 | `EntityId` | 本地集合包含自身 | `Initialized` | 节点 `Ready` |
 | --- | --- | --- | --- | --- |
 | 刚创建 / 业务初始化中 | 已生成 | 否 | `false` | `false` |
-| 业务初始化成功，等待注册回调完成 | 保持不变 | 是 | `false` | `false` |
+| 业务初始化成功，等待远端注册确认 | 保持不变 | 是 | `false` | `false` |
 | 初始化完成，连接与注册确认齐备 | 保持不变 | 是 | `true` | `true` |
 | 初始化失败或取消 | 已生成 | 否 | `false` | `false` |
 | 初始化完成后断线 | 保留原 ID | 是 | 保持 `true` | `false` |
@@ -58,17 +58,17 @@
 ## 3. 沿启动流程读一遍
 
 - [ ] [Program.cs](../code/server/app/Program.cs)：从参数解析进入 `RunServerAsync`，按 `SinglePointRegistry` → `IdGenerator.InitializeAsync` → `ServerNode` 与消息注册 → `app.StartAsync` → 服务注册和工作任务阅读。再追局部函数 `InitializeAsync` 中的 `InitializeEngineAsync` → `node.InitializeSinglePointAsync`，最后看 `WatchIdLeaseAsync`、`SuperviseAsync` 和资源释放。
-- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数只准备进程信息和拓扑，不创建 SinglePoint 或分配其实体 ID；`InitializeSinglePointAsync` 在 `FirstLinks` 成功后创建 SinglePoint，并注入 `RegisterEntitiesAsync` 回调。再看 `Ready` 与 `Dispose`。
+- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数只准备进程信息和拓扑，不创建 SinglePoint 或分配其实体 ID；`InitializeSinglePointAsync` 在 `FirstLinks` 成功后创建 SinglePoint，并调用 `singlePoint.InitializeAsync(this, stop)`，传入所属节点。再看 `Ready` 与 `Dispose`。
 
 当前顺序为：初始化进程 ID 生成器 → 监听与 ZooKeeper 服务注册 → 建立首次拓扑连接（只交换进程名）→ 创建 SinglePoint 并生成身份 → 执行业务初始化 → SinglePoint 登记本地实体并发起远端注册 → 收到注册确认 → 标记 SinglePoint 初始化完成。
 
 `FirstLinks` 只表示首次进程连接齐备，不表示实体已注册。`Ready` 还要求 SinglePoint 初始化成功、当前连接齐备以及 `RegistrationsComplete`。断线不会重置首次连接信号或重新执行业务初始化，但会撤销当前就绪，重连并收到注册确认后才恢复。
 
-Gate 的注册回调直接返回，不向邻居登记自身为 RPC 目标；它仍需完成业务初始化和本地登记。宿主把 `consoleMode` 传给连接维护的 `reconnect` 参数，自动重连的启用条件也应一起核对。
+Gate 节点的 `RegisterEntitiesAsync` 直接返回，不向邻居登记自身为 RPC 目标；它仍需完成业务初始化和本地登记。宿主把 `consoleMode` 传给连接维护的 `reconnect` 参数，自动重连的启用条件也应一起核对。
 
 宿主直接创建 `ServerNode`。当前不存在 `GameServerNode`；具体业务实现放在 `logic/entities/SinglePoint/`。
 
-读完应能按调用顺序指出：谁初始化 ID 生成器，谁等待首次连接，谁创建 SinglePoint，谁传入注册回调，以及哪个工作任务失败会触发退出。
+读完应能按调用顺序指出：谁初始化 ID 生成器，谁等待首次连接，谁创建 SinglePoint，谁传入所属节点、谁直接发起实体注册，以及哪个工作任务失败会触发退出。
 
 ## 4. 服务发现、拓扑与连接
 
@@ -77,7 +77,7 @@ Gate 的注册回调直接返回，不向邻居登记自身为 RPC 目标；它�
 - [ ] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[LinkService.cs](../code/server/engine/LinkService.cs)：检查 `peer`、`link` 元数据、来源检查和连接交接；原来的 `EntityHeader` 已移除。
 - [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：按 `MaintainLinkAsync` → `ConnectAsync` → `RunLinkAsync` 阅读进程握手；此时只建立连接，不生成实体路由。
 - [ ] 先扫一遍 [transport.proto](../code/server/engine/protocols/transport.proto) 的 `Frame`、`RegisterEntitiesRequest` 和 `RegisterEntitiesReply`，认识握手与独立注册的消息形状；通用 RPC 的等待与回包留到第 5 节。
-- [ ] [ServerNode.Entities.cs](../code/server/engine/ServerNode.Entities.cs)：先沿发送端 `RegisterEntitiesAsync` → `EnsureRegistrationAsync` → `RegisterLinkAsync`，确认注册由 SinglePoint 的回调发起，并等待 `RegisterEntitiesReply`。
+- [ ] [ServerNode.Entities.cs](../code/server/engine/ServerNode.Entities.cs)：先沿发送端 `RegisterEntitiesAsync` → `EnsureRegistrationAsync` → `RegisterLinkAsync`，确认注册由 SinglePoint 直接调用所属节点的方法发起，并等待 `RegisterEntitiesReply`。
 - [ ] 再看同文件的 `HandleRegistrationAsync` → `RegisterPeerEntities`：检查注册只能来自当前直连进程、SinglePoint ID 必须在实体名单中、ID 格式与冲突校验，以及 Router 的 `owners` 和 SinglePoint 索引更新。注册处理不依赖接收方业务初始化完成，避免互相等待。
 - [ ] 最后回到 `RunLinkAsync` 的 `RestoreRegistrationAsync`、`finally` 和 `UpdateLinkReadiness`：核对断线时移除实体归属、SinglePoint 索引及当前连接的确认记录；重连后在新连接上重新登记，复用原身份和已初始化的 SinglePoint。
 
@@ -158,7 +158,8 @@ RPC 目标是执行方法的 **Profile SinglePoint**，业务请求中的实体 
 
 - [完整测试记录](2026-11-17完整测试记录.md)对应 Engine / Shared 拆分前的代码；拆分检查见[迁移计划与执行记录](superpowers/plans/2026-11-17-engine-business-shared.md)。
 - 实体注册调整（`b05e619`）和静态 ID 入口调整（`5dc7535`）后记录了检查工程编译及 `--routing`、`--node`、`--profile` 通过。
-- 最新状态归属调整（`4e5b707`）记录了隔离编译及 `--engine`、`--routing` 通过，详见 [SinglePoint 自持身份与实体集合执行记录](superpowers/plans/2026-11-17-singlepoint-owned-state.md)。这些历史记录不代表本次整理重新运行了测试，也不代表当前版本已完成外部服务或完整联调。
+- 状态归属调整（`4e5b707`）记录了隔离编译及 `--engine`、`--routing` 通过，详见 [SinglePoint 自持身份与实体集合执行记录](superpowers/plans/2026-11-17-singlepoint-owned-state.md)。这些历史记录各自对应当时版本。
+- 本次改为传入所属 `ServerNode` 并直接注册后，检查工程编译通过（0 警告、0 错误），`--node`、`--routing` 通过，覆盖初始化取消、业务失败、注册确认、拒绝与重连。未运行数据库检查、外部服务或完整联调。
 
 | 想确认的行为 | 对应检查 |
 | --- | --- |

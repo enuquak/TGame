@@ -26,7 +26,7 @@ public partial class ServerNode
         }
     }
 
-    private async Task RegisterEntitiesAsync(CancellationToken stop)
+    internal async Task RegisterEntitiesAsync(CancellationToken stop)
     {
         if (Role == nameof(ProcessType.Gate))
         {

@@ -12,10 +12,10 @@ public class ServerSinglePoint
     public bool Initialized => Volatile.Read(ref initialized);
     private bool initialized;
 
-    public async Task InitializeAsync(string role,
-        Func<CancellationToken, Task> registerEntities, CancellationToken stop)
+    public async Task InitializeAsync(ServerNode node, CancellationToken stop)
     {
-        ArgumentNullException.ThrowIfNull(registerEntities);
+        ArgumentNullException.ThrowIfNull(node);
+        var role = node.Role;
         GameLog.Info(ServerLogEvents.SinglePointInit, role, entity: EntityId, detail: GetType().Name);
 
         try
@@ -26,7 +26,7 @@ public class ServerSinglePoint
 
             // 业务初始化成功后才登记实体，并等待对端确认。
             RegisterSinglePoint();
-            await registerEntities(stop);
+            await node.RegisterEntitiesAsync(stop);
             stop.ThrowIfCancellationRequested();
             Volatile.Write(ref initialized, true);
             GameLog.Info(ServerLogEvents.SinglePointReady, role, entity: EntityId, detail: GetType().Name);
