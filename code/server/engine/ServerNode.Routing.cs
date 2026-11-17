@@ -1,4 +1,3 @@
-using System.Globalization;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
@@ -43,7 +42,7 @@ public partial class ServerNode
         ArgumentNullException.ThrowIfNull(request);
         return new RpcRequest
         {
-            RequestId = IdGenerator.GenId().ToString(CultureInfo.InvariantCulture),
+            RequestId = IdGenerator.GenId(),
             SourceProcess = Name,
             DeadlineUnixMs = DateTimeOffset.UtcNow.Add(PeerLink.RequestTimeout).ToUnixTimeMilliseconds(),
             Payload = Any.Pack(request)
@@ -54,17 +53,8 @@ public partial class ServerNode
         where TReply : IMessage<TReply>, new()
     {
         stop.ThrowIfCancellationRequested();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        deadline.CancelAfter(PeerLink.RequestTimeout);
-        try
-        {
-            var reply = await RouteReplyAsync(request, null, deadline.Token).WaitAsync(deadline.Token);
-            return PeerLink.ReadReply<TReply>(reply);
-        }
-        catch (OperationCanceledException) when (!stop.IsCancellationRequested && deadline.IsCancellationRequested)
-        {
-            throw new TimeoutException("Entity RPC timed out.");
-        }
+        var reply = await RouteReplyAsync(request, null, stop);
+        return PeerLink.ReadReply<TReply>(reply);
     }
 
     private async Task<RpcReply> RouteReplyAsync(RpcRequest request, string? peer, CancellationToken stop)
@@ -108,7 +98,7 @@ public partial class ServerNode
         }
         catch (Exception error)
         {
-            TraceLog.Event(ServerLogEvents.EntityRpcFailed, Role, peer, request.RequestId, request.EntityId, detail: error.ToString());
+            GameLog.Error(ServerLogEvents.EntityRpcFailed, Role, peer, request.RequestId, request.EntityId, detail: error.ToString());
             return ErrorReply(request.RequestId, StatusCode.Internal, "Entity RPC handler failed.");
         }
     }
@@ -116,14 +106,8 @@ public partial class ServerNode
     private async Task<RpcReply> RouteRequestAsync(RpcRequest request, string? peer, CancellationToken stop)
     {
         stop.ThrowIfCancellationRequested();
-        RpcDispatcher.ValidateEnvelope(request.RequestId, request.Payload);
+        PeerLink.ValidateEnvelope(request.RequestId, request.Payload);
         ValidateSource(request.SourceProcess, peer);
-
-        var rejection = messages.ValidateEntity(request, peer);
-        if (rejection is not null)
-        {
-            return new RpcReply { RequestId = request.RequestId, Payload = Any.Pack(rejection) };
-        }
 
         if (request.TargetCase == RpcRequest.TargetOneofCase.SinglePointType)
         {
@@ -146,7 +130,8 @@ public partial class ServerNode
             throw new RpcException(new Status(StatusCode.InvalidArgument, "Invalid RPC target entity."));
         }
 
-        if (request.TargetCase == RpcRequest.TargetOneofCase.EntityId && localEntities.ContainsKey(request.EntityId))
+        var point = singlePoint;
+        if (request.TargetCase == RpcRequest.TargetOneofCase.EntityId && point?.ContainsEntity(request.EntityId) == true)
         {
             if (Role == nameof(ProcessType.Gate))
             {
@@ -158,7 +143,8 @@ public partial class ServerNode
                 throw new RpcException(new Status(StatusCode.Unavailable, "Target entity is not ready."));
             }
 
-            var response = await messages.DispatchEntityAsync(request, stop, peer);
+            var context = new EntityRpcContext(request.RequestId, request.SourceProcess, request.EntityId, peer);
+            var response = await point.HandleRequestAsync(context, request.Payload, stop);
             return new RpcReply { RequestId = request.RequestId, Payload = Any.Pack(response) };
         }
 
@@ -267,38 +253,11 @@ public partial class ServerNode
         }
     }
 
-    private Frame CreateHello() => new()
-    {
-        Hello = Name,
-        SinglePointId = Role == nameof(ProcessType.Gate) ? "" : State.EntityId
-    };
+    private Frame CreateHello() => new() { Hello = Name };
 
-    private void ValidateSinglePoint(string peer, string entityId, string[] entities)
-    {
-        if (PeerRole(peer) == nameof(ProcessType.Gate))
-        {
-            if (entityId.Length != 0)
-            {
-                throw new InvalidDataException("Gate must not advertise an RPC SinglePoint.");
-            }
-
-            return;
-        }
-
-        if (!IdText.IsValid(entityId) || (Role == nameof(ProcessType.Router) && !entities.Contains(entityId)))
-        {
-            throw new InvalidDataException("SinglePoint identity is missing from the peer's entity registration.");
-        }
-    }
-
-    // Called with linkChanges held, alongside connection and entity ownership updates.
+    // 与连接及实体归属的更新共用 linkChanges 锁。
     private void RegisterPeerSinglePoint(string peer, string entityId)
     {
-        if (entityId.Length == 0)
-        {
-            return;
-        }
-
         peerSinglePoints.Add(peer, entityId);
         if (Role == nameof(ProcessType.Router))
         {

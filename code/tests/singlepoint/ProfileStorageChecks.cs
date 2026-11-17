@@ -1,4 +1,3 @@
-using System.Globalization;
 using TGame;
 using TGame.Profile;
 using TGame.Server;
@@ -10,54 +9,58 @@ internal static class ProfileStorageChecks
 {
     public static async Task RunAsync(string idConfig, CancellationToken stop)
     {
-        var options = IdGeneratorOptions.Load(idConfig, ServerSettings.Current.Value.ZooKeeper);
-        await using var ids = await SnowflakeIdGenerator.CreateAsync(options, stop);
+        var options = IdGeneratorOptions.Load(idConfig);
+        await using var zooKeeperLifetime = await ZooKeeperProxy.InitializeAsync(ZooKeeperProxyChecks.LoadOptions(), stop);
+        await using var idLifetime = await IdGenerator.InitializeAsync(options, stop);
         var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
         counts[ProcessType.Router] = 1;
         counts[ProcessType.Login] = 1;
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
-        var messages = new RpcDispatcher();
-        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Profile), 1), group, messages, ids);
-        ServerMessages.Register(messages, node);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Profile), 1), group);
         var stream = new FrameStream();
         var router = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
         var source = ServerProcess.FormatName(nameof(ProcessType.Login), 1);
+        using var fixtures = await ProfileStore.OpenAsync(stop);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         stream.Input.Writer.TryWrite(TestNodes.Hello(router));
-        var running = node.RunLinkAsync(router, NewId(), [], stream, stream, lifetime.Token);
+        var running = node.RunLinkAsync(router, NewId(), stream, stream, lifetime.Token);
         string subject = NewId();
-        ProfileServerSinglePoint? point = null;
         try
         {
             await node.FirstLinks.WaitAsync(stop);
-            await node.InitializeSinglePointAsync(new SinglePointRegistry(typeof(ServerMessages).Assembly.GetTypes()), stop);
-            point = (ProfileServerSinglePoint)node.SinglePoint!;
+            await node.InitializeSinglePointAsync(new SinglePointRegistry(typeof(ProfileServerSinglePoint).Assembly.GetTypes()), stop);
 
             await CheckAsync(new ProfileRequest { Fetch = subject }, Result.Missing);
-            await CheckAsync(new ProfileRequest
+            await SeedAsync(new ProfileRequest
             {
                 Publish = new EntitySummary { EntityId = subject, DisplayName = "1117 review", Title = "initial" }
             }, Result.Stored);
             await CheckAsync(new ProfileRequest { Fetch = subject }, Result.Found, "initial");
             await CheckAsync(new ProfileRequest { Fetch = subject }, Result.Found, "initial");
-            await CheckAsync(new ProfileRequest
+            await SeedAsync(new ProfileRequest
             {
                 Publish = new EntitySummary { EntityId = subject, DisplayName = "1117 review", Title = "updated" }
             }, Result.Stored);
             await CheckAsync(new ProfileRequest { Fetch = subject }, Result.Found, "updated");
 
-            var direct = await node.CallEntityAsync<ProfileReply>(node.State.EntityId,
+            var direct = await node.CallEntityAsync<ProfileReply>(node.SinglePoint!.EntityId,
                 new ProfileRequest { RequestId = NewId(), Withdraw = subject }, stop);
             if (direct.Result != Result.Rejected)
             {
-                throw new Exception("A local Profile call bypassed Router validation.");
+                throw new Exception("A local Profile call accepted a write.");
             }
 
             await CheckAsync(new ProfileRequest { Fetch = subject }, Result.Found, "updated");
-            await CheckAsync(new ProfileRequest { Withdraw = subject }, Result.Removed);
+            await CheckAsync(new ProfileRequest { Withdraw = subject }, Result.Rejected);
+            await CheckAsync(new ProfileRequest
+            {
+                Publish = new EntitySummary { EntityId = subject, DisplayName = "forbidden", Title = "forbidden" }
+            }, Result.Rejected);
+            await CheckAsync(new ProfileRequest { Fetch = subject }, Result.Found, "updated");
+            await SeedAsync(new ProfileRequest { Withdraw = subject }, Result.Removed);
             await CheckAsync(new ProfileRequest { Fetch = subject }, Result.Missing);
-            Console.WriteLine("PASS real Profile RPC handler, MongoDB/Redis publish, cache read, update, withdraw and Router-only reception.");
+            Console.WriteLine("PASS read-only Profile RPC, MongoDB/Redis query and cache read, fixture update and rejected writes.");
         }
         finally
         {
@@ -70,24 +73,31 @@ internal static class ProfileStorageChecks
             {
             }
 
-            if (point is not null)
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+            var removed = await fixtures.HandleAsync(new ProfileRequest { RequestId = NewId(), Withdraw = subject }, cleanup.Token);
+            if (removed.Result != Result.Removed)
             {
-                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(12));
-                var removed = await point.HandleAsync(new ProfileRequest { RequestId = NewId(), Withdraw = subject }, cleanup.Token);
-                if (removed.Result != Result.Removed)
-                {
-                    throw new Exception($"Could not clean up Profile test entity {subject}.");
-                }
+                throw new Exception($"Could not clean up Profile test entity {subject}.");
             }
         }
 
-        string NewId() => ids.GenId().ToString(CultureInfo.InvariantCulture);
+        string NewId() => IdGenerator.GenId();
+
+        async Task SeedAsync(ProfileRequest request, Result expected)
+        {
+            request.RequestId = NewId();
+            var reply = await fixtures.HandleAsync(request, stop);
+            if (reply.Result != expected)
+            {
+                throw new Exception($"Unexpected Profile fixture result: {reply}");
+            }
+        }
 
         async Task CheckAsync(ProfileRequest request, Result expected, string? title = null)
         {
             request.RequestId = NewId();
             var frame = ProfileRpcChecks.Request(source, request);
-            frame.Request.EntityId = node.State.EntityId;
+            frame.Request.EntityId = node.SinglePoint!.EntityId;
             stream.Input.Writer.TryWrite(frame);
             var response = await stream.Output.Reader.ReadAsync(stop);
             var reply = response.ReadReply<ProfileReply>();

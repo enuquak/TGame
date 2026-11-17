@@ -6,7 +6,10 @@ namespace TGame.ServerConsole;
 
 internal sealed class ConsoleSession : IDisposable
 {
+    internal const string SessionMarker = "console";
+
     private const string Project = "code/server/app/TGame.Server.csproj";
+    private const string EngineProject = "code/server/engine/TGame.Server.Engine.csproj";
     private const string ProtocolProject = "code/shared/TGame.Shared.csproj";
     private const string RunConfigurationFile = "server.yaml";
     private const string LocalCredentialsMarker = "local-credentials";
@@ -46,7 +49,7 @@ internal sealed class ConsoleSession : IDisposable
 
         var saved = File.ReadAllText(current).Trim();
         bool validDirectoryName = saved.Length > 0 && saved.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
-        if (!validDirectoryName || !File.Exists(Path.Combine(sessions, saved, ServerRunFiles.ConsoleMode)))
+        if (!validDirectoryName || !File.Exists(Path.Combine(sessions, saved, SessionMarker)))
         {
             throw new InvalidDataException("控制台当前会话记录无效。");
         }
@@ -132,8 +135,11 @@ internal sealed class ConsoleSession : IDisposable
         }
     });
 
-    public Task ExportAsync() => Command(() =>
-        Dotnet("导出 Protobuf", "msbuild", ProtocolProject, "-restore", "-target:Protobuf_Compile", "-nologo", "-verbosity:minimal"));
+    public Task ExportAsync() => Command(async () =>
+    {
+        await Dotnet("导出引擎 Protobuf", "msbuild", EngineProject, "-restore", "-target:Protobuf_Compile", "-nologo", "-verbosity:minimal");
+        await Dotnet("导出业务 Protobuf", "msbuild", ProtocolProject, "-restore", "-target:Protobuf_Compile", "-nologo", "-verbosity:minimal");
+    });
 
     private Task Compile() => Dotnet("编译服务器", "build", Project, "--nologo");
 
@@ -172,7 +178,7 @@ internal sealed class ConsoleSession : IDisposable
         var name = DateTime.UtcNow.ToString(SessionDirectoryFormat, CultureInfo.InvariantCulture);
         var snapshot = Snapshot(name);
         var runDir = Directory.CreateDirectory(Path.Combine(sessions, name)).FullName;
-        File.WriteAllText(Path.Combine(runDir, ServerRunFiles.ConsoleMode), "");
+        File.WriteAllText(Path.Combine(runDir, SessionMarker), "");
         group.Save(Path.Combine(runDir, ServerGroup.FileName));
         SaveRunConfiguration(runDir);
         // Prepare credentials and a complete copy before asking healthy processes to shut down.
@@ -285,7 +291,7 @@ internal sealed class ConsoleSession : IDisposable
         bool localConfig = File.Exists(Path.Combine(runDir, LocalCredentialsMarker));
         info.ArgumentList.Add(runDir);
         info.Environment[ServerEnvironment.Config] = config;
-        info.Environment[ServerEnvironment.LogRoot] = logRoot;
+        info.Environment[EngineEnvironment.LogRoot] = logRoot;
         if (instance.Role == nameof(ProcessType.DBMgr))
         {
             var password = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);

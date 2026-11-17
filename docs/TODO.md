@@ -2,7 +2,7 @@
 
 - [ ] **整合日志系统**（2026-11-10）
 
-  统一业务日志、`TraceLog.Event` 和 ASP.NET Core 框架日志，复用 Serilog 作为日志输出管道。
+  统一业务日志、`GameLog.Debug` / `Info` / `Error` 和 ASP.NET Core 框架日志，复用 Serilog 作为日志输出管道。
 
   - 统一日志调用入口，支持 Debug、Information、Warning、Error 等级别，失败事件使用对应级别。
   - 接入框架的 `ILogger` 日志，统一配置分类和级别过滤，避免重复输出。

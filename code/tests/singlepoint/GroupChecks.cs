@@ -45,7 +45,7 @@ internal static class GroupChecks
                 failed.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Base), 1) });
                 try
                 {
-                    await gate.RunLinkAsync(peer.Name, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], failed, failed, stop);
+                    await gate.RunLinkAsync(peer.Name, IdGenerator.GenId(), failed, failed, stop);
                     throw new Exception("A handshake from a different instance was accepted.");
                 }
                 catch (IOException)
@@ -153,7 +153,7 @@ internal static class GroupChecks
         Task Open(string peer, FrameStream stream)
         {
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-            return gate.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
+            return gate.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, stop);
         }
     }
 
@@ -234,9 +234,10 @@ internal static class GroupChecks
         }
 
         Open(missing);
-        if (!node.Ready)
+        const int RegistrationPollMilliseconds = 10;
+        while (!node.Ready)
         {
-            throw new Exception("Base did not recover when Router2 reconnected.");
+            await Task.Delay(RegistrationPollMilliseconds, stop);
         }
 
         foreach (var stream in streams.Values)
@@ -252,7 +253,7 @@ internal static class GroupChecks
             var stream = new FrameStream();
             streams[peer] = stream;
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-            tasks[peer] = node.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
+            tasks[peer] = node.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, stop);
         }
     }
 
@@ -265,12 +266,13 @@ internal static class GroupChecks
         foreach (var peer in Topology.Peers(group, router.Name))
         {
             var stream = new FrameStream();
-            var entity = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var entity = IdGenerator.GenId();
             streams.Add(peer, stream);
             ids.Add(peer, entity);
-            stream.Input.Writer.TryWrite(TestNodes.Hello(peer, entity));
-            tasks.Add(router.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [entity], stream, stream, stop));
+            stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
+            tasks.Add(router.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, stop));
             await stream.Output.Reader.ReadAsync(stop);
+            await TestNodes.RegisterAsync(stream, [entity], stop);
         }
 
         await router.FirstLinks.WaitAsync(stop);
@@ -280,12 +282,12 @@ internal static class GroupChecks
         var profile = streams[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
         var request = new ProfileRequest
         {
-            RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
-            Publish = new EntitySummary { EntityId = ids[secondBase], DisplayName = "Group check", Title = "Owner" }
+            RequestId = IdGenerator.GenId(),
+            Fetch = ids[secondBase]
         };
         publisher.Input.Writer.TryWrite(ProfileRpcChecks.Request(secondBase, request));
         var forwarded = await profile.Output.Reader.ReadAsync(stop);
-        if (forwarded.ReadRequest<ProfileRequest>().Publish?.EntityId != ids[secondBase])
+        if (forwarded.ReadRequest<ProfileRequest>().Fetch != ids[secondBase])
         {
             throw new Exception("Router lost the entity owner of the second Base instance.");
         }
@@ -294,28 +296,37 @@ internal static class GroupChecks
         {
             RequestId = request.RequestId,
             EntityId = ids[secondBase],
-            Result = ProfileReply.Types.Result.Stored
+            Result = ProfileReply.Types.Result.Missing
         }, forwarded.Request.RequestId));
-        if ((await publisher.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Stored)
+        if ((await publisher.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Missing)
         {
             throw new Exception("Profile reply did not return to the second Base instance.");
         }
 
         var firstBase = streams[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
         var foreign = request.Clone();
-        foreign.RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreign.RequestId = IdGenerator.GenId();
         firstBase.Input.Writer.TryWrite(ProfileRpcChecks.Request(ServerProcess.FormatName(nameof(ProcessType.Base), 1), foreign));
-        if ((await firstBase.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Rejected ||
-            profile.Output.Reader.TryRead(out _))
+        var foreignQuery = await profile.Output.Reader.ReadAsync(stop);
+        if (!foreignQuery.ReadRequest<ProfileRequest>().Equals(foreign))
         {
-            throw new Exception("One Base instance was allowed to publish another Base instance's entity.");
+            throw new Exception("Router changed a query for another Base instance's entity.");
+        }
+
+        profile.Input.Writer.TryWrite(RpcFrames.Reply(new ProfileReply
+        {
+            RequestId = foreign.RequestId, EntityId = foreign.Fetch, Result = ProfileReply.Types.Result.Missing
+        }, foreignQuery.Request.RequestId));
+        if ((await firstBase.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().RequestId != foreign.RequestId)
+        {
+            throw new Exception("Query response did not return to the first Base instance.");
         }
 
         var thirdBase = ServerProcess.FormatName(nameof(ProcessType.Base), 3);
         var secondLogin = ServerProcess.FormatName(nameof(ProcessType.Login), 2);
         var caller = streams[secondLogin];
         var receiver = streams[thirdBase];
-        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var requestId = IdGenerator.GenId();
         var routed = RpcFrames.Request(new StringValue { Value = requestId }, requestId);
         routed.Request.SourceProcess = secondLogin;
         routed.Request.EntityId = ids[thirdBase];

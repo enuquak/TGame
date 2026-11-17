@@ -33,8 +33,8 @@ internal static class EntityRoutingChecks
         await CheckReply(gate, first, gate, "routed");
         await CheckReply(first, second, first, "peer");
 
-        var nested = await gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue { Value = "nested" }, stop);
-        Check(nested.Value == $"{entry.Name}|{first.Name}|{entry.State.EntityId}|callback", "Nested routed request deadlocked or lost its origin.");
+        var nested = await gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue { Value = "nested" }, stop);
+        Check(nested.Value == $"{entry.Name}|{first.Name}|{entry.SinglePoint!.EntityId}|callback", "Nested routed request deadlocked or lost its origin.");
 
         var calls = Enumerable.Range(0, 24).Select(async index =>
         {
@@ -42,7 +42,7 @@ internal static class EntityRoutingChecks
                 new StringValue { Value = index.ToString(CultureInfo.InvariantCulture) }, stop);
             var fields = result.Value.Split('|');
             var target = fields[0] == first.Name ? first : second;
-            Check(result.Value == $"{target.Name}|{gate.Name}|{target.State.EntityId}|{index}",
+            Check(result.Value == $"{target.Name}|{gate.Name}|{target.SinglePoint!.EntityId}|{index}",
                 "SinglePoint selection chose the wrong type/entity or correlated another call's reply.");
         });
         await Task.WhenAll(calls);
@@ -50,16 +50,16 @@ internal static class EntityRoutingChecks
         await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(network.StaleEntityId, new StringValue(), stop));
         await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(NewId(), new StringValue(), stop));
         await ExpectStatus(StatusCode.Unavailable, () => gate.CallSinglePointAsync<StringValue>(ProcessType.Scene, new StringValue(), stop));
-        await ExpectStatus(StatusCode.NotFound, () => entry.CallEntityAsync<StringValue>(gate.State.EntityId, new StringValue(), stop));
+        await ExpectStatus(StatusCode.NotFound, () => entry.CallEntityAsync<StringValue>(gate.SinglePoint!.EntityId, new StringValue(), stop));
         await ExpectStatus(StatusCode.InvalidArgument, () => gate.CallSinglePointAsync<StringValue>(ProcessType.Gate, new StringValue(), stop));
-        await ExpectStatus(StatusCode.Unimplemented, () => gate.CallEntityAsync<StringValue>(first.State.EntityId, new Empty(), stop));
-        await ExpectStatus(StatusCode.Internal, () => gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue { Value = "fail" }, stop));
+        await ExpectStatus(StatusCode.Unimplemented, () => gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new Empty(), stop));
+        await ExpectStatus(StatusCode.Internal, () => gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue { Value = "fail" }, stop));
         await CheckReply(gate, first, gate, "after-errors");
 
         using (var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stop))
         {
             network.ResetHold();
-            var pending = gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue { Value = "hold" }, cancellation.Token);
+            var pending = gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue { Value = "hold" }, cancellation.Token);
             await network.HoldStarted.Task.WaitAsync(stop);
             cancellation.Cancel();
             try
@@ -76,7 +76,7 @@ internal static class EntityRoutingChecks
 
         await CheckReply(gate, second, gate, "after-cancel");
         network.ResetHold();
-        var disconnected = gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue { Value = "hold" }, stop);
+        var disconnected = gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue { Value = "hold" }, stop);
         await network.HoldStarted.Task.WaitAsync(stop);
         await network.DisconnectProfileAsync();
         await ExpectStatus(StatusCode.Unavailable, () => disconnected);
@@ -84,16 +84,40 @@ internal static class EntityRoutingChecks
         for (int index = 0; index < 8; index++)
         {
             var survivor = await gate.CallSinglePointAsync<StringValue>(ProcessType.Profile, new StringValue { Value = "survivor" }, stop);
-            Check(survivor.Value == $"{second.Name}|{gate.Name}|{second.State.EntityId}|survivor", "Disconnected SinglePoint remained in the candidate index.");
+            Check(survivor.Value == $"{second.Name}|{gate.Name}|{second.SinglePoint!.EntityId}|survivor", "Disconnected SinglePoint remained in the candidate index.");
         }
 
-        await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue(), stop));
+        await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue(), stop));
+
+        await network.ReconnectProfileAsync();
+        await CheckReply(gate, first, gate, "reconnected");
 
         async Task CheckReply(ServerNode caller, ServerNode target, ServerNode source, string value)
         {
-            var result = await caller.CallEntityAsync<StringValue>(target.State.EntityId, new StringValue { Value = value }, stop);
-            Check(result.Value == $"{target.Name}|{source.Name}|{target.State.EntityId}|{value}", "Entity target, original caller or reply payload changed in transit.");
+            var result = await caller.CallEntityAsync<StringValue>(target.SinglePoint!.EntityId, new StringValue { Value = value }, stop);
+            Check(result.Value == $"{target.Name}|{source.Name}|{target.SinglePoint!.EntityId}|{value}", "Entity target, original caller or reply payload changed in transit.");
         }
+    }
+
+    public static async Task CheckLocalDeadlineAsync(CancellationToken stop)
+    {
+        await using var network = await Network.CreateAsync(ProcessType.Login, stop);
+        var node = network.Node(ProcessType.Login);
+        try
+        {
+            var pending = node.CallEntityAsync<StringValue>(node.SinglePoint!.EntityId, new StringValue { Value = "hold" }, stop);
+            await network.HoldStarted.Task.WaitAsync(stop);
+            await ExpectStatus(StatusCode.DeadlineExceeded, () => pending);
+        }
+        finally
+        {
+            network.HoldRelease.TrySetResult();
+        }
+
+        var response = await node.CallEntityAsync<StringValue>(node.SinglePoint!.EntityId,
+            new StringValue { Value = "after-deadline" }, stop);
+        Check(response.Value.EndsWith("|after-deadline", StringComparison.Ordinal), "Local deadline broke subsequent calls.");
+        Console.WriteLine("PASS local entity RPC deadline: DeadlineExceeded and recovery after timeout.");
     }
 
     private static async Task CheckReadinessAsync(CancellationToken stop)
@@ -101,9 +125,23 @@ internal static class EntityRoutingChecks
         await using var network = await Network.CreateAsync(ProcessType.Login, stop, initializeProfile: false);
         var gate = network.Node(ProcessType.Gate);
         var profile = network.Node(ProcessType.Profile);
-        await ExpectStatus(StatusCode.Unavailable, () => gate.CallEntityAsync<StringValue>(profile.State.EntityId, new StringValue(), stop));
-        await profile.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
-        var response = await gate.CallEntityAsync<StringValue>(profile.State.EntityId, new StringValue { Value = "ready" }, stop);
+        Check(profile.SinglePoint is null, "Engine startup created a SinglePoint before initialization.");
+        var initialization = profile.InitializeSinglePointAsync(new SinglePointRegistry([typeof(RegistrationWaitingSinglePoint)]), stop);
+        var point = (RegistrationWaitingSinglePoint)profile.SinglePoint!;
+        await point.Started.Task.WaitAsync(stop);
+        Check(!point.LocalEntityIds.Any(), "Entities were registered before business initialization completed.");
+        Check(!network.Node(ProcessType.Router).IsEntityOwner(profile.Name, point.EntityId),
+            "Router registered an entity from the connection handshake.");
+        await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(point.EntityId, new StringValue(), stop));
+        point.Handler = (_, payload, _) => Task.FromResult<IMessage>(new StringValue
+        {
+            Value = "initialized|" + payload.Unpack<StringValue>().Value
+        });
+        point.Release.SetResult();
+        await initialization.WaitAsync(stop);
+        Check(network.Node(ProcessType.Router).IsEntityOwner(profile.Name, point.EntityId),
+            "SinglePoint initialization completed before Router acknowledged its entity.");
+        var response = await gate.CallEntityAsync<StringValue>(point.EntityId, new StringValue { Value = "ready" }, stop);
         Check(response.Value.EndsWith("|ready", StringComparison.Ordinal), "Initialized target did not accept its next request.");
     }
 
@@ -113,38 +151,53 @@ internal static class EntityRoutingChecks
         counts[ProcessType.Gate] = 1;
         counts[ProcessType.Login] = 1;
         var group = new ServerGroup(counts);
-        var dispatcher = new RpcDispatcher();
         var gate = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);
         var login = ServerProcess.FormatName(nameof(ProcessType.Login), 1);
         var expiredHandler = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        dispatcher.RegisterEntity<Empty, StringValue>((context, _, _) => Task.FromResult(new StringValue { Value = context.SourceProcess }));
-        dispatcher.RegisterEntity<StringValue, StringValue>(async (_, request, token) =>
-        {
-            try
-            {
-                await Task.Delay(Timeout.Infinite, token);
-                return request;
-            }
-            finally
-            {
-                expiredHandler.TrySetResult();
-            }
-        });
-        using var node = new ServerNode(login, group, dispatcher, TestIds.Generator);
+        using var node = new ServerNode(login, group);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(gate));
-        var running = node.RunLinkAsync(gate, NewId(), [], stream, stream, lifetime.Token);
+        var running = node.RunLinkAsync(gate, NewId(), stream, stream, lifetime.Token);
         try
         {
             await stream.Output.Reader.ReadAsync(stop);
             await node.FirstLinks.WaitAsync(stop);
-            await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+            await node.InitializeSinglePointAsync(new SinglePointRegistry([typeof(RoutingLoginSinglePoint)]), stop);
+            ((RoutingLoginSinglePoint)node.SinglePoint!).Handler = async (context, payload, token) =>
+            {
+                if (payload.Is(Empty.Descriptor))
+                {
+                    return new StringValue { Value = context.SourceProcess };
+                }
+
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, token);
+                    return payload.Unpack<StringValue>();
+                }
+                finally
+                {
+                    expiredHandler.TrySetResult();
+                }
+            };
+
+            var untargeted = RpcFrames.Request(new Empty(), NewId());
+            untargeted.Request.DeadlineUnixMs = DateTimeOffset.UtcNow.Add(PeerLink.RequestTimeout).ToUnixTimeMilliseconds();
+            stream.Input.Writer.TryWrite(untargeted);
+            var receiving = stream.Output.Reader.ReadAsync(stop).AsTask();
+            var finished = await Task.WhenAny(receiving, running);
+            await finished;
+            var untargetedReply = (await receiving).Reply;
+            Check(untargetedReply.RequestId == untargeted.Request.RequestId &&
+                untargetedReply.Error?.StatusCode == (int)StatusCode.InvalidArgument,
+                "A request without a target or source did not return a routing error.");
+
             var forged = new RpcRequest
             {
                 RequestId = NewId(), SourceProcess = login,
                 DeadlineUnixMs = DateTimeOffset.UtcNow.AddSeconds(5).ToUnixTimeMilliseconds(),
-                EntityId = node.State.EntityId, Payload = Any.Pack(new Empty())
+                EntityId = node.SinglePoint!.EntityId, Payload = Any.Pack(new Empty())
             };
             stream.Input.Writer.TryWrite(new Frame { Request = forged });
             var rejected = (await stream.Output.Reader.ReadAsync(stop)).Reply;
@@ -192,20 +245,22 @@ internal static class EntityRoutingChecks
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
-        using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group, new RpcDispatcher(), TestIds.Generator);
+        using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
         var stream = new FrameStream();
-        stream.Input.Writer.TryWrite(TestNodes.Hello(profile, router.State.EntityId));
-        stream.Input.Writer.Complete();
+        stream.Input.Writer.TryWrite(TestNodes.Hello(profile));
+        var running = router.RunLinkAsync(profile, NewId(), stream, stream, stop);
+        await stream.Output.Reader.ReadAsync(stop);
         try
         {
-            await router.RunLinkAsync(profile, NewId(), [router.State.EntityId], stream, stream, stop);
+            await router.FirstLinks.WaitAsync(stop);
+            await router.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+            await ExpectStatus(StatusCode.AlreadyExists, () => TestNodes.RegisterAsync(stream, [router.SinglePoint!.EntityId], stop));
         }
-        catch (InvalidDataException)
+        finally
         {
-            return;
+            stream.Input.Writer.Complete();
+            await running.WaitAsync(stop);
         }
-
-        throw new Exception("Router accepted a peer advertising the Router's own entity ID.");
     }
 
     private static async Task ExpectStatus(StatusCode status, Func<Task> action)
@@ -230,11 +285,12 @@ internal static class EntityRoutingChecks
         }
     }
 
-    private static string NewId() => TestIds.Generator.GenId().ToString(CultureInfo.InvariantCulture);
+    private static string NewId() => IdGenerator.GenId();
 
     private sealed class Network : IAsyncDisposable
     {
         private readonly Dictionary<string, ServerNode> nodes = [];
+        private readonly Dictionary<string, Func<EntityRpcContext, Any, CancellationToken, Task<IMessage>>> handlers = [];
         private readonly List<Connection> connections = [];
         private readonly CancellationToken stop;
         private readonly ProcessType entryType;
@@ -277,14 +333,19 @@ internal static class EntityRoutingChecks
 
             foreach (var process in group.Processes)
             {
-                var dispatcher = new RpcDispatcher();
-                var node = new ServerNode(process.Name, group, dispatcher, TestIds.Generator);
+                var node = new ServerNode(process.Name, group);
                 nodes.Add(process.Name, node);
-                dispatcher.RegisterEntity<StringValue, StringValue>(async (context, request, token) =>
+                handlers.Add(process.Name, async (context, payload, token) =>
                 {
+                    if (!payload.Is(StringValue.Descriptor))
+                    {
+                        throw new RpcException(new Status(StatusCode.Unimplemented, "Unsupported test request."));
+                    }
+
+                    var request = payload.Unpack<StringValue>();
                     if (request.Value == "nested")
                     {
-                        return await node.CallEntityAsync<StringValue>(Node(entryType).State.EntityId, new StringValue { Value = "callback" }, token);
+                        return await node.CallEntityAsync<StringValue>(Node(entryType).SinglePoint!.EntityId, new StringValue { Value = "callback" }, token);
                     }
 
                     if (request.Value == "hold")
@@ -310,23 +371,16 @@ internal static class EntityRoutingChecks
                     var connection = new Connection(stop);
                     connections.Add(connection);
                     var receiver = nodes[peer];
-                    string[] entities = [];
-                    if (receiver.Role == nameof(ProcessType.Router))
+                    if (caller == Node(ProcessType.Profile) && receiver.Role == nameof(ProcessType.Router))
                     {
-                        entities = caller == Node(ProcessType.Profile)
-                            ? [StaleEntityId, caller.State.EntityId]
-                            : [caller.State.EntityId];
+                        connection.Caller.ExtraRegistrationEntity = StaleEntityId;
                     }
 
-                    await connection.Caller.WriteAsync(new Frame
-                    {
-                        Hello = caller.Name,
-                        SinglePointId = caller.Role == nameof(ProcessType.Gate) ? "" : caller.State.EntityId
-                    }, stop);
+                    await connection.Caller.WriteAsync(TestNodes.Hello(caller.Name), stop);
                     connection.Name = caller.Name;
                     connection.Running = Task.WhenAll(
-                        receiver.RunLinkAsync(caller.Name, NewId(), entities, connection.Receiver, connection.Receiver, connection.Stop),
-                        caller.RunLinkAsync(receiver.Name, NewId(), [], connection.Caller, connection.Caller, connection.Stop));
+                        receiver.RunLinkAsync(caller.Name, NewId(), connection.Receiver, connection.Receiver, connection.Stop),
+                        caller.RunLinkAsync(receiver.Name, NewId(), connection.Caller, connection.Caller, connection.Stop));
                 }
             }
 
@@ -335,7 +389,13 @@ internal static class EntityRoutingChecks
                 await node.FirstLinks.WaitAsync(stop);
                 if (initializeProfile || node != Node(ProcessType.Profile))
                 {
-                    await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+                    var registry = new SinglePointRegistry([typeof(RoutingLoginSinglePoint),
+                        typeof(RoutingBaseSinglePoint), typeof(RoutingProfileSinglePoint)]);
+                    await node.InitializeSinglePointAsync(registry, stop);
+                    if (node.SinglePoint is TestRequestSinglePoint point)
+                    {
+                        point.Handler = handlers[node.Name];
+                    }
                 }
             }
         }
@@ -347,6 +407,26 @@ internal static class EntityRoutingChecks
         }
 
         public Task DisconnectProfileAsync() => connections.Single(connection => connection.Name == Node(ProcessType.Profile).Name).StopAsync();
+
+        public async Task ReconnectProfileAsync()
+        {
+            var profile = Node(ProcessType.Profile);
+            var router = Node(ProcessType.Router);
+            var connection = new Connection(stop) { Name = profile.Name };
+            connections.Add(connection);
+            await connection.Caller.WriteAsync(TestNodes.Hello(profile.Name), stop);
+            connection.Running = Task.WhenAll(
+                router.RunLinkAsync(profile.Name, NewId(), connection.Receiver, connection.Receiver, connection.Stop),
+                profile.RunLinkAsync(router.Name, NewId(), connection.Caller, connection.Caller, connection.Stop));
+
+            const int RegistrationPollMilliseconds = 10;
+            while (!profile.Ready || !router.Ready)
+            {
+                await Task.Delay(RegistrationPollMilliseconds, stop);
+            }
+
+            Check(router.IsEntityOwner(profile.Name, profile.SinglePoint!.EntityId), "Reconnected SinglePoint did not restore its entity route.");
+        }
 
         public async ValueTask DisposeAsync()
         {
@@ -397,9 +477,20 @@ internal static class EntityRoutingChecks
     {
         public Frame Current { get; private set; } = null!;
         public WriteOptions? WriteOptions { get; set; }
+        public string? ExtraRegistrationEntity { get; set; }
         public Task WriteAsync(Frame frame) => WriteAsync(frame, CancellationToken.None);
-        public Task WriteAsync(Frame frame, CancellationToken stop) =>
-            output.Writer.WriteAsync(Frame.Parser.ParseFrom(frame.ToByteArray()), stop).AsTask();
+        public Task WriteAsync(Frame frame, CancellationToken stop)
+        {
+            var copy = Frame.Parser.ParseFrom(frame.ToByteArray());
+            if (ExtraRegistrationEntity is not null && copy.Request?.Payload?.Is(RegisterEntitiesRequest.Descriptor) == true)
+            {
+                var registration = copy.Request.Payload.Unpack<RegisterEntitiesRequest>();
+                registration.EntityIds.Add(ExtraRegistrationEntity);
+                copy.Request.Payload = Any.Pack(registration);
+            }
+
+            return output.Writer.WriteAsync(copy, stop).AsTask();
+        }
 
         public async Task<bool> MoveNext(CancellationToken stop)
         {

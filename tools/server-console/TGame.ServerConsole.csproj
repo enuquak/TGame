@@ -12,5 +12,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="ServerConsole.Check" />
     <ProjectReference Include="../../code/server/engine/TGame.Server.Engine.csproj" />
+    <ProjectReference Include="../../code/shared/TGame.Shared.csproj" />
   </ItemGroup>
 </Project>

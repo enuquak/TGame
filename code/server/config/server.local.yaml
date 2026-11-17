@@ -1,4 +1,6 @@
 # Local development through the existing SSH tunnel. Selected explicitly by launchers.
+# 测试环境保留所有日志；INFO 过滤 DEBUG，ERROR 只记录需要排查的问题。
+minimumLogLevel: DEBUG
 profileMongo: "127.0.0.1:37017"
 profileRedis: "127.0.0.1:16379"
 zooKeeper: "127.0.0.1:2181"

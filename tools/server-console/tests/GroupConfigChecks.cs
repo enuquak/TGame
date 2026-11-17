@@ -31,7 +31,7 @@ internal static class GroupConfigChecks
         var sessionName = Guid.NewGuid().ToString("N");
         var sessions = Path.Combine(root, "logs/tools/server-console");
         var run = Directory.CreateDirectory(Path.Combine(sessions, sessionName)).FullName;
-        File.WriteAllText(Path.Combine(run, ServerRunFiles.ConsoleMode), "");
+        File.WriteAllText(Path.Combine(run, ConsoleSession.SessionMarker), "");
         File.WriteAllText(Path.Combine(sessions, "current"), sessionName);
         group.Save(Path.Combine(run, ServerGroup.FileName));
         counts[nameof(ProcessType.Login)] = 1;

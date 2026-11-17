@@ -9,11 +9,13 @@
     <Compile Include="../model/entities/**/*.cs" />
     <Compile Include="../logic/**/*.cs" />
     <ProjectReference Include="../engine/TGame.Server.Engine.csproj" />
+    <ProjectReference Include="../../shared/TGame.Shared.csproj" />
     <PackageReference Include="MongoDB.Driver" Version="3.13.0" />
     <PackageReference Include="StackExchange.Redis" Version="3.4.31" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <Content Include="../config/server.local.yaml" Link="config/server.local.yaml" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../config/dbmgr-storage.yaml" Link="config/dbmgr-storage.yaml" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../config/id-generator.json" Link="config/id-generator.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../config/zookeeper.json" Link="config/zookeeper.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

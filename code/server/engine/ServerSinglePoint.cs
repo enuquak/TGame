@@ -1,38 +1,63 @@
+using System.Collections.Concurrent;
+using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
+using Grpc.Core;
+
 namespace TGame.Server.Engine;
 
 public class ServerSinglePoint
 {
-    public SinglePointState State { get; private set; } = null!;
-    public IIdGenerator IdGenerator { get; private set; } = null!;
+    private readonly ConcurrentDictionary<string, byte> localEntities = new();
+
+    public string EntityId { get; } = IdGenerator.GenId();
+    public IEnumerable<string> LocalEntityIds => localEntities.Keys;
 
     public bool Initialized => Volatile.Read(ref initialized);
     private bool initialized;
 
-    public async Task InitializeAsync(string role, SinglePointState state, IIdGenerator idGenerator, CancellationToken stop)
+    public async Task InitializeAsync(ServerNode node, CancellationToken stop)
     {
-        ArgumentNullException.ThrowIfNull(idGenerator);
-        State = state;
-        IdGenerator = idGenerator;
-        TraceLog.Event(ServerLogEvents.SinglePointInit, role, entity: State.EntityId, detail: GetType().Name);
+        ArgumentNullException.ThrowIfNull(node);
+        var role = node.Role;
+        GameLog.Info(ServerLogEvents.SinglePointInit, role, entity: EntityId, detail: GetType().Name);
 
         try
         {
             stop.ThrowIfCancellationRequested();
             await InitializeRoleAsync(stop);
             stop.ThrowIfCancellationRequested();
+
+            // 业务初始化成功后才登记实体，并等待对端确认。
+            RegisterSinglePoint();
+            await node.RegisterEntitiesAsync(stop);
+            stop.ThrowIfCancellationRequested();
             Volatile.Write(ref initialized, true);
-            TraceLog.Event(ServerLogEvents.SinglePointReady, role, entity: State.EntityId, detail: GetType().Name);
+            GameLog.Info(ServerLogEvents.SinglePointReady, role, entity: EntityId, detail: GetType().Name);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
+            UnregisterSinglePoint();
             throw;
         }
         catch (Exception error)
         {
-            TraceLog.Event(ServerLogEvents.SinglePointFailed, role, entity: State.EntityId, detail: error.Message);
+            UnregisterSinglePoint();
+            GameLog.Error(ServerLogEvents.SinglePointFailed, role, entity: EntityId, detail: error.Message);
             throw;
         }
     }
+
+    public bool ContainsEntity(string entityId) => localEntities.ContainsKey(entityId);
+
+    public virtual Task<IMessage> HandleRequestAsync(EntityRpcContext context, Any payload, CancellationToken stop)
+    {
+        throw new RpcException(new Status(StatusCode.Unimplemented,
+            $"Unsupported SinglePoint request type {Any.GetTypeName(payload.TypeUrl)}."));
+    }
+
+    private void RegisterSinglePoint() => localEntities[EntityId] = 0;
+
+    private void UnregisterSinglePoint() => localEntities.TryRemove(EntityId, out _);
 
     protected virtual Task InitializeRoleAsync(CancellationToken stop) => Task.CompletedTask;
 }

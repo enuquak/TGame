@@ -1,3 +1,4 @@
+using TGame.Server.Engine;
 using TGame;
 using TGame.Server;
 
@@ -5,7 +6,7 @@ internal static class SettingsChecks
 {
     public static void Run()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"tgame-settings-{TestIds.Generator.GenId()}.yaml");
+        var path = Path.Combine(Path.GetTempPath(), $"tgame-settings-{IdGenerator.GenId()}.yaml");
         try
         {
             const string yaml = """

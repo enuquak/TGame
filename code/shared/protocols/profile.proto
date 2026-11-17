@@ -8,7 +8,7 @@ message EntitySummary {
   string title = 3;
 }
 
-// Inter-process only. Writers may publish or withdraw their own entities.
+// Profile RPC 只接受 fetch；实体数据修改由目标实体处理。
 message ProfileRequest {
   string request_id = 1;
   oneof operation {

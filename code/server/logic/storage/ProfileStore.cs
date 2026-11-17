@@ -1,4 +1,3 @@
-using System.Globalization;
 using Google.Protobuf;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -24,22 +23,20 @@ internal sealed class ProfileStore : IDisposable
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan CacheReservationLifetime = TimeSpan.FromSeconds(5);
 
-    private readonly IIdGenerator idGenerator;
     private readonly IDatabase cache;
     private readonly MongoClient mongo;
     private readonly ConnectionMultiplexer redis;
     private readonly IMongoCollection<BsonDocument> summaries;
 
-    private ProfileStore(MongoClient mongo, ConnectionMultiplexer redis, IIdGenerator idGenerator)
+    private ProfileStore(MongoClient mongo, ConnectionMultiplexer redis)
     {
-        this.idGenerator = idGenerator;
         this.mongo = mongo;
         this.redis = redis;
         summaries = mongo.GetDatabase(ServerSettings.Current.Value.MongoDatabase).GetCollection<BsonDocument>(CollectionName);
         cache = redis.GetDatabase();
     }
 
-    public static async Task<ProfileStore> OpenAsync(IIdGenerator idGenerator, CancellationToken stop)
+    public static async Task<ProfileStore> OpenAsync(CancellationToken stop)
     {
         var settings = ServerSettings.Current.Value;
         var options = new ConfigurationOptions
@@ -58,7 +55,7 @@ internal sealed class ProfileStore : IDisposable
         {
             await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(ServerSettings.Current.Value.MongoDatabase), stop);
             var redis = await ConnectionMultiplexer.ConnectAsync(options);
-            return new ProfileStore(mongo, redis, idGenerator);
+            return new ProfileStore(mongo, redis);
         }
         catch
         {
@@ -87,7 +84,7 @@ internal sealed class ProfileStore : IDisposable
             // Reserve a cache miss before reading Mongo. A concurrent writer removes this
             // token, so the older reader cannot repopulate a key after invalidation.
             bool reserved = false;
-            RedisValue token = CacheReservationMarker + idGenerator.GenId().ToString(CultureInfo.InvariantCulture);
+            RedisValue token = CacheReservationMarker + IdGenerator.GenId();
 
             try
             {
@@ -102,7 +99,7 @@ internal sealed class ProfileStore : IDisposable
 
                     reply.Summary = value;
                     reply.Result = Result.Found;
-                    Log(ServerLogEvents.ProfileCacheHit);
+                    GameLog.Debug(ProfileLogEvents.CacheHit, nameof(ProcessType.Profile), id: request.RequestId, entity: id);
                     return reply;
                 }
 
@@ -113,7 +110,8 @@ internal sealed class ProfileStore : IDisposable
             }
             catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
             {
-                Log(ServerLogEvents.ProfileCacheUnavailable, ex.GetType().Name);
+                GameLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                    id: request.RequestId, entity: id, detail: ex.GetType().Name);
             }
 
             var doc = await summaries.Find(filter).FirstOrDefaultAsync(stop);
@@ -138,11 +136,13 @@ internal sealed class ProfileStore : IDisposable
                 }
                 catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
                 {
-                    Log(ServerLogEvents.ProfileCacheUnavailable, ex.GetType().Name);
+                    GameLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                        id: request.RequestId, entity: id, detail: ex.GetType().Name);
                 }
             }
 
-            Log(doc is null ? ServerLogEvents.ProfileMissing : ServerLogEvents.ProfileMongoRead);
+            GameLog.Debug(doc is null ? ProfileLogEvents.Missing : ProfileLogEvents.MongoRead,
+                nameof(ProcessType.Profile), id: request.RequestId, entity: id);
             return reply;
         }
 
@@ -168,14 +168,13 @@ internal sealed class ProfileStore : IDisposable
         }
         catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
         {
-            Log(ServerLogEvents.ProfileCacheUnavailable, ex.GetType().Name);
+            GameLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                id: request.RequestId, entity: id, detail: ex.GetType().Name);
         }
 
-        Log(reply.Result == Result.Stored ? ServerLogEvents.ProfileStored : ServerLogEvents.ProfileRemoved);
+        GameLog.Info(reply.Result == Result.Stored ? ProfileLogEvents.Stored : ProfileLogEvents.Removed,
+            nameof(ProcessType.Profile), id: request.RequestId, entity: id);
         return reply;
-
-        void Log(string ev, string? detail = null) =>
-            TraceLog.Event(ev, nameof(ProcessType.Profile), id: request.RequestId, entity: id, detail: detail);
     }
 
     public void Dispose()

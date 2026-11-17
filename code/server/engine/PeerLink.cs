@@ -41,7 +41,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
 
     internal async Task<RpcReply> CallAsync(RpcRequest request, CancellationToken stop, Action? sent = null)
     {
-        RpcDispatcher.ValidateEnvelope(request.RequestId, request.Payload);
+        ValidateEnvelope(request.RequestId, request.Payload);
         stop.ThrowIfCancellationRequested();
         var requestId = request.RequestId;
         var reply = new TaskCompletionSource<RpcReply>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -71,6 +71,14 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
             {
                 waiting.Remove(requestId);
             }
+        }
+    }
+
+    internal static void ValidateEnvelope(string requestId, Any? payload)
+    {
+        if (string.IsNullOrWhiteSpace(requestId) || payload is null || string.IsNullOrWhiteSpace(payload.TypeUrl))
+        {
+            throw new InvalidDataException("RPC requires a request ID and a typed payload.");
         }
     }
 
@@ -109,7 +117,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         }
         else
         {
-            RpcDispatcher.ValidateEnvelope(reply.RequestId, reply.Payload);
+            ValidateEnvelope(reply.RequestId, reply.Payload);
         }
 
         TaskCompletionSource<RpcReply>? request;
@@ -121,7 +129,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         if (request is null)
         {
             // A timed-out call has already relinquished its slot on this shared stream.
-            TraceLog.Event(ServerLogEvents.UnmatchedReply, role, peer, reply.RequestId, link: id);
+            GameLog.Error(ServerLogEvents.UnmatchedReply, role, peer, reply.RequestId, link: id);
             return;
         }
 

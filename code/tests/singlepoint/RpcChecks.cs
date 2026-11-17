@@ -1,6 +1,4 @@
-using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
-using Grpc.Core;
 using TGame;
 using TGame.Server.Engine;
 using TGame.Transport;
@@ -9,6 +7,29 @@ internal static class RpcChecks
 {
     public static void CheckTransportBoundary()
     {
+        var engine = typeof(ServerNode).Assembly;
+        var business = typeof(TGame.Profile.ProfileRequest).Assembly;
+        if (engine.GetReferencedAssemblies().Any(reference => reference.Name == business.GetName().Name))
+        {
+            throw new Exception("Engine must not reference business Shared.");
+        }
+
+        if (business.GetReferencedAssemblies().Any(reference => reference.Name == engine.GetName().Name))
+        {
+            throw new Exception("Business Shared must not reference the server engine.");
+        }
+
+        System.Type[] engineTypes = [typeof(Frame), typeof(ServerLink), typeof(ProcessType), typeof(ServerGroup),
+            typeof(ServerProcess), typeof(IdText), typeof(ServerRunFiles), typeof(ServerLogEvents),
+            typeof(ServerLogFields), typeof(TGame.Logging.LogEventJson)];
+        foreach (var type in engineTypes)
+        {
+            if (type.Assembly != engine)
+            {
+                throw new Exception($"{type.Name} must belong to the engine assembly.");
+            }
+        }
+
         foreach (var dependency in Frame.Descriptor.File.Dependencies)
         {
             if (dependency.Package.StartsWith("tgame.", StringComparison.Ordinal))
@@ -20,59 +41,18 @@ internal static class RpcChecks
 
     public static async Task RunAsync(CancellationToken stop)
     {
-        await CheckGenericDispatchAsync(stop);
         await CheckReplyCorrelationAsync(stop);
         await CheckInvalidMessagesAsync(stop);
         await CheckCancellationAndCloseAsync(stop);
-        Console.WriteLine("PASS generic RPC registration, correlation, invalid messages, cancellation and disconnect.");
-    }
-
-    private static async Task CheckGenericDispatchAsync(CancellationToken stop)
-    {
-        var callerStream = new FrameStream();
-        var receiverStream = new FrameStream();
-        var caller = CreateLink(callerStream);
-        var receiver = CreateLink(receiverStream);
-        var dispatcher = new RpcDispatcher();
-        dispatcher.Register<StringValue>(request => request.Value, async (peer, request, link, token) =>
-        {
-            var response = new BytesValue { Value = ByteString.CopyFromUtf8(peer + request.Value) };
-            await link.ReplyAsync(response, request.Value, token);
-        });
-
-        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var pending = caller.CallAsync<BytesValue>(new StringValue { Value = requestId }, requestId, stop);
-        var requestFrame = await callerStream.Output.Reader.ReadAsync(stop);
-        var request = Frame.Parser.ParseFrom(requestFrame.ToByteArray()).Request;
-        await dispatcher.DispatchAsync(request, nameof(ProcessType.Login), receiver, stop);
-
-        var replyFrame = await receiverStream.Output.Reader.ReadAsync(stop);
-        var reply = Frame.Parser.ParseFrom(replyFrame.ToByteArray()).Reply;
-        if (reply.RequestId != requestId)
-        {
-            throw new Exception("RPC reply lost its envelope request ID.");
-        }
-
-        caller.Receive(reply);
-        var result = await pending;
-        if (result.Value.ToStringUtf8() != nameof(ProcessType.Login) + requestId)
-        {
-            throw new Exception("An ordinary protobuf RPC did not reach its registered handler and return its reply.");
-        }
-
-        await ThrowsAsync<InvalidOperationException>(() =>
-        {
-            dispatcher.Register<StringValue>(value => value.Value, (_, _, _, _) => Task.CompletedTask);
-            return Task.CompletedTask;
-        });
+        Console.WriteLine("PASS RPC correlation, invalid envelopes, cancellation and disconnect.");
     }
 
     private static async Task CheckReplyCorrelationAsync(CancellationToken stop)
     {
         var stream = new FrameStream();
         var link = CreateLink(stream);
-        var firstId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var secondId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var firstId = IdGenerator.GenId();
+        var secondId = IdGenerator.GenId();
         var first = link.CallAsync<StringValue>(new Empty(), firstId, stop);
         var second = link.CallAsync<Int32Value>(new Empty(), secondId, stop);
         await stream.Output.Reader.ReadAsync(stop);
@@ -80,7 +60,7 @@ internal static class RpcChecks
 
         await ThrowsAsync<InvalidDataException>(() => link.CallAsync<StringValue>(new Empty(), firstId, stop));
 
-        link.Receive(RpcFrames.Reply(new Empty(), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture)).Reply);
+        link.Receive(RpcFrames.Reply(new Empty(), IdGenerator.GenId()).Reply);
         if (first.IsCompleted || second.IsCompleted)
         {
             throw new Exception("An unmatched reply completed another request.");
@@ -108,53 +88,34 @@ internal static class RpcChecks
     {
         var stream = new FrameStream();
         var link = CreateLink(stream);
-        var dispatcher = new RpcDispatcher();
-        bool invoked = false;
-        dispatcher.Register<StringValue>(request => request.Value, (_, _, _, _) =>
+        var requestId = IdGenerator.GenId();
+        RpcRequest[] invalidRequests =
+        [
+            new() { RequestId = requestId },
+            new() { Payload = Any.Pack(new Empty()) },
+            new() { RequestId = requestId, Payload = new Any() }
+        ];
+        foreach (var request in invalidRequests)
         {
-            invoked = true;
-            return Task.CompletedTask;
-        });
-
-        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var mismatched = RpcFrames.Request(new StringValue { Value = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture) }, requestId).Request;
-        await ThrowsAsync<InvalidDataException>(() => Dispatch(mismatched));
-        await ThrowsAsync<InvalidDataException>(() => Dispatch(new RpcRequest { RequestId = requestId }));
-        await ThrowsAsync<InvalidDataException>(() => Dispatch(new RpcRequest { Payload = Any.Pack(new Empty()) }));
-        await ThrowsAsync<InvalidDataException>(() => Dispatch(new RpcRequest { RequestId = requestId, Payload = new Any() }));
-
-        var unknown = RpcFrames.Request(new Empty(), requestId).Request;
-        try
-        {
-            await Dispatch(unknown);
-            throw new Exception("An unregistered request type was accepted.");
-        }
-        catch (RpcException error) when (error.StatusCode == StatusCode.Unimplemented)
-        {
+            await ThrowsAsync<InvalidDataException>(() => link.CallAsync(request, stop));
+            await ThrowsAsync<InvalidDataException>(() =>
+            {
+                link.Receive(new RpcReply { RequestId = request.RequestId, Payload = request.Payload });
+                return Task.CompletedTask;
+            });
         }
 
-        var malformed = RpcFrames.Request(new StringValue { Value = requestId }, requestId).Request;
-        malformed.Payload.Value = ByteString.CopyFrom(new byte[] { 0x0a, 0xff });
-        await ThrowsAsync<InvalidProtocolBufferException>(() => Dispatch(malformed));
-        if (invoked)
+        if (stream.Output.Reader.TryRead(out _))
         {
-            throw new Exception("An invalid request reached its RPC handler.");
+            throw new Exception("An invalid RPC envelope was sent to the peer.");
         }
-
-        await ThrowsAsync<InvalidDataException>(() =>
-        {
-            link.Receive(new RpcReply { RequestId = requestId });
-            return Task.CompletedTask;
-        });
-
-        Task Dispatch(RpcRequest request) => dispatcher.DispatchAsync(request, nameof(ProcessType.Login), link, stop);
     }
 
     private static async Task CheckCancellationAndCloseAsync(CancellationToken stop)
     {
         var stream = new FrameStream();
         var link = CreateLink(stream);
-        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var requestId = IdGenerator.GenId();
         using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var pending = link.CallAsync<Empty>(new Empty(), requestId, cancelled.Token);
         await stream.Output.Reader.ReadAsync(stop);
@@ -167,11 +128,11 @@ internal static class RpcChecks
         await stream.Output.Reader.ReadAsync(stop);
         link.Close();
         await ThrowsAsync<IOException>(() => next);
-        await ThrowsAsync<IOException>(() => link.CallAsync<Empty>(new Empty(), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), stop));
+        await ThrowsAsync<IOException>(() => link.CallAsync<Empty>(new Empty(), IdGenerator.GenId(), stop));
     }
 
     private static PeerLink CreateLink(FrameStream stream) =>
-        new(nameof(ProcessType.Login), nameof(ProcessType.Router), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), stream);
+        new(nameof(ProcessType.Login), nameof(ProcessType.Router), IdGenerator.GenId(), stream);
 
     private static async Task ThrowsAsync<TException>(Func<Task> action) where TException : Exception
     {

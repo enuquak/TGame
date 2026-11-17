@@ -1,6 +1,9 @@
+using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
 using MongoDB.Driver;
 using TGame.Profile;
 using TGame.Server.Engine;
+using Result = TGame.Profile.ProfileReply.Types.Result;
 
 namespace TGame.Server.Logic;
 
@@ -10,21 +13,46 @@ internal sealed class ProfileServerSinglePoint : ServerSinglePoint, IDisposable
     private ProfileStore store = null!;
 
     protected override async Task InitializeRoleAsync(CancellationToken stop) =>
-        store = await ProfileStore.OpenAsync(IdGenerator, stop);
+        store = await ProfileStore.OpenAsync(stop);
 
-    internal async Task<ProfileReply> HandleAsync(ProfileRequest request, CancellationToken stop)
+    public override async Task<IMessage> HandleRequestAsync(EntityRpcContext context, Any payload, CancellationToken stop)
     {
+        if (!payload.Is(ProfileRequest.Descriptor))
+        {
+            return await base.HandleRequestAsync(context, payload, stop);
+        }
+
+        var request = payload.Unpack<ProfileRequest>();
+        if (request.OperationCase != ProfileRequest.OperationOneofCase.Fetch ||
+            !IdText.IsValid(request.RequestId) ||
+            !IdText.IsValid(request.Fetch))
+        {
+            return Failure(request, Result.Rejected);
+        }
+
+        GameLog.Debug(ProfileLogEvents.RequestRx, nameof(ProcessType.Profile), context.SourceProcess,
+            request.RequestId, request.Fetch);
         try
         {
-            return await store.HandleAsync(request, stop);
+            var reply = await store.HandleAsync(request, stop);
+            GameLog.Debug(ProfileLogEvents.ReplyTx, nameof(ProcessType.Profile), context.SourceProcess,
+                reply.RequestId, reply.EntityId);
+            return reply;
         }
         catch (Exception error) when (error is MongoException or TimeoutException)
         {
-            TraceLog.Event(ServerLogEvents.ProfileDbError, nameof(ProcessType.Profile), id: request.RequestId,
+            GameLog.Error(ProfileLogEvents.DbError, nameof(ProcessType.Profile), id: request.RequestId,
                 entity: ProfileStore.Subject(request), detail: error.GetType().Name);
-            return ProfileMessages.Failure(request, ProfileReply.Types.Result.Unavailable);
+            return Failure(request, Result.Unavailable);
         }
     }
+
+    private static ProfileReply Failure(ProfileRequest request, Result result) => new()
+    {
+        RequestId = request.RequestId,
+        EntityId = ProfileStore.Subject(request),
+        Result = result
+    };
 
     public void Dispose() => store?.Dispose();
 }
