@@ -145,7 +145,7 @@ public partial class ServerNode
             throw new RpcException(new Status(StatusCode.InvalidArgument, "Invalid RPC target entity."));
         }
 
-        if (request.TargetCase == RpcRequest.TargetOneofCase.EntityId && State.ContainsEntity(request.EntityId))
+        if (request.TargetCase == RpcRequest.TargetOneofCase.EntityId && singlePoint?.ContainsEntity(request.EntityId) == true)
         {
             if (Role == nameof(ProcessType.Gate))
             {

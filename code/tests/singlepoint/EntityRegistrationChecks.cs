@@ -29,19 +29,19 @@ internal static class EntityRegistrationChecks
         try
         {
             await node.FirstLinks.WaitAsync(stop);
-            Check(node.SinglePoint is null && !node.State.LocalEntityIds.Any() && !stream.Output.Reader.TryPeek(out _),
+            Check(node.SinglePoint is null && !stream.Output.Reader.TryPeek(out _),
                 "Engine handshake registered an entity before creating the SinglePoint.");
 
             var initialization = node.InitializeSinglePointAsync(new SinglePointRegistry([typeof(RegistrationWaitingSinglePoint)]), stop);
             var point = (RegistrationWaitingSinglePoint)node.SinglePoint!;
             await point.Started.Task.WaitAsync(stop);
-            Check(!node.State.LocalEntityIds.Any() && !stream.Output.Reader.TryPeek(out _),
+            Check(IdText.IsValid(point.EntityId) && !point.LocalEntityIds.Any() && !stream.Output.Reader.TryPeek(out _),
                 "Entities were published while business initialization was still pending.");
 
             point.Release.SetResult();
             var frame = await stream.Output.Reader.ReadAsync(stop);
             var request = frame.ReadRequest<RegisterEntitiesRequest>();
-            Check(request.SinglePointId == node.State.EntityId && request.EntityIds.SequenceEqual([node.State.EntityId]),
+            Check(request.SinglePointId == point.EntityId && request.EntityIds.SequenceEqual([point.EntityId]),
                 "SinglePoint registration advertised a different identity or entity list.");
             Check(!point.Initialized && !node.Ready && !initialization.IsCompleted,
                 "SinglePoint initialization completed before registration was acknowledged.");
@@ -65,7 +65,7 @@ internal static class EntityRegistrationChecks
                 {
                 }
 
-                Check(!point.Initialized && !node.Ready && !node.State.LocalEntityIds.Any(),
+                Check(!point.Initialized && !node.Ready && !point.LocalEntityIds.Any(),
                     "Rejected registration left the SinglePoint ready or locally registered.");
                 return;
             }
@@ -106,12 +106,11 @@ internal static class EntityRegistrationChecks
 
     private static async Task CheckBusinessFailureAsync(CancellationToken stop)
     {
-        var state = new SinglePointState();
         var point = new InitializationFailureSinglePoint();
         bool registered = false;
         try
         {
-            await point.InitializeAsync(nameof(ProcessType.Gate), state, _ =>
+            await point.InitializeAsync(nameof(ProcessType.Gate), _ =>
             {
                 registered = true;
                 return Task.CompletedTask;
@@ -122,7 +121,7 @@ internal static class EntityRegistrationChecks
         {
         }
 
-        Check(!registered && !point.Initialized && !state.LocalEntityIds.Any(),
+        Check(!registered && !point.Initialized && !point.LocalEntityIds.Any(),
             "Failed business initialization registered local or remote entities.");
     }
 

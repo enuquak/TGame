@@ -46,7 +46,7 @@ internal static class ProfileStorageChecks
             }, Result.Stored);
             await CheckAsync(new ProfileRequest { Fetch = subject }, Result.Found, "updated");
 
-            var direct = await node.CallEntityAsync<ProfileReply>(node.State.EntityId,
+            var direct = await node.CallEntityAsync<ProfileReply>(node.SinglePoint!.EntityId,
                 new ProfileRequest { RequestId = NewId(), Withdraw = subject }, stop);
             if (direct.Result != Result.Rejected)
             {
@@ -86,7 +86,7 @@ internal static class ProfileStorageChecks
         {
             request.RequestId = NewId();
             var frame = ProfileRpcChecks.Request(source, request);
-            frame.Request.EntityId = node.State.EntityId;
+            frame.Request.EntityId = node.SinglePoint!.EntityId;
             stream.Input.Writer.TryWrite(frame);
             var response = await stream.Output.Reader.ReadAsync(stop);
             var reply = response.ReadReply<ProfileReply>();

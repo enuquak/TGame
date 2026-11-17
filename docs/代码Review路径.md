@@ -1,10 +1,10 @@
 # 代码 Review 路径
 
-更新时间：2026-11-17（Asia/Shanghai）。阅读基线：当前 `review-1117` 分支，包含 Engine 与业务 Shared 分离、实体注册迁入 SinglePoint 自身初始化流程，以及统一使用 `IdGenerator.GenId()` 静态入口后的代码。
+更新时间：2026-11-17（Asia/Shanghai）。阅读基线：当前 `review-1117` 分支，包含 Engine 与业务 Shared 分离、实体注册迁入 SinglePoint 自身初始化流程，以及统一使用 `IdGenerator.GenId()` 静态入口、由 SinglePoint 自身持有身份和本地实体集合后的代码。
 
 下面均为待阅读或待复读；只有用户明确确认读完后才勾选。上一轮确认记录保留在[代码 Review 进度](代码Review进度.md)，其中旧分支和旧启动顺序不作为当前阅读基线。
 
-接着本轮讨论，优先复读第 2～4 节：`IdGenerator.InitializeAsync` / `GenId` → `SinglePointState` → `ServerSinglePoint.InitializeAsync` → `ServerNode.InitializeSinglePointAsync` → `ServerNode.Entities.cs` → `RunLinkAsync` 的重连与清理。重点确认“初始化进程生成器、预分配 ID、建立进程连接、登记实体、接受业务请求”各自发生的时机。首次从头阅读时仍从第 1 节开始。
+接着本轮讨论，优先复读第 2～4 节：`IdGenerator.InitializeAsync` / `GenId` → `ServerSinglePoint` 的身份与实体集合 → `ServerSinglePoint.InitializeAsync` → `ServerNode.InitializeSinglePointAsync` → `ServerNode.Entities.cs` → `RunLinkAsync` 的重连与清理。重点确认“初始化进程生成器、建立进程连接、创建 SinglePoint 并生成 ID、登记实体、接受业务请求”各自发生的时机。首次从头阅读时仍从第 1 节开始。
 
 [完整测试记录](2026-11-17完整测试记录.md)记录的是依赖拆分前的完整验证；拆分的检查范围见[迁移计划与执行记录](superpowers/plans/2026-11-17-engine-business-shared.md)。最新实体注册调整的短时检查见第 9 节，不代表已重新执行完整测试。
 
@@ -21,8 +21,8 @@
 
 - [ ] [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)、[IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)、[id-generator.json](../code/server/config/id-generator.json)：先看进程级唯一实例、`InitializeAsync`、静态 `GenId`、`LeaseLost` 和释放；未初始化及重复初始化如何报错，宿主如何用 `await using` 管理生命周期。调用方不再传入生成器，`IIdGenerator` 已移除。
 - [ ] [SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)、[SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)、[IdText.cs](../code/server/engine/identifiers/IdText.cs)：再看引擎内部实现的序列生成、时钟回退、ZooKeeper 编号占用、会话失效及 ID 文本校验。
-- [ ] [SinglePointState.cs](../code/server/engine/SinglePointState.cs)：创建时由属性初始化表达式直接调用 `IdGenerator.GenId()`，无需构造参数，`localEntities` 仍为空；再看 `RegisterSinglePoint`、`UnregisterSinglePoint`、`LocalEntityIds` 和 `ContainsEntity`，区分已有身份与已登记实体。
-- [ ] [ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：沿 `InitializeAsync` 看 `InitializeRoleAsync` → `State.RegisterSinglePoint` → `registerEntities` 回调 → `Initialized` 变为 `true`；业务初始化失败不发起注册，注册失败或取消会撤销本地登记并保持未初始化。
+- [ ] [ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：直接持有 `EntityId` 和 `localEntities`；创建时通过 `IdGenerator.GenId()` 生成身份，集合仍为空。再看 `RegisterSinglePoint`、`UnregisterSinglePoint`、`LocalEntityIds` 和 `ContainsEntity`，区分已有身份与已登记实体。
+- [ ] 沿同文件的 `InitializeAsync` 看 `InitializeRoleAsync` → `RegisterSinglePoint` → `registerEntities` 回调 → `Initialized` 变为 `true`；业务初始化失败不发起注册，注册失败或取消会撤销本地登记并保持未初始化。
 - [ ] [SinglePointForAttribute.cs](../code/server/engine/SinglePointForAttribute.cs)、[SinglePointRegistry.cs](../code/server/engine/SinglePointRegistry.cs)：理解标注注册、默认实现、重复映射和初始化失败。
 
 读完应能回答：进程名称、连接 ID、RPC 请求 ID、实体 ID 分别表示什么？为什么生成 ID 不等于注册实体？实体注册由谁发起？没有业务 SinglePoint 子类的进程为什么也能启动？
@@ -30,9 +30,9 @@
 ## 3. 沿启动流程读一遍
 
 - [ ] [Program.cs](../code/server/app/Program.cs)：从参数解析进入 `RunServerAsync`，跟踪节点组装、监听、ZooKeeper 注册、连接维护、`InitializeEngineAsync`、`InitializeSinglePointAsync` 和退出监督。
-- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数只准备身份和拓扑；`InitializeSinglePointAsync` 在 `FirstLinks` 成功后创建 SinglePoint，并注入 `RegisterEntitiesAsync` 回调。再看 `Ready` 与 `Dispose`。
+- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数只准备进程信息和拓扑，不创建 SinglePoint 或分配其实体 ID；`InitializeSinglePointAsync` 在 `FirstLinks` 成功后创建 SinglePoint，并注入 `RegisterEntitiesAsync` 回调。再看 `Ready` 与 `Dispose`。
 
-当前顺序为：初始化进程 ID 生成器 → 预分配身份 → 监听与 ZooKeeper 服务注册 → 建立首次拓扑连接（只交换进程名）→ 创建 SinglePoint 并执行业务初始化 → SinglePoint 登记本地实体并发起远端注册 → 收到注册确认 → 标记 SinglePoint 初始化完成。
+当前顺序为：初始化进程 ID 生成器 → 监听与 ZooKeeper 服务注册 → 建立首次拓扑连接（只交换进程名）→ 创建 SinglePoint 并生成身份 → 执行业务初始化 → SinglePoint 登记本地实体并发起远端注册 → 收到注册确认 → 标记 SinglePoint 初始化完成。
 
 `FirstLinks` 只表示首次进程连接齐备，不表示实体已注册。`Ready` 还要求 SinglePoint 初始化成功、当前连接齐备以及 `RegistrationsComplete`。断线不会重置首次连接信号或重新执行业务初始化，但会撤销当前就绪，重连并收到注册确认后才恢复。
 

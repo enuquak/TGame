@@ -38,7 +38,7 @@ using var node = new ServerNode(process.Name, group, messages);
 
 [id-generator.json](../code/server/config/id-generator.json) 声明编号根路径及连接/会话超时。ZooKeeper 地址继续由统一的 ServerSettings 配置提供，ID 生成和服务发现共用该地址。
 
-已接入请求 ID、实体 ID、连接 ID 和 Redis 缓存占用标记。`SinglePointState` 直接通过属性初始化表达式调用 `IdGenerator.GenId()`；生成身份不会提前登记实体，实体注册仍由 SinglePoint 自身初始化发起。
+已接入请求 ID、实体 ID、连接 ID 和 Redis 缓存占用标记。`ServerSinglePoint` 创建时通过属性初始化表达式调用 `IdGenerator.GenId()`，直接持有 `EntityId` 和本地实体集合；`ServerNode` 不提前生成该身份。生成身份不会提前登记实体，实体注册仍由 SinglePoint 自身初始化发起。
 
 单例生命周期检查位于 [IdGeneratorLifecycleChecks.cs](../code/tests/singlepoint/IdGeneratorLifecycleChecks.cs)，覆盖未初始化、初始化失败、取消清理、并发初始化、并发发号、租约监督和释放。ID 算法及 ZooKeeper 分配检查位于 [IdGeneratorChecks.cs](../code/tests/singlepoint/IdGeneratorChecks.cs)。
 

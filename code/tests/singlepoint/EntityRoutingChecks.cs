@@ -33,8 +33,8 @@ internal static class EntityRoutingChecks
         await CheckReply(gate, first, gate, "routed");
         await CheckReply(first, second, first, "peer");
 
-        var nested = await gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue { Value = "nested" }, stop);
-        Check(nested.Value == $"{entry.Name}|{first.Name}|{entry.State.EntityId}|callback", "Nested routed request deadlocked or lost its origin.");
+        var nested = await gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue { Value = "nested" }, stop);
+        Check(nested.Value == $"{entry.Name}|{first.Name}|{entry.SinglePoint!.EntityId}|callback", "Nested routed request deadlocked or lost its origin.");
 
         var calls = Enumerable.Range(0, 24).Select(async index =>
         {
@@ -42,7 +42,7 @@ internal static class EntityRoutingChecks
                 new StringValue { Value = index.ToString(CultureInfo.InvariantCulture) }, stop);
             var fields = result.Value.Split('|');
             var target = fields[0] == first.Name ? first : second;
-            Check(result.Value == $"{target.Name}|{gate.Name}|{target.State.EntityId}|{index}",
+            Check(result.Value == $"{target.Name}|{gate.Name}|{target.SinglePoint!.EntityId}|{index}",
                 "SinglePoint selection chose the wrong type/entity or correlated another call's reply.");
         });
         await Task.WhenAll(calls);
@@ -50,16 +50,16 @@ internal static class EntityRoutingChecks
         await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(network.StaleEntityId, new StringValue(), stop));
         await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(NewId(), new StringValue(), stop));
         await ExpectStatus(StatusCode.Unavailable, () => gate.CallSinglePointAsync<StringValue>(ProcessType.Scene, new StringValue(), stop));
-        await ExpectStatus(StatusCode.NotFound, () => entry.CallEntityAsync<StringValue>(gate.State.EntityId, new StringValue(), stop));
+        await ExpectStatus(StatusCode.NotFound, () => entry.CallEntityAsync<StringValue>(gate.SinglePoint!.EntityId, new StringValue(), stop));
         await ExpectStatus(StatusCode.InvalidArgument, () => gate.CallSinglePointAsync<StringValue>(ProcessType.Gate, new StringValue(), stop));
-        await ExpectStatus(StatusCode.Unimplemented, () => gate.CallEntityAsync<StringValue>(first.State.EntityId, new Empty(), stop));
-        await ExpectStatus(StatusCode.Internal, () => gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue { Value = "fail" }, stop));
+        await ExpectStatus(StatusCode.Unimplemented, () => gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new Empty(), stop));
+        await ExpectStatus(StatusCode.Internal, () => gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue { Value = "fail" }, stop));
         await CheckReply(gate, first, gate, "after-errors");
 
         using (var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stop))
         {
             network.ResetHold();
-            var pending = gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue { Value = "hold" }, cancellation.Token);
+            var pending = gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue { Value = "hold" }, cancellation.Token);
             await network.HoldStarted.Task.WaitAsync(stop);
             cancellation.Cancel();
             try
@@ -76,7 +76,7 @@ internal static class EntityRoutingChecks
 
         await CheckReply(gate, second, gate, "after-cancel");
         network.ResetHold();
-        var disconnected = gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue { Value = "hold" }, stop);
+        var disconnected = gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue { Value = "hold" }, stop);
         await network.HoldStarted.Task.WaitAsync(stop);
         await network.DisconnectProfileAsync();
         await ExpectStatus(StatusCode.Unavailable, () => disconnected);
@@ -84,18 +84,18 @@ internal static class EntityRoutingChecks
         for (int index = 0; index < 8; index++)
         {
             var survivor = await gate.CallSinglePointAsync<StringValue>(ProcessType.Profile, new StringValue { Value = "survivor" }, stop);
-            Check(survivor.Value == $"{second.Name}|{gate.Name}|{second.State.EntityId}|survivor", "Disconnected SinglePoint remained in the candidate index.");
+            Check(survivor.Value == $"{second.Name}|{gate.Name}|{second.SinglePoint!.EntityId}|survivor", "Disconnected SinglePoint remained in the candidate index.");
         }
 
-        await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(first.State.EntityId, new StringValue(), stop));
+        await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(first.SinglePoint!.EntityId, new StringValue(), stop));
 
         await network.ReconnectProfileAsync();
         await CheckReply(gate, first, gate, "reconnected");
 
         async Task CheckReply(ServerNode caller, ServerNode target, ServerNode source, string value)
         {
-            var result = await caller.CallEntityAsync<StringValue>(target.State.EntityId, new StringValue { Value = value }, stop);
-            Check(result.Value == $"{target.Name}|{source.Name}|{target.State.EntityId}|{value}", "Entity target, original caller or reply payload changed in transit.");
+            var result = await caller.CallEntityAsync<StringValue>(target.SinglePoint!.EntityId, new StringValue { Value = value }, stop);
+            Check(result.Value == $"{target.Name}|{source.Name}|{target.SinglePoint!.EntityId}|{value}", "Entity target, original caller or reply payload changed in transit.");
         }
     }
 
@@ -104,14 +104,19 @@ internal static class EntityRoutingChecks
         await using var network = await Network.CreateAsync(ProcessType.Login, stop, initializeProfile: false);
         var gate = network.Node(ProcessType.Gate);
         var profile = network.Node(ProcessType.Profile);
-        Check(!profile.State.LocalEntityIds.Any(), "Engine startup registered local entities before SinglePoint initialization.");
-        Check(!network.Node(ProcessType.Router).IsEntityOwner(profile.Name, profile.State.EntityId),
+        Check(profile.SinglePoint is null, "Engine startup created a SinglePoint before initialization.");
+        var initialization = profile.InitializeSinglePointAsync(new SinglePointRegistry([typeof(RegistrationWaitingSinglePoint)]), stop);
+        var point = (RegistrationWaitingSinglePoint)profile.SinglePoint!;
+        await point.Started.Task.WaitAsync(stop);
+        Check(!point.LocalEntityIds.Any(), "Entities were registered before business initialization completed.");
+        Check(!network.Node(ProcessType.Router).IsEntityOwner(profile.Name, point.EntityId),
             "Router registered an entity from the connection handshake.");
-        await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(profile.State.EntityId, new StringValue(), stop));
-        await profile.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
-        Check(network.Node(ProcessType.Router).IsEntityOwner(profile.Name, profile.State.EntityId),
+        await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(point.EntityId, new StringValue(), stop));
+        point.Release.SetResult();
+        await initialization.WaitAsync(stop);
+        Check(network.Node(ProcessType.Router).IsEntityOwner(profile.Name, point.EntityId),
             "SinglePoint initialization completed before Router acknowledged its entity.");
-        var response = await gate.CallEntityAsync<StringValue>(profile.State.EntityId, new StringValue { Value = "ready" }, stop);
+        var response = await gate.CallEntityAsync<StringValue>(point.EntityId, new StringValue { Value = "ready" }, stop);
         Check(response.Value.EndsWith("|ready", StringComparison.Ordinal), "Initialized target did not accept its next request.");
     }
 
@@ -152,7 +157,7 @@ internal static class EntityRoutingChecks
             {
                 RequestId = NewId(), SourceProcess = login,
                 DeadlineUnixMs = DateTimeOffset.UtcNow.AddSeconds(5).ToUnixTimeMilliseconds(),
-                EntityId = node.State.EntityId, Payload = Any.Pack(new Empty())
+                EntityId = node.SinglePoint!.EntityId, Payload = Any.Pack(new Empty())
             };
             stream.Input.Writer.TryWrite(new Frame { Request = forged });
             var rejected = (await stream.Output.Reader.ReadAsync(stop)).Reply;
@@ -207,7 +212,9 @@ internal static class EntityRoutingChecks
         await stream.Output.Reader.ReadAsync(stop);
         try
         {
-            await ExpectStatus(StatusCode.AlreadyExists, () => TestNodes.RegisterAsync(stream, [router.State.EntityId], stop));
+            await router.FirstLinks.WaitAsync(stop);
+            await router.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+            await ExpectStatus(StatusCode.AlreadyExists, () => TestNodes.RegisterAsync(stream, [router.SinglePoint!.EntityId], stop));
         }
         finally
         {
@@ -292,7 +299,7 @@ internal static class EntityRoutingChecks
                 {
                     if (request.Value == "nested")
                     {
-                        return await node.CallEntityAsync<StringValue>(Node(entryType).State.EntityId, new StringValue { Value = "callback" }, token);
+                        return await node.CallEntityAsync<StringValue>(Node(entryType).SinglePoint!.EntityId, new StringValue { Value = "callback" }, token);
                     }
 
                     if (request.Value == "hold")
@@ -366,7 +373,7 @@ internal static class EntityRoutingChecks
                 await Task.Delay(RegistrationPollMilliseconds, stop);
             }
 
-            Check(router.IsEntityOwner(profile.Name, profile.State.EntityId), "Reconnected SinglePoint did not restore its entity route.");
+            Check(router.IsEntityOwner(profile.Name, profile.SinglePoint!.EntityId), "Reconnected SinglePoint did not restore its entity route.");
         }
 
         public async ValueTask DisposeAsync()

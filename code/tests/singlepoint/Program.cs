@@ -42,6 +42,7 @@ if (args is ["--profile-storage", var profileIdConfig])
     }
 }
 
+SinglePointChecks.CheckBeforeIdInitialization();
 await IdGeneratorLifecycleChecks.RunAsync();
 // 内存检查共用一个进程内生成器，不向真实服务器组发布 ID。
 await using var idLifetime = await IdGenerator.InitializeAsync(
@@ -82,6 +83,7 @@ if (args is ["--routing"])
 await IdGeneratorChecks.RunAsync();
 if (args is ["--engine"])
 {
+    await SinglePointChecks.RunAsync();
     using var engineDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
     RpcChecks.CheckTransportBoundary();
     await RpcChecks.RunAsync(engineDeadline.Token);
@@ -120,7 +122,7 @@ if (engineAssembly == typeof(ServerMessages).Assembly)
 }
 
 Type[] engineTypes = [typeof(LinkService), typeof(ServerNode), typeof(PeerLink), typeof(ServiceRegistry),
-    typeof(ServerSinglePoint), typeof(SinglePointState), typeof(SinglePointRegistry), typeof(SinglePointForAttribute)];
+    typeof(ServerSinglePoint), typeof(SinglePointRegistry), typeof(SinglePointForAttribute)];
 foreach (var type in engineTypes)
 {
     if (type.Assembly != engineAssembly)
@@ -262,9 +264,9 @@ await ExpectProfileResult(ProfileReply.Types.Result.Unavailable);
 var initialization = gate.InitializeSinglePointAsync(business, stop);
 var point = gate.SinglePoint as WaitingSinglePoint ?? throw new Exception("The registered business SinglePoint was not selected.");
 await point.Started.Task.WaitAsync(stop);
-if (!ReferenceEquals(point.State, gate.State))
+if (!IdText.IsValid(point.EntityId) || point.LocalEntityIds.Any())
 {
-    throw new Exception("SinglePoint initialization replaced the identity prepared by the engine.");
+    throw new Exception("A SinglePoint must own its identity without registering before business initialization completes.");
 }
 
 await ExpectProfileResult(ProfileReply.Types.Result.Unavailable);
@@ -286,7 +288,7 @@ if (gate.Ready)
 
 var cancelling = new WaitingSinglePoint();
 using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
-var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), new SinglePointState(), _ => Task.CompletedTask, cancel.Token);
+var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), _ => Task.CompletedTask, cancel.Token);
 await cancelling.Started.Task.WaitAsync(stop);
 cancel.Cancel();
 try
@@ -490,7 +492,7 @@ async Task ExpectProfileResult(ProfileReply.Types.Result result)
     var request = new ProfileRequest
     {
         RequestId = IdGenerator.GenId(),
-        Fetch = gate.State.EntityId
+        Fetch = IdGenerator.GenId()
     };
     var messages = new RpcDispatcher();
     ServerMessages.Register(messages, gate);

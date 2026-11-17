@@ -24,7 +24,6 @@ public partial class ServerNode : IDisposable
 
     public ServerNode(string name, ServerGroup group, RpcDispatcher messages)
     {
-        State = new SinglePointState();
         Name = name;
         this.group = group;
         this.messages = messages;
@@ -38,7 +37,6 @@ public partial class ServerNode : IDisposable
     public Task FirstLinks => firstLinks.Task;
     public string Role { get; }
     public bool Ready => singlePoint?.Initialized == true && linksReady && RegistrationsComplete;
-    public SinglePointState State { get; }
     public ServerSinglePoint? SinglePoint => singlePoint;
 
     public ProcessType GetProcessType(string process) => group.GetProcess(process).Type;
@@ -47,7 +45,7 @@ public partial class ServerNode : IDisposable
     {
         if (process == Name)
         {
-            return State.ContainsEntity(entityId);
+            return singlePoint?.ContainsEntity(entityId) == true;
         }
 
         return owners.TryGetValue(entityId, out var owner) && owner == process;
@@ -67,7 +65,7 @@ public partial class ServerNode : IDisposable
         }
 
         singlePoint = registry.Create(Enum.Parse<ProcessType>(Role));
-        await singlePoint.InitializeAsync(Role, State, RegisterEntitiesAsync, stop);
+        await singlePoint.InitializeAsync(Role, RegisterEntitiesAsync, stop);
     }
 
     public void Dispose()
@@ -218,7 +216,8 @@ public partial class ServerNode : IDisposable
             async Task RestoreRegistrationAsync()
             {
                 // 已初始化的 SinglePoint 在新连接上重新登记，握手本身不注册实体。
-                if (Role != nameof(ProcessType.Gate) && State.ContainsEntity(State.EntityId))
+                var point = singlePoint;
+                if (Role != nameof(ProcessType.Gate) && point is not null && point.ContainsEntity(point.EntityId))
                 {
                     await EnsureRegistrationAsync(link, transport.Token);
                 }

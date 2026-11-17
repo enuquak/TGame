@@ -53,7 +53,7 @@ dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --e
 
 每个服务进程先完成引擎初始化（监听、ZooKeeper 注册和首次拓扑连接），再按 `SinglePointFor` 标注创建并初始化本进程的 SinglePoint。业务实现可选；没有注册实现的角色使用引擎 `ServerSinglePoint` 默认类。目前 DBMgr 和 Profile 提供业务子类，其余角色使用默认类。`SINGLE_POINT_INIT` 与 `SINGLE_POINT_READY` 记录初始化的开始与成功，均带实际类名和 EntityId。`LINKS_READY` 单独记录所有预期实例连接齐备。
 
-引擎提前生成并登记本进程的 EntityId，随后创建的 SinglePoint 复用同一份身份。Router 只接受非空、无重复的 雪花 ID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。正式流程不登记或依赖固定的测试 ID。
+引擎连接齐备后才创建 SinglePoint，由它生成并持有 EntityId 和本地实体集合；业务初始化成功后登记实体，收到确认后才就绪。Router 只接受非空、无重复的 雪花 ID 实体登记；Profile 请求按 `ProcessType.Profile` 对应的连接转发，并校验调用角色及写入实体的归属。正式流程不登记或依赖固定的测试 ID。
 
 服务进程直接写入 `logs/server/<实例名称>Server/`，例如 `logs/server/Base1Server/` 和 `logs/server/GM1Server/`。每行是一条 JSON 事件，可按 `pid`、角色、时间和请求 `id` 查询，不再包含 `runId`。每个实例使用 `<PID>-<进程启动UTC ticks>-yyyyMMddHH.log`，用启动时间区分复用的 PID。按服务器本地整点滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。文件切换发生在下一条事件到来时，单条事件完整写入。历史分片保留。手动启动时从仓库根目录运行，或以 `TGAME_SERVER_LOG_ROOT` 指定服务日志根目录。
 

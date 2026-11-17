@@ -76,7 +76,7 @@ internal static class MessageDispatchChecks
         var messages = new RpcDispatcher();
         using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages);
         ServerMessages.Register(messages, node);
-        var profile = new ProfileRequest { RequestId = IdGenerator.GenId(), Fetch = node.State.EntityId };
+        var profile = new ProfileRequest { RequestId = IdGenerator.GenId(), Fetch = IdGenerator.GenId() };
         var reply = (ProfileReply)await messages.DispatchEntityAsync(RpcFrames.Request(profile).Request, stop);
         if (reply.Result != ProfileReply.Types.Result.Unavailable)
         {

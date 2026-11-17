@@ -33,6 +33,7 @@ public partial class ServerNode
             return;
         }
 
+        var point = singlePoint ?? throw new InvalidOperationException("SinglePoint has not been created.");
         Task[] pending;
         lock (linkChanges)
         {
@@ -50,7 +51,7 @@ public partial class ServerNode
         {
             if (Role == nameof(ProcessType.Router))
             {
-                singlePointIds[ProcessType.Router] = [State.EntityId];
+                singlePointIds[ProcessType.Router] = [point.EntityId];
             }
         }
     }
@@ -77,8 +78,9 @@ public partial class ServerNode
 
     private async Task RegisterLinkAsync(PeerLink link, CancellationToken stop)
     {
-        var request = new RegisterEntitiesRequest { SinglePointId = State.EntityId };
-        request.EntityIds.Add(State.LocalEntityIds);
+        var point = singlePoint ?? throw new InvalidOperationException("SinglePoint has not been created.");
+        var request = new RegisterEntitiesRequest { SinglePointId = point.EntityId };
+        request.EntityIds.Add(point.LocalEntityIds);
         await link.CallAsync<RegisterEntitiesReply>(request, IdGenerator.GenId(), stop);
         stop.ThrowIfCancellationRequested();
 
@@ -147,8 +149,8 @@ public partial class ServerNode
                 throw new RpcException(new Status(StatusCode.AlreadyExists, "Entities are already registered on this connection."));
             }
 
-            // 本进程尚未初始化时也保留自己的身份，防止被对端抢先登记。
-            bool localCollision = entities.Contains(State.EntityId);
+            var point = singlePoint;
+            bool localCollision = point is not null && entities.Contains(point.EntityId);
             bool remoteCollision = Role == nameof(ProcessType.Router) && entities.Any(owners.ContainsKey);
             if (localCollision || remoteCollision)
             {
