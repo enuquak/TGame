@@ -9,7 +9,7 @@ internal static class TestNodes
         Hello = peer,
         SinglePointId = peer.StartsWith(nameof(ProcessType.Gate), StringComparison.Ordinal)
             ? ""
-            : entityId ?? TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : entityId ?? TestIds.Generator.GenId()
     };
 
     public static ServerGroup DefaultGroup { get; } = new(Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1));

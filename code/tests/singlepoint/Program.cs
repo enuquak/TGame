@@ -154,7 +154,7 @@ if (!loginNode.Ready || loginNode.SinglePoint?.GetType() != typeof(ServerSingleP
     throw new Exception("A connected role with no business SinglePoint did not become ready.");
 }
 
-var profileRequest = new ProfileRequest { RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), Fetch = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture) };
+var profileRequest = new ProfileRequest { RequestId = TestIds.Generator.GenId(), Fetch = TestIds.Generator.GenId() };
 var profileCall = loginNode.CallProfileAsync(profileRequest, stop);
 var profileFrame = await router.Output.Reader.ReadAsync(stop);
 if (profileFrame.Request.SinglePointType != nameof(ProcessType.Profile) ||
@@ -318,7 +318,7 @@ if (!failedPoint.Disposed)
 }
 
 using var routes = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
-var duplicateEntityId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+var duplicateEntityId = TestIds.Generator.GenId();
 string[][] invalidRegistrations = [[], [InvalidEntityId], [duplicateEntityId, duplicateEntityId]];
 foreach (var ids in invalidRegistrations)
 {
@@ -343,7 +343,7 @@ foreach (var pair in Topology.Dials)
 
     var peer = ServerProcess.FormatName(pair.Key, 1);
     neighbors.Add(peer, new FrameStream());
-    neighborIds.Add(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture));
+    neighborIds.Add(peer, TestIds.Generator.GenId());
 }
 
 var routeTasks = new List<Task>();
@@ -368,7 +368,7 @@ var baseRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Base), 1)]
 var profileRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
 var publish = new ProfileRequest
 {
-    RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
+    RequestId = TestIds.Generator.GenId(),
     Publish = new EntitySummary
     {
         EntityId = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)],
@@ -396,28 +396,28 @@ if (published?.RequestId != publish.RequestId || published.EntityId != publish.P
 }
 
 var foreignPublish = publish.Clone();
-foreignPublish.RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+foreignPublish.RequestId = TestIds.Generator.GenId();
 foreignPublish.Publish.EntityId = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Scene), 1)];
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), foreignPublish);
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), new ProfileRequest
 {
-    RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
+    RequestId = TestIds.Generator.GenId(),
     Withdraw = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Scene), 1)]
 });
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), new ProfileRequest
 {
-    RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
+    RequestId = TestIds.Generator.GenId(),
     Fetch = InvalidEntityId
 });
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.GM), 1), new ProfileRequest
 {
-    RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
+    RequestId = TestIds.Generator.GenId(),
     Fetch = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)]
 });
 
-var missing = RpcFrames.Request(new Empty(), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture));
+var missing = RpcFrames.Request(new Empty(), TestIds.Generator.GenId());
 missing.Request.SourceProcess = ServerProcess.FormatName(nameof(ProcessType.Base), 1);
-missing.Request.EntityId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+missing.Request.EntityId = TestIds.Generator.GenId();
 missing.Request.DeadlineUnixMs = DateTimeOffset.UtcNow.Add(PeerLink.RequestTimeout).ToUnixTimeMilliseconds();
 baseRoute.Input.Writer.TryWrite(missing);
 var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).Reply;
@@ -455,14 +455,14 @@ async Task ExpectProfileRejected(string peer, ProfileRequest request)
 Task Open(ServerNode node, string peer, FrameStream stream, string[]? ids = null)
 {
     stream.Input.Writer.TryWrite(TestNodes.Hello(peer, ids?.FirstOrDefault()));
-    return node.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), ids ?? [], stream, stream, stop);
+    return node.RunLinkAsync(peer, TestIds.Generator.GenId(), ids ?? [], stream, stream, stop);
 }
 
 async Task ExpectProfileResult(ProfileReply.Types.Result result)
 {
     var request = new ProfileRequest
     {
-        RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
+        RequestId = TestIds.Generator.GenId(),
         Fetch = gate.State.EntityId
     };
     var messages = new RpcDispatcher();

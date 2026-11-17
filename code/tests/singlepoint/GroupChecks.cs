@@ -45,7 +45,7 @@ internal static class GroupChecks
                 failed.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Base), 1) });
                 try
                 {
-                    await gate.RunLinkAsync(peer.Name, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], failed, failed, stop);
+                    await gate.RunLinkAsync(peer.Name, TestIds.Generator.GenId(), [], failed, failed, stop);
                     throw new Exception("A handshake from a different instance was accepted.");
                 }
                 catch (IOException)
@@ -153,7 +153,7 @@ internal static class GroupChecks
         Task Open(string peer, FrameStream stream)
         {
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-            return gate.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
+            return gate.RunLinkAsync(peer, TestIds.Generator.GenId(), [], stream, stream, stop);
         }
     }
 
@@ -252,7 +252,7 @@ internal static class GroupChecks
             var stream = new FrameStream();
             streams[peer] = stream;
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-            tasks[peer] = node.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [], stream, stream, stop);
+            tasks[peer] = node.RunLinkAsync(peer, TestIds.Generator.GenId(), [], stream, stream, stop);
         }
     }
 
@@ -265,11 +265,11 @@ internal static class GroupChecks
         foreach (var peer in Topology.Peers(group, router.Name))
         {
             var stream = new FrameStream();
-            var entity = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var entity = TestIds.Generator.GenId();
             streams.Add(peer, stream);
             ids.Add(peer, entity);
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer, entity));
-            tasks.Add(router.RunLinkAsync(peer, TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), [entity], stream, stream, stop));
+            tasks.Add(router.RunLinkAsync(peer, TestIds.Generator.GenId(), [entity], stream, stream, stop));
             await stream.Output.Reader.ReadAsync(stop);
         }
 
@@ -280,7 +280,7 @@ internal static class GroupChecks
         var profile = streams[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
         var request = new ProfileRequest
         {
-            RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture),
+            RequestId = TestIds.Generator.GenId(),
             Publish = new EntitySummary { EntityId = ids[secondBase], DisplayName = "Group check", Title = "Owner" }
         };
         publisher.Input.Writer.TryWrite(ProfileRpcChecks.Request(secondBase, request));
@@ -303,7 +303,7 @@ internal static class GroupChecks
 
         var firstBase = streams[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
         var foreign = request.Clone();
-        foreign.RequestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreign.RequestId = TestIds.Generator.GenId();
         firstBase.Input.Writer.TryWrite(ProfileRpcChecks.Request(ServerProcess.FormatName(nameof(ProcessType.Base), 1), foreign));
         if ((await firstBase.Output.Reader.ReadAsync(stop)).ReadReply<ProfileReply>().Result != ProfileReply.Types.Result.Rejected ||
             profile.Output.Reader.TryRead(out _))
@@ -315,7 +315,7 @@ internal static class GroupChecks
         var secondLogin = ServerProcess.FormatName(nameof(ProcessType.Login), 2);
         var caller = streams[secondLogin];
         var receiver = streams[thirdBase];
-        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var requestId = TestIds.Generator.GenId();
         var routed = RpcFrames.Request(new StringValue { Value = requestId }, requestId);
         routed.Request.SourceProcess = secondLogin;
         routed.Request.EntityId = ids[thirdBase];

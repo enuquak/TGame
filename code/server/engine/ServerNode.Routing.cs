@@ -1,4 +1,3 @@
-using System.Globalization;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
@@ -43,7 +42,7 @@ public partial class ServerNode
         ArgumentNullException.ThrowIfNull(request);
         return new RpcRequest
         {
-            RequestId = IdGenerator.GenId().ToString(CultureInfo.InvariantCulture),
+            RequestId = IdGenerator.GenId(),
             SourceProcess = Name,
             DeadlineUnixMs = DateTimeOffset.UtcNow.Add(PeerLink.RequestTimeout).ToUnixTimeMilliseconds(),
             Payload = Any.Pack(request)

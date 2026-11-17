@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Grpc.Core;
@@ -153,7 +152,7 @@ public partial class ServerNode : IDisposable
     private async Task ConnectAsync(string peer, string address, CancellationToken stop)
     {
         using var channel = GrpcChannel.ForAddress(address);
-        var id = IdGenerator.GenId().ToString(CultureInfo.InvariantCulture);
+        var id = IdGenerator.GenId();
         var headers = new Metadata { { TransportProtocol.PeerHeader, Name }, { TransportProtocol.LinkHeader, id } };
         if (PeerRole(peer) == nameof(ProcessType.Router))
         {

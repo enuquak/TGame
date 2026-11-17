@@ -1,4 +1,3 @@
-using System.Globalization;
 using Any = Google.Protobuf.WellKnownTypes.Any;
 using TGame;
 using TGame.Profile;
@@ -137,5 +136,5 @@ internal static class ProfileRpcChecks
         }
     };
 
-    private static string NewId() => TestIds.Generator.GenId().ToString(CultureInfo.InvariantCulture);
+    private static string NewId() => TestIds.Generator.GenId();
 }

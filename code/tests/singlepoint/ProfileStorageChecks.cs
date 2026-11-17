@@ -1,4 +1,3 @@
-using System.Globalization;
 using TGame;
 using TGame.Profile;
 using TGame.Server;
@@ -81,7 +80,7 @@ internal static class ProfileStorageChecks
             }
         }
 
-        string NewId() => ids.GenId().ToString(CultureInfo.InvariantCulture);
+        string NewId() => ids.GenId();
 
         async Task CheckAsync(ProfileRequest request, Result expected, string? title = null)
         {

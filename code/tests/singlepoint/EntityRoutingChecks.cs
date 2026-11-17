@@ -230,7 +230,7 @@ internal static class EntityRoutingChecks
         }
     }
 
-    private static string NewId() => TestIds.Generator.GenId().ToString(CultureInfo.InvariantCulture);
+    private static string NewId() => TestIds.Generator.GenId();
 
     private sealed class Network : IAsyncDisposable
     {

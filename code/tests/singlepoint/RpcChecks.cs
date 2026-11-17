@@ -63,7 +63,7 @@ internal static class RpcChecks
             await link.ReplyAsync(response, request.Value, token);
         });
 
-        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var requestId = TestIds.Generator.GenId();
         var pending = caller.CallAsync<BytesValue>(new StringValue { Value = requestId }, requestId, stop);
         var requestFrame = await callerStream.Output.Reader.ReadAsync(stop);
         var request = Frame.Parser.ParseFrom(requestFrame.ToByteArray()).Request;
@@ -94,8 +94,8 @@ internal static class RpcChecks
     {
         var stream = new FrameStream();
         var link = CreateLink(stream);
-        var firstId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var secondId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var firstId = TestIds.Generator.GenId();
+        var secondId = TestIds.Generator.GenId();
         var first = link.CallAsync<StringValue>(new Empty(), firstId, stop);
         var second = link.CallAsync<Int32Value>(new Empty(), secondId, stop);
         await stream.Output.Reader.ReadAsync(stop);
@@ -103,7 +103,7 @@ internal static class RpcChecks
 
         await ThrowsAsync<InvalidDataException>(() => link.CallAsync<StringValue>(new Empty(), firstId, stop));
 
-        link.Receive(RpcFrames.Reply(new Empty(), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture)).Reply);
+        link.Receive(RpcFrames.Reply(new Empty(), TestIds.Generator.GenId()).Reply);
         if (first.IsCompleted || second.IsCompleted)
         {
             throw new Exception("An unmatched reply completed another request.");
@@ -139,8 +139,8 @@ internal static class RpcChecks
             return Task.CompletedTask;
         });
 
-        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var mismatched = RpcFrames.Request(new StringValue { Value = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture) }, requestId).Request;
+        var requestId = TestIds.Generator.GenId();
+        var mismatched = RpcFrames.Request(new StringValue { Value = TestIds.Generator.GenId() }, requestId).Request;
         await ThrowsAsync<InvalidDataException>(() => Dispatch(mismatched));
         await ThrowsAsync<InvalidDataException>(() => Dispatch(new RpcRequest { RequestId = requestId }));
         await ThrowsAsync<InvalidDataException>(() => Dispatch(new RpcRequest { Payload = Any.Pack(new Empty()) }));
@@ -177,7 +177,7 @@ internal static class RpcChecks
     {
         var stream = new FrameStream();
         var link = CreateLink(stream);
-        var requestId = TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var requestId = TestIds.Generator.GenId();
         using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var pending = link.CallAsync<Empty>(new Empty(), requestId, cancelled.Token);
         await stream.Output.Reader.ReadAsync(stop);
@@ -190,11 +190,11 @@ internal static class RpcChecks
         await stream.Output.Reader.ReadAsync(stop);
         link.Close();
         await ThrowsAsync<IOException>(() => next);
-        await ThrowsAsync<IOException>(() => link.CallAsync<Empty>(new Empty(), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), stop));
+        await ThrowsAsync<IOException>(() => link.CallAsync<Empty>(new Empty(), TestIds.Generator.GenId(), stop));
     }
 
     private static PeerLink CreateLink(FrameStream stream) =>
-        new(nameof(ProcessType.Login), nameof(ProcessType.Router), TestIds.Generator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture), stream);
+        new(nameof(ProcessType.Login), nameof(ProcessType.Router), TestIds.Generator.GenId(), stream);
 
     private static async Task ThrowsAsync<TException>(Func<Task> action) where TException : Exception
     {

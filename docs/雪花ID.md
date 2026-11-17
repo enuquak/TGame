@@ -1,16 +1,16 @@
 # 统一 ID 生成
 
-引擎接口为 `IIdGenerator.GenId()`，返回 `long`。同一进程的 `ServerNode`、业务 SinglePoint 和依赖注入中的 `IIdGenerator` 共用一个实例。
+引擎接口为 `IIdGenerator.GenId()`，返回使用 `CultureInfo.InvariantCulture` 格式化的十进制 `string`，调用方直接使用。同一进程的 `ServerNode`、业务 SinglePoint 和依赖注入中的 `IIdGenerator` 共用一个实例。
 
 ```csharp
 IIdGenerator idGenerator = node.IdGenerator;
-long id = idGenerator.GenId();
+string id = idGenerator.GenId();
 ```
 
-业务 SinglePoint 子类可以直接使用继承的 `IdGenerator` 属性。生成器在创建节点和实体身份之前初始化；调用方不自行构造生成器或分配编号。现有协议和日志的字符串字段保持不变：
+业务 SinglePoint 子类可以直接使用继承的 `IdGenerator` 属性。生成器在创建节点和实体身份之前初始化；调用方不自行构造生成器或分配编号。现有协议和日志的字符串字段直接使用生成结果：
 
 ```csharp
-string requestId = idGenerator.GenId().ToString(CultureInfo.InvariantCulture);
+string requestId = idGenerator.GenId();
 ```
 
 `IdText.IsValid()` 校验正整数的规范文本，拒绝负号、空白、前导零和超出 `long` 范围的值。

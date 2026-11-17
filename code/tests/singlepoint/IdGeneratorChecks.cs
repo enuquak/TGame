@@ -30,14 +30,15 @@ internal static class IdGeneratorChecks
 
         var clock = new ManualClock(Timestamp);
         await using var idGenerator = new SnowflakeIdGenerator(WorkerId, clock);
-        long first = idGenerator.GenId();
+        string first = idGenerator.GenId();
         clock.Timestamp--;
         Expect<InvalidOperationException>(() => idGenerator.GenId());
         clock.Timestamp++;
-        Check(idGenerator.GenId() == first + 1, "rollback must not reset the sequence");
+        long expectedNext = long.Parse(first, CultureInfo.InvariantCulture) + 1;
+        Check(idGenerator.GenId() == expectedNext.ToString(CultureInfo.InvariantCulture), "rollback must not reset the sequence");
 
         await using var concurrent = new SnowflakeIdGenerator(WorkerId, TimeProvider.System);
-        var generated = new ConcurrentDictionary<long, byte>();
+        var generated = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
         Parallel.For(0, 50000, _ => Check(generated.TryAdd(concurrent.GenId(), 0), "concurrent duplicate ID"));
         await concurrent.DisposeAsync();
         Expect<ObjectDisposedException>(() => concurrent.GenId());
@@ -56,14 +57,14 @@ internal static class IdGeneratorChecks
             Check(!IdText.IsValid(invalid), "noncanonical ID accepted: " + invalid);
         }
 
-        Check(IdText.IsValid(first.ToString(CultureInfo.InvariantCulture)), "generated ID rejected");
+        Check(IdText.IsValid(first), "generated ID rejected");
         Console.WriteLine("PASS Snowflake layout, sequence exhaustion, rollback, 50000 concurrent IDs, session loss, disposal and ID validation.");
     }
 
     internal static async Task RunZooKeeperAsync(string configPath, string endpoint)
     {
         var configured = IdGeneratorOptions.Load(configPath, endpoint);
-        var root = configured.WorkerRootPath + "-checks/" + TestIds.Generator.GenId().ToString(CultureInfo.InvariantCulture);
+        var root = configured.WorkerRootPath + "-checks/" + TestIds.Generator.GenId();
         var options = new IdGeneratorOptions
         {
             ZooKeeperEndpoint = configured.ZooKeeperEndpoint,
@@ -97,7 +98,7 @@ internal static class IdGeneratorChecks
             }
 
             Check(generators.Select(g => g.WorkerId).Distinct().Count() == generators.Count, "ZooKeeper assigned duplicate workers");
-            var ids = new ConcurrentDictionary<long, byte>();
+            var ids = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
             Parallel.For(0, 20000, i => Check(ids.TryAdd(generators[i % generators.Count].GenId(), 0), "cross-worker duplicate"));
 
             var first = generators.Single(g => g.WorkerId == 0);

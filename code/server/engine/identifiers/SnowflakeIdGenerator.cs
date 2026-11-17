@@ -84,7 +84,7 @@ public sealed class SnowflakeIdGenerator : IIdGenerator, IAsyncDisposable
         }
     }
 
-    public long GenId()
+    public string GenId()
     {
         while (true)
         {
@@ -100,7 +100,7 @@ public sealed class SnowflakeIdGenerator : IIdGenerator, IAsyncDisposable
                 long? id = sequence.TryGenId(timestamp);
                 if (id.HasValue)
                 {
-                    return id.Value;
+                    return id.Value.ToString(CultureInfo.InvariantCulture);
                 }
             }
 

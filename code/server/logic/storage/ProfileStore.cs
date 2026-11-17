@@ -1,4 +1,3 @@
-using System.Globalization;
 using Google.Protobuf;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -87,7 +86,7 @@ internal sealed class ProfileStore : IDisposable
             // Reserve a cache miss before reading Mongo. A concurrent writer removes this
             // token, so the older reader cannot repopulate a key after invalidation.
             bool reserved = false;
-            RedisValue token = CacheReservationMarker + idGenerator.GenId().ToString(CultureInfo.InvariantCulture);
+            RedisValue token = CacheReservationMarker + idGenerator.GenId();
 
             try
             {
