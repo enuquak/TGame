@@ -99,7 +99,7 @@ internal sealed class ProfileStore : IDisposable
 
                     reply.Summary = value;
                     reply.Result = Result.Found;
-                    TraceLog.Debug(ProfileLogEvents.CacheHit, nameof(ProcessType.Profile), id: request.RequestId, entity: id);
+                    GameLog.Debug(ProfileLogEvents.CacheHit, nameof(ProcessType.Profile), id: request.RequestId, entity: id);
                     return reply;
                 }
 
@@ -110,7 +110,7 @@ internal sealed class ProfileStore : IDisposable
             }
             catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
             {
-                TraceLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                GameLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
                     id: request.RequestId, entity: id, detail: ex.GetType().Name);
             }
 
@@ -136,12 +136,12 @@ internal sealed class ProfileStore : IDisposable
                 }
                 catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
                 {
-                    TraceLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                    GameLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
                         id: request.RequestId, entity: id, detail: ex.GetType().Name);
                 }
             }
 
-            TraceLog.Debug(doc is null ? ProfileLogEvents.Missing : ProfileLogEvents.MongoRead,
+            GameLog.Debug(doc is null ? ProfileLogEvents.Missing : ProfileLogEvents.MongoRead,
                 nameof(ProcessType.Profile), id: request.RequestId, entity: id);
             return reply;
         }
@@ -168,11 +168,11 @@ internal sealed class ProfileStore : IDisposable
         }
         catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
         {
-            TraceLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+            GameLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
                 id: request.RequestId, entity: id, detail: ex.GetType().Name);
         }
 
-        TraceLog.Info(reply.Result == Result.Stored ? ProfileLogEvents.Stored : ProfileLogEvents.Removed,
+        GameLog.Info(reply.Result == Result.Stored ? ProfileLogEvents.Stored : ProfileLogEvents.Removed,
             nameof(ProcessType.Profile), id: request.RequestId, entity: id);
         return reply;
     }

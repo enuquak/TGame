@@ -164,7 +164,7 @@ public partial class ServerNode
                 foreach (var entity in entities)
                 {
                     owners[entity] = peer;
-                    TraceLog.Debug(ServerLogEvents.EntityRoute, Role, peer, entity: entity, link: link.Id);
+                    GameLog.Debug(ServerLogEvents.EntityRoute, Role, peer, entity: entity, link: link.Id);
                 }
             }
         }

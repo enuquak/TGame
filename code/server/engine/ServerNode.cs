@@ -180,7 +180,7 @@ public partial class ServerNode : IDisposable
             lock (linkChanges)
             {
                 links[peer] = link;
-                TraceLog.Info(ServerLogEvents.LinkUp, Role, peer, link: id);
+                GameLog.Info(ServerLogEvents.LinkUp, Role, peer, link: id);
                 UpdateLinkReadiness();
             }
 
@@ -327,10 +327,10 @@ public partial class ServerNode : IDisposable
         linksReady = complete;
         if (complete)
         {
-            TraceLog.Info(ServerLogEvents.LinksReady, Role, detail: links.Count.ToString());
+            GameLog.Info(ServerLogEvents.LinksReady, Role, detail: links.Count.ToString());
             return;
         }
 
-        TraceLog.Error(ServerLogEvents.LinksLost, Role, detail: links.Count.ToString());
+        GameLog.Error(ServerLogEvents.LinksLost, Role, detail: links.Count.ToString());
     }
 }

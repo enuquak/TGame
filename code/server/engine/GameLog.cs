@@ -7,7 +7,7 @@ using Serilog.Events;
 
 namespace TGame.Server.Engine;
 
-public static class TraceLog
+public static class GameLog
 {
     private const long FileSizeLimit = 10 * 1024 * 1024;
     private static readonly LoggingLevelSwitch minimumLevel = new();

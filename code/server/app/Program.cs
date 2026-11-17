@@ -22,14 +22,14 @@ var runDir = Path.GetFullPath(args[1]);
 var group = ServerGroup.Load(Path.Combine(runDir, ServerGroup.FileName));
 var process = group.GetProcess(args[0]);
 var role = process.Role;
-using var serverLog = TraceLog.OpenServer(process);
+using var serverLog = GameLog.OpenServer(process);
 try
 {
     await RunServerAsync(process, group, runDir);
 }
 catch (Exception error)
 {
-    TraceLog.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString());
+    GameLog.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString());
     Console.Error.WriteLine(error);
     Environment.ExitCode = 1;
 }
@@ -40,7 +40,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     var role = process.Role;
     var processType = process.Type;
     var settings = ServerSettings.Current.Value;
-    TraceLog.SetMinimumLevel(settings.MinimumLogLevel);
+    GameLog.SetMinimumLevel(settings.MinimumLogLevel);
 
     var builder = WebApplication.CreateSlimBuilder();
     var messages = new RpcDispatcher();
@@ -77,7 +77,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
     await app.StartAsync();
     var address = app.Urls.Single();
-    TraceLog.Info(ServerLogEvents.Listen, role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
+    GameLog.Info(ServerLogEvents.Listen, role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
 
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
     var stop = lifetime.Token;

@@ -34,7 +34,7 @@ public sealed class ServiceRegistry(ServerGroup group, string endpoint, string r
             throw new InvalidOperationException($"Cannot start {process.Name}: ZooKeeper node '{path}' already exists.", error);
         }
 
-        TraceLog.Info(ServerLogEvents.ZkRegister, process.Role, detail: address);
+        GameLog.Info(ServerLogEvents.ZkRegister, process.Role, detail: address);
         var names = (await zk.getChildrenAsync(root).WaitAsync(stop)).Children;
         var registered = new List<string>();
         foreach (var instance in group.Processes)
@@ -45,7 +45,7 @@ public sealed class ServiceRegistry(ServerGroup group, string endpoint, string r
             }
         }
 
-        TraceLog.Debug(ServerLogEvents.ZkDiscover, process.Role, detail: string.Join(",", registered));
+        GameLog.Debug(ServerLogEvents.ZkDiscover, process.Role, detail: string.Join(",", registered));
     }
 
     public async Task<string> ResolveAsync(string peer, CancellationToken stop)

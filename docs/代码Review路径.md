@@ -142,7 +142,7 @@ RPC 目标是执行方法的 **Profile SinglePoint**，业务请求中的实体 
 ## 8. DBMgr、日志和控制台
 
 - [ ] [DBMgrServerSinglePoint.cs](../code/server/logic/entities/SinglePoint/DBMgrServerSinglePoint.cs)、[MongoStorageSettings.cs](../code/server/logic/storage/MongoStorageSettings.cs)、[MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs)、[dbmgr-storage.yaml](../code/server/config/dbmgr-storage.yaml)：独立存储配置、凭据、连接检查与失败就绪状态。
-- [ ] [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs)、[TraceLog.cs](../code/server/engine/TraceLog.cs)：从 `ServerSettings.MinimumLogLevel` 和 `server.local.yaml` 的 `minimumLogLevel` 追到宿主的 `SetMinimumLevel`，再看 `Debug` / `Info` / `Error` 与写出前过滤。配置缺省为 `Info`，当前本地配置为 `DEBUG`。
+- [ ] [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs)、[GameLog.cs](../code/server/engine/GameLog.cs)：从 `ServerSettings.MinimumLogLevel` 和 `server.local.yaml` 的 `minimumLogLevel` 追到宿主的 `SetMinimumLevel`，再看 `Debug` / `Info` / `Error` 与写出前过滤。配置缺省为 `Info`，当前本地配置为 `DEBUG`。
 - [ ] [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs)、[LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)、[ProfileLogEvents.cs](../code/shared/csharp/ProfileLogEvents.cs)：通用日志设施属于 Engine，Profile 业务事件属于 Shared；看事件、实例、连接、请求、实体及日志等级如何写入 JSON。
 - [ ] [控制台工程](../tools/server-console/TGame.ServerConsole.csproj)、[ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)：控制台分别引用 Engine 与业务 Shared；先看两套协议导出，再看起服、选关、补起、接管、配置快照、编译并重启及状态计算。
 - [ ] [Import-ServerTypes.ps1](../tools/scripts/powershell/Import-ServerTypes.ps1)、[Read-ServerGroup.ps1](../tools/scripts/powershell/Read-ServerGroup.ps1)：脚本从引擎的唯一声明加载进程与基础类型，同时按需加载业务环境变量，不复制常量。

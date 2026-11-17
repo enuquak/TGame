@@ -121,7 +121,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         if (request is null)
         {
             // A timed-out call has already relinquished its slot on this shared stream.
-            TraceLog.Error(ServerLogEvents.UnmatchedReply, role, peer, reply.RequestId, link: id);
+            GameLog.Error(ServerLogEvents.UnmatchedReply, role, peer, reply.RequestId, link: id);
             return;
         }
 

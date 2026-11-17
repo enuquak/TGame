@@ -107,7 +107,7 @@ public partial class ServerNode
         }
         catch (Exception error)
         {
-            TraceLog.Error(ServerLogEvents.EntityRpcFailed, Role, peer, request.RequestId, request.EntityId, detail: error.ToString());
+            GameLog.Error(ServerLogEvents.EntityRpcFailed, Role, peer, request.RequestId, request.EntityId, detail: error.ToString());
             return ErrorReply(request.RequestId, StatusCode.Internal, "Entity RPC handler failed.");
         }
     }

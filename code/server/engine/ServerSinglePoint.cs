@@ -16,7 +16,7 @@ public class ServerSinglePoint
         Func<CancellationToken, Task> registerEntities, CancellationToken stop)
     {
         ArgumentNullException.ThrowIfNull(registerEntities);
-        TraceLog.Info(ServerLogEvents.SinglePointInit, role, entity: EntityId, detail: GetType().Name);
+        GameLog.Info(ServerLogEvents.SinglePointInit, role, entity: EntityId, detail: GetType().Name);
 
         try
         {
@@ -29,7 +29,7 @@ public class ServerSinglePoint
             await registerEntities(stop);
             stop.ThrowIfCancellationRequested();
             Volatile.Write(ref initialized, true);
-            TraceLog.Info(ServerLogEvents.SinglePointReady, role, entity: EntityId, detail: GetType().Name);
+            GameLog.Info(ServerLogEvents.SinglePointReady, role, entity: EntityId, detail: GetType().Name);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
@@ -39,7 +39,7 @@ public class ServerSinglePoint
         catch (Exception error)
         {
             UnregisterSinglePoint();
-            TraceLog.Error(ServerLogEvents.SinglePointFailed, role, entity: EntityId, detail: error.Message);
+            GameLog.Error(ServerLogEvents.SinglePointFailed, role, entity: EntityId, detail: error.Message);
             throw;
         }
     }

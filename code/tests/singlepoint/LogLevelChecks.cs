@@ -20,7 +20,7 @@ internal static class LogLevelChecks
             {
                 using var output = new StringWriter();
                 Console.SetOut(output);
-                TraceLog.SetMinimumLevel(minimum);
+                GameLog.SetMinimumLevel(minimum);
                 WriteSamples(process);
                 CheckRows(output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), minimum, process.Role);
             }
@@ -30,8 +30,8 @@ internal static class LogLevelChecks
             {
                 var logRoot = Path.Combine(root, minimum.ToString());
                 Environment.SetEnvironmentVariable(EngineEnvironment.LogRoot, logRoot);
-                TraceLog.SetMinimumLevel(minimum);
-                using (TraceLog.OpenServer(process))
+                GameLog.SetMinimumLevel(minimum);
+                using (GameLog.OpenServer(process))
                 {
                     WriteSamples(process);
                 }
@@ -44,7 +44,7 @@ internal static class LogLevelChecks
         finally
         {
             Console.SetOut(originalOutput);
-            TraceLog.SetMinimumLevel(ServerLogLevel.Info);
+            GameLog.SetMinimumLevel(ServerLogLevel.Info);
             Environment.SetEnvironmentVariable(EngineEnvironment.LogRoot, originalRoot);
             Directory.Delete(root, recursive: true);
         }
@@ -96,9 +96,9 @@ internal static class LogLevelChecks
 
     private static void WriteSamples(ServerProcess process)
     {
-        TraceLog.Debug(ServerLogEvents.EntityRoute, process.Role, detail: "路由细节");
-        TraceLog.Info(ServerLogEvents.Listen, process.Role, detail: "开始监听");
-        TraceLog.Error(ServerLogEvents.ProcessFailed, process.Role, detail: "进程失败");
+        GameLog.Debug(ServerLogEvents.EntityRoute, process.Role, detail: "路由细节");
+        GameLog.Info(ServerLogEvents.Listen, process.Role, detail: "开始监听");
+        GameLog.Error(ServerLogEvents.ProcessFailed, process.Role, detail: "进程失败");
     }
 
     private static void CheckRows(string[] lines, ServerLogLevel minimum, string instance)
