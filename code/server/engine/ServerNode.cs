@@ -19,7 +19,6 @@ public partial class ServerNode : IDisposable
     private readonly object linkChanges = new();
     private readonly HashSet<string> sessions = [];
     private readonly TaskCompletionSource firstLinks = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly ConcurrentDictionary<string, byte> localEntities = new();
     private readonly ConcurrentDictionary<string, string> owners = new();
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
 
@@ -32,7 +31,6 @@ public partial class ServerNode : IDisposable
         this.group = group;
         this.messages = messages;
         Role = group.GetProcess(name).Role;
-        localEntities[State.EntityId] = 0;
         if (Role == nameof(ProcessType.Router))
         {
             singlePointIds[ProcessType.Router] = [State.EntityId];
@@ -57,7 +55,7 @@ public partial class ServerNode : IDisposable
     {
         if (process == Name)
         {
-            return localEntities.ContainsKey(entityId);
+            return State.ContainsEntity(entityId);
         }
 
         return owners.TryGetValue(entityId, out var owner) && owner == process;
@@ -156,7 +154,7 @@ public partial class ServerNode : IDisposable
         var headers = new Metadata { { TransportProtocol.PeerHeader, Name }, { TransportProtocol.LinkHeader, id } };
         if (PeerRole(peer) == nameof(ProcessType.Router))
         {
-            headers.Add(TransportProtocol.EntityHeader, string.Join(',', localEntities.Keys));
+            headers.Add(TransportProtocol.EntityHeader, string.Join(',', State.LocalEntityIds));
         }
 
         using var call = new ServerLink.ServerLinkClient(channel).Connect(headers, cancellationToken: stop);
@@ -208,7 +206,7 @@ public partial class ServerNode : IDisposable
 
             lock (linkChanges)
             {
-                if (Role == nameof(ProcessType.Router) && entities.Any(entity => owners.ContainsKey(entity) || localEntities.ContainsKey(entity)))
+                if (Role == nameof(ProcessType.Router) && entities.Any(entity => owners.ContainsKey(entity) || State.ContainsEntity(entity)))
                 {
                     throw new InvalidDataException($"Duplicate entity from {peer}.");
                 }

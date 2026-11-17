@@ -17,7 +17,7 @@
 
 - [ ] [IIdGenerator.cs](../code/server/engine/identifiers/IIdGenerator.cs)、[IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)、[id-generator.json](../code/server/config/id-generator.json)：先看接口和参数来源。
 - [ ] [SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)、[SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)、[IdText.cs](../code/server/engine/identifiers/IdText.cs)：再看序列生成、时钟回退、ZooKeeper 编号占用、会话失效及 ID 文本校验。
-- [ ] [SinglePointState.cs](../code/server/engine/SinglePointState.cs)、[ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：理解引擎先分配身份，业务 SinglePoint 复用身份。
+- [ ] [SinglePointState.cs](../code/server/engine/SinglePointState.cs)、[ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：理解本地实体名单由 `SinglePointState` 管理；引擎先准备身份与名单，业务 SinglePoint 复用同一份状态。
 - [ ] [SinglePointForAttribute.cs](../code/server/engine/SinglePointForAttribute.cs)、[SinglePointRegistry.cs](../code/server/engine/SinglePointRegistry.cs)：理解标注注册、默认实现、重复映射和初始化失败。
 
 读完应能回答：进程名称、连接 ID、RPC 请求 ID、实体 ID 分别表示什么？没有业务 SinglePoint 子类的进程为什么也能启动？

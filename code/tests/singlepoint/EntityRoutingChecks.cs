@@ -313,9 +313,11 @@ internal static class EntityRoutingChecks
                     string[] entities = [];
                     if (receiver.Role == nameof(ProcessType.Router))
                     {
-                        entities = caller == Node(ProcessType.Profile)
-                            ? [StaleEntityId, caller.State.EntityId]
-                            : [caller.State.EntityId];
+                        entities = caller.State.LocalEntityIds.ToArray();
+                        if (caller == Node(ProcessType.Profile))
+                        {
+                            entities = [StaleEntityId, .. entities];
+                        }
                     }
 
                     await connection.Caller.WriteAsync(new Frame
