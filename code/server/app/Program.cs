@@ -35,18 +35,100 @@ catch (Exception error)
 
 static async Task RunServerAsync(ServerProcess process, ServerGroup group, string runDir)
 {
-    var singlePoints = new SinglePointRegistry(typeof(ProfileServerSinglePoint).Assembly.GetTypes());
-    var role = process.Role;
-    var processType = process.Type;
-    var settings = ServerSettings.Current.Value;
-    GameLog.SetMinimumLevel(settings.MinimumLogLevel);
-
-    var builder = WebApplication.CreateSlimBuilder();
+    var settings = LoadConfiguration();
     await using var zooKeeperLifetime = await InitializeZooKeeperAsync(settings);
     await using var idLifetime = await InitializeIdGeneratorAsync();
+
     using var node = new ServerNode(process.Name, group);
+
+    using var certificate = process.Type == ProcessType.Gate ? FindDevelopmentCertificate() : null;
+    await using var app = CreateApplication(node, certificate);
+    if (process.Type != ProcessType.Gate)
+    {
+        app.MapGrpcService<LinkService>();
+    }
+
+    await app.StartAsync();
+    var address = app.Urls.Single();
+    GameLog.Info(ServerLogEvents.Listen, process.Role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
+
+    using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
+    var stop = lifetime.Token;
+
+    try
+    {
+        await RunWorkersAsync();
+    }
+    finally
+    {
+        lifetime.Cancel();
+        await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
+    }
+
+    async Task RunWorkersAsync()
+    {
+        using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        registrationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
+        var registration = ZooKeeperProxy.RegisterProcessAsync(group, process, address, registrationTimeout.Token);
+
+        var workers = new List<Task>();
+        foreach (var peer in Topology.DialTargets(group, process.Name))
+        {
+            workers.Add(SuperviseAsync(ConnectAsync(peer), lifetime));
+        }
+
+        workers.Add(SuperviseAsync(InitializeSinglePointAsync(), lifetime));
+        workers.Add(SuperviseAsync(WatchStopAsync(runDir, process.Name, lifetime), lifetime));
+        workers.Add(SuperviseAsync(WatchZooKeeperSessionAsync(stop), lifetime));
+        await Task.WhenAll(workers);
+
+        async Task InitializeSinglePointAsync()
+        {
+            await InitializeEngineAsync();
+
+            var singlePoints = new SinglePointRegistry(typeof(ProfileServerSinglePoint).Assembly.GetTypes());
+            await node.InitializeSinglePointAsync(singlePoints, stop);
+        }
+
+        async Task InitializeEngineAsync()
+        {
+            await registration;
+            await node.FirstLinks.WaitAsync(stop);
+        }
+
+        async Task ConnectAsync(string peer)
+        {
+            await registration;
+            await node.MaintainLinkAsync(peer, stop);
+        }
+    }
+}
+
+static ServerSettings LoadConfiguration()
+{
+    var settings = ServerSettings.Current.Value;
+    GameLog.SetMinimumLevel(settings.MinimumLogLevel);
+    return settings;
+}
+
+static Task<ZooKeeperProxy> InitializeZooKeeperAsync(ServerSettings settings)
+{
+    var configPath = Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName);
+    var options = ZooKeeperOptions.Load(configPath, settings.ZooKeeper, settings.DiscoveryRoot);
+    return ZooKeeperProxy.InitializeAsync(options);
+}
+
+static Task<IdGenerator> InitializeIdGeneratorAsync()
+{
+    var idConfigPath = Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName);
+    var idOptions = IdGeneratorOptions.Load(idConfigPath);
+    return IdGenerator.InitializeAsync(idOptions);
+}
+
+static WebApplication CreateApplication(ServerNode node, X509Certificate2? certificate)
+{
+    var builder = WebApplication.CreateSlimBuilder();
     builder.Logging.ClearProviders();
-    using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
     {
         if (certificate is not null)
@@ -66,107 +148,41 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     builder.Services.AddGrpc();
     builder.Services.AddSingleton<ServerNode>(node);
 
-    await using var app = builder.Build();
-    if (processType != ProcessType.Gate)
+    return builder.Build();
+}
+
+static async Task WatchZooKeeperSessionAsync(CancellationToken stop)
+{
+    await ZooKeeperProxy.SessionLost.WaitAsync(stop);
+    throw new InvalidOperationException("The process lost its ZooKeeper session.");
+}
+
+static async Task WatchStopAsync(string runDir, string processName, CancellationTokenSource lifetime)
+{
+    var stopGroup = Path.Combine(runDir, ServerRunFiles.StopGroup);
+    var stopRole = Path.Combine(runDir, ServerRunFiles.StopRolePrefix + processName);
+    while (!File.Exists(stopGroup) && !File.Exists(stopRole))
     {
-        app.MapGrpcService<LinkService>();
+        await Task.Delay(StopPollIntervalMilliseconds, lifetime.Token);
     }
 
-    await app.StartAsync();
-    var address = app.Urls.Single();
-    GameLog.Info(ServerLogEvents.Listen, role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
+    lifetime.Cancel();
+}
 
-    using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
-    var stop = lifetime.Token;
-
+static async Task SuperviseAsync(Task worker, CancellationTokenSource lifetime)
+{
     try
     {
-        using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        registrationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
-        var registration = ZooKeeperProxy.RegisterProcessAsync(group, process, address, registrationTimeout.Token);
-
-        var workers = new List<Task>();
-        foreach (var peer in Topology.DialTargets(group, process.Name))
-        {
-            workers.Add(SuperviseAsync(ConnectAsync(peer)));
-        }
-
-        workers.Add(SuperviseAsync(InitializeAsync()));
-        workers.Add(SuperviseAsync(WatchStopAsync()));
-        workers.Add(SuperviseAsync(WatchZooKeeperSessionAsync()));
-        await Task.WhenAll(workers);
-
-        async Task InitializeAsync()
-        {
-            await InitializeEngineAsync();
-            await node.InitializeSinglePointAsync(singlePoints, stop);
-        }
-
-        async Task InitializeEngineAsync()
-        {
-            await registration;
-            await node.FirstLinks.WaitAsync(stop);
-        }
-
-        async Task ConnectAsync(string peer)
-        {
-            await registration;
-            await node.MaintainLinkAsync(peer, stop);
-        }
+        await worker;
     }
-    finally
+    catch (Exception) when (lifetime.IsCancellationRequested)
+    {
+    }
+    catch
     {
         lifetime.Cancel();
-        await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
+        throw;
     }
-
-    async Task WatchZooKeeperSessionAsync()
-    {
-        await ZooKeeperProxy.SessionLost.WaitAsync(stop);
-        throw new InvalidOperationException("The process lost its ZooKeeper session.");
-    }
-
-    async Task WatchStopAsync()
-    {
-        var stopGroup = Path.Combine(runDir, ServerRunFiles.StopGroup);
-        var stopRole = Path.Combine(runDir, ServerRunFiles.StopRolePrefix + process.Name);
-        while (!File.Exists(stopGroup) && !File.Exists(stopRole))
-        {
-            await Task.Delay(StopPollIntervalMilliseconds, stop);
-        }
-
-        lifetime.Cancel();
-    }
-
-    async Task SuperviseAsync(Task worker)
-    {
-        try
-        {
-            await worker;
-        }
-        catch (Exception) when (stop.IsCancellationRequested)
-        {
-        }
-        catch
-        {
-            lifetime.Cancel();
-            throw;
-        }
-    }
-}
-
-static Task<ZooKeeperProxy> InitializeZooKeeperAsync(ServerSettings settings)
-{
-    var configPath = Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName);
-    var options = ZooKeeperOptions.Load(configPath, settings.ZooKeeper, settings.DiscoveryRoot);
-    return ZooKeeperProxy.InitializeAsync(options);
-}
-
-static Task<IdGenerator> InitializeIdGeneratorAsync()
-{
-    var idConfigPath = Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName);
-    var idOptions = IdGeneratorOptions.Load(idConfigPath);
-    return IdGenerator.InitializeAsync(idOptions);
 }
 
 static X509Certificate2 FindDevelopmentCertificate()
