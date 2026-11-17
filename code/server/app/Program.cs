@@ -29,7 +29,7 @@ try
 }
 catch (Exception error)
 {
-    TraceLog.Event(ServerLogEvents.ProcessFailed, role, detail: error.ToString());
+    TraceLog.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString());
     Console.Error.WriteLine(error);
     Environment.ExitCode = 1;
 }
@@ -40,6 +40,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     var role = process.Role;
     var processType = process.Type;
     var settings = ServerSettings.Current.Value;
+    TraceLog.SetMinimumLevel(settings.MinimumLogLevel);
 
     var builder = WebApplication.CreateSlimBuilder();
     var messages = new RpcDispatcher();
@@ -76,7 +77,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
     await app.StartAsync();
     var address = app.Urls.Single();
-    TraceLog.Event(ServerLogEvents.Listen, role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
+    TraceLog.Info(ServerLogEvents.Listen, role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
 
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
     var stop = lifetime.Token;

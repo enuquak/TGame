@@ -162,7 +162,7 @@ public partial class ServerNode
                 foreach (var entity in entities)
                 {
                     owners[entity] = peer;
-                    TraceLog.Event(ServerLogEvents.EntityRoute, Role, peer, entity: entity, link: link.Id);
+                    TraceLog.Debug(ServerLogEvents.EntityRoute, Role, peer, entity: entity, link: link.Id);
                 }
             }
         }

@@ -13,6 +13,20 @@ const int HandshakeObservationMilliseconds = 200;
 const string InvalidEntityId = "body-1";
 const int TestWorkerId = 0;
 
+if (args is ["--logging"])
+{
+    try
+    {
+        LogLevelChecks.Run();
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error);
+        return 1;
+    }
+}
+
 if (args is ["--profile-storage", var profileIdConfig])
 {
     using var profileDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));

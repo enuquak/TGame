@@ -20,7 +20,7 @@ internal sealed class ProfileServerSinglePoint : ServerSinglePoint, IDisposable
         }
         catch (Exception error) when (error is MongoException or TimeoutException)
         {
-            TraceLog.Event(ProfileLogEvents.DbError, nameof(ProcessType.Profile), id: request.RequestId,
+            TraceLog.Error(ProfileLogEvents.DbError, nameof(ProcessType.Profile), id: request.RequestId,
                 entity: ProfileStore.Subject(request), detail: error.GetType().Name);
             return ProfileMessages.Failure(request, ProfileReply.Types.Result.Unavailable);
         }

@@ -12,7 +12,7 @@ public class ServerSinglePoint
     {
         ArgumentNullException.ThrowIfNull(registerEntities);
         State = state;
-        TraceLog.Event(ServerLogEvents.SinglePointInit, role, entity: State.EntityId, detail: GetType().Name);
+        TraceLog.Info(ServerLogEvents.SinglePointInit, role, entity: State.EntityId, detail: GetType().Name);
 
         try
         {
@@ -25,7 +25,7 @@ public class ServerSinglePoint
             await registerEntities(stop);
             stop.ThrowIfCancellationRequested();
             Volatile.Write(ref initialized, true);
-            TraceLog.Event(ServerLogEvents.SinglePointReady, role, entity: State.EntityId, detail: GetType().Name);
+            TraceLog.Info(ServerLogEvents.SinglePointReady, role, entity: State.EntityId, detail: GetType().Name);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
@@ -35,7 +35,7 @@ public class ServerSinglePoint
         catch (Exception error)
         {
             State.UnregisterSinglePoint();
-            TraceLog.Event(ServerLogEvents.SinglePointFailed, role, entity: State.EntityId, detail: error.Message);
+            TraceLog.Error(ServerLogEvents.SinglePointFailed, role, entity: State.EntityId, detail: error.Message);
             throw;
         }
     }

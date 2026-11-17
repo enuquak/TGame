@@ -5,6 +5,8 @@ namespace TGame.Server;
 
 internal sealed class ServerSettings
 {
+    public ServerLogLevel MinimumLogLevel { get; init; } = ServerLogLevel.Info;
+
     public required string ProfileMongo
     {
         get; init;
@@ -67,6 +69,11 @@ internal sealed class ServerSettings
         if (settings is null)
         {
             throw new InvalidDataException($"Empty server configuration: {path}.");
+        }
+
+        if (!Enum.IsDefined(settings.MinimumLogLevel))
+        {
+            throw new InvalidDataException("Minimum log level must be DEBUG, INFO or ERROR.");
         }
 
         string[] values = [settings.ProfileMongo, settings.ProfileRedis, settings.ZooKeeper,

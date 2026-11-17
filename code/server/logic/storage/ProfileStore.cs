@@ -99,7 +99,7 @@ internal sealed class ProfileStore : IDisposable
 
                     reply.Summary = value;
                     reply.Result = Result.Found;
-                    Log(ProfileLogEvents.CacheHit);
+                    TraceLog.Debug(ProfileLogEvents.CacheHit, nameof(ProcessType.Profile), id: request.RequestId, entity: id);
                     return reply;
                 }
 
@@ -110,7 +110,8 @@ internal sealed class ProfileStore : IDisposable
             }
             catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
             {
-                Log(ProfileLogEvents.CacheUnavailable, ex.GetType().Name);
+                TraceLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                    id: request.RequestId, entity: id, detail: ex.GetType().Name);
             }
 
             var doc = await summaries.Find(filter).FirstOrDefaultAsync(stop);
@@ -135,11 +136,13 @@ internal sealed class ProfileStore : IDisposable
                 }
                 catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
                 {
-                    Log(ProfileLogEvents.CacheUnavailable, ex.GetType().Name);
+                    TraceLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                        id: request.RequestId, entity: id, detail: ex.GetType().Name);
                 }
             }
 
-            Log(doc is null ? ProfileLogEvents.Missing : ProfileLogEvents.MongoRead);
+            TraceLog.Debug(doc is null ? ProfileLogEvents.Missing : ProfileLogEvents.MongoRead,
+                nameof(ProcessType.Profile), id: request.RequestId, entity: id);
             return reply;
         }
 
@@ -165,14 +168,13 @@ internal sealed class ProfileStore : IDisposable
         }
         catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
         {
-            Log(ProfileLogEvents.CacheUnavailable, ex.GetType().Name);
+            TraceLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                id: request.RequestId, entity: id, detail: ex.GetType().Name);
         }
 
-        Log(reply.Result == Result.Stored ? ProfileLogEvents.Stored : ProfileLogEvents.Removed);
+        TraceLog.Info(reply.Result == Result.Stored ? ProfileLogEvents.Stored : ProfileLogEvents.Removed,
+            nameof(ProcessType.Profile), id: request.RequestId, entity: id);
         return reply;
-
-        void Log(string ev, string? detail = null) =>
-            TraceLog.Event(ev, nameof(ProcessType.Profile), id: request.RequestId, entity: id, detail: detail);
     }
 
     public void Dispose()

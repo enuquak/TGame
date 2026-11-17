@@ -182,7 +182,7 @@ public partial class ServerNode : IDisposable
             lock (linkChanges)
             {
                 links[peer] = link;
-                TraceLog.Event(ServerLogEvents.LinkUp, Role, peer, link: id);
+                TraceLog.Info(ServerLogEvents.LinkUp, Role, peer, link: id);
                 UpdateLinkReadiness();
             }
 
@@ -326,6 +326,12 @@ public partial class ServerNode : IDisposable
         }
 
         linksReady = complete;
-        TraceLog.Event(complete ? ServerLogEvents.LinksReady : ServerLogEvents.LinksLost, Role, detail: links.Count.ToString());
+        if (complete)
+        {
+            TraceLog.Info(ServerLogEvents.LinksReady, Role, detail: links.Count.ToString());
+            return;
+        }
+
+        TraceLog.Error(ServerLogEvents.LinksLost, Role, detail: links.Count.ToString());
     }
 }
