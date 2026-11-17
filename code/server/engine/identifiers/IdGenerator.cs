@@ -3,7 +3,6 @@ namespace TGame.Server.Engine;
 public sealed class IdGenerator : IAsyncDisposable
 {
     private static IdGenerator? instance;
-    private static readonly SemaphoreSlim lifecycle = new(1);
     private readonly SnowflakeIdGenerator generator;
 
     private IdGenerator(SnowflakeIdGenerator generator)
@@ -18,7 +17,7 @@ public sealed class IdGenerator : IAsyncDisposable
 
     public static Task LeaseLost => Current.LeaseLost;
 
-    // 返回生命周期对象供宿主 await using，调用方无需持有或传递生成器。
+    // 宿主按顺序初始化和释放，返回对象只用于 await using 管理生命周期。
     public static Task<IdGenerator> InitializeAsync(IdGeneratorOptions options, CancellationToken stop = default) =>
         InitializeAsync(token => SnowflakeIdGenerator.CreateAsync(options, token), stop);
 
@@ -26,51 +25,35 @@ public sealed class IdGenerator : IAsyncDisposable
     internal static async Task<IdGenerator> InitializeAsync(
         Func<CancellationToken, Task<SnowflakeIdGenerator>> create, CancellationToken stop = default)
     {
-        await lifecycle.WaitAsync(stop).ConfigureAwait(false);
+        stop.ThrowIfCancellationRequested();
+        if (instance is not null)
+        {
+            throw new InvalidOperationException("The process ID generator is already initialized.");
+        }
+
+        var generator = await create(stop).ConfigureAwait(false);
         try
         {
-            if (instance is not null)
-            {
-                throw new InvalidOperationException("The process ID generator is already initialized.");
-            }
-
-            var generator = await create(stop).ConfigureAwait(false);
-            try
-            {
-                stop.ThrowIfCancellationRequested();
-                var initialized = new IdGenerator(generator);
-                Volatile.Write(ref instance, initialized);
-                return initialized;
-            }
-            catch
-            {
-                await generator.DisposeAsync().ConfigureAwait(false);
-                throw;
-            }
+            stop.ThrowIfCancellationRequested();
+            var initialized = new IdGenerator(generator);
+            Volatile.Write(ref instance, initialized);
+            return initialized;
         }
-        finally
+        catch
         {
-            lifecycle.Release();
+            await generator.DisposeAsync().ConfigureAwait(false);
+            throw;
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        await lifecycle.WaitAsync().ConfigureAwait(false);
-        try
+        if (!ReferenceEquals(instance, this))
         {
-            // 旧生命周期的重复释放不能影响之后重新初始化的实例。
-            if (!ReferenceEquals(instance, this))
-            {
-                return;
-            }
+            return;
+        }
 
-            Volatile.Write(ref instance, null);
-            await generator.DisposeAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            lifecycle.Release();
-        }
+        Volatile.Write(ref instance, null);
+        await generator.DisposeAsync().ConfigureAwait(false);
     }
 }

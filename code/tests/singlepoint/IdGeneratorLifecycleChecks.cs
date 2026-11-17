@@ -30,28 +30,9 @@ internal static class IdGeneratorLifecycleChecks
         Expect<ObjectDisposedException>(() => abandoned.GenId());
         Expect<InvalidOperationException>(() => IdGenerator.GenId());
 
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        int created = 0;
-        var initializing = IdGenerator.InitializeAsync(async token =>
-        {
-            Interlocked.Increment(ref created);
-            started.SetResult();
-            await release.Task.WaitAsync(token);
-            return new SnowflakeIdGenerator(WorkerId, TimeProvider.System);
-        }, stop);
-        await started.Task.WaitAsync(stop);
-        Expect<InvalidOperationException>(() => IdGenerator.GenId());
-
-        var duplicate = IdGenerator.InitializeAsync(_ =>
-        {
-            Interlocked.Increment(ref created);
-            return Task.FromResult(new SnowflakeIdGenerator(WorkerId, TimeProvider.System));
-        }, stop);
-        release.SetResult();
-        await using var lifetime = await initializing;
-        await ExpectAsync<InvalidOperationException>(() => duplicate);
-        Check(created == 1, "Concurrent initialization created more than one generator.");
+        var generator = new SnowflakeIdGenerator(WorkerId, TimeProvider.System);
+        await using var lifetime = await IdGenerator.InitializeAsync(_ => Task.FromResult(generator), stop);
+        await ExpectAsync<InvalidOperationException>(() => IdGenerator.InitializeAsync(_ => Task.FromResult(generator), stop));
 
         var generated = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
         Parallel.For(0, ConcurrentIds, _ => Check(generated.TryAdd(IdGenerator.GenId(), 0), "Static entry produced duplicate IDs."));
@@ -75,7 +56,7 @@ internal static class IdGeneratorLifecycleChecks
         Expect<ObjectDisposedException>(() => next.GenId());
         Expect<InvalidOperationException>(() => IdGenerator.GenId());
 
-        Console.WriteLine("PASS process ID singleton: initialization failure, cancellation cleanup, concurrent initialization, 5000 IDs, lease supervision and disposal.");
+        Console.WriteLine("PASS process ID singleton: initialization failure, cancellation cleanup, sequential initialization, 5000 IDs, lease supervision and disposal.");
     }
 
     private static void Check(bool condition, string message)

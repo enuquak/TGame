@@ -17,7 +17,7 @@ using var node = new ServerNode(process.Name, group, messages);
 
 `await using` 确保节点和服务退出后释放生成器及 ZooKeeper 会话。宿主通过 `IdGenerator.LeaseLost` 继续监督编号租约；业务代码只需调用 `IdGenerator.GenId()`。现有协议和日志的字符串字段直接使用返回值。
 
-未初始化、初始化尚未完成或已释放时调用会明确报错；已有活动实例时重复初始化也会报错。初始化与释放按顺序执行，初始化失败或取消不会发布半初始化实例，取消时已创建的生成器会被释放。正常服务器仍在租约丢失后退出，由重启重新申请编号。
+未初始化、初始化尚未完成或已释放时调用会明确报错；已有活动实例时重复初始化也会报错。生命周期由宿主按顺序管理，不支持并发初始化或并发释放，也不为此设置锁。初始化失败或取消不会发布半初始化实例，取消时已创建的生成器会被释放。正常服务器仍在租约丢失后退出，由重启重新申请编号。
 
 底层 `SnowflakeIdGenerator` 保留为引擎内部实现，便于独立检查算法、时钟回拨和编号分配；外部不再使用 `IIdGenerator` 或访问节点上的生成器属性。
 
@@ -40,7 +40,7 @@ using var node = new ServerNode(process.Name, group, messages);
 
 已接入请求 ID、实体 ID、连接 ID 和 Redis 缓存占用标记。`ServerSinglePoint` 创建时通过属性初始化表达式调用 `IdGenerator.GenId()`，直接持有 `EntityId` 和本地实体集合；`ServerNode` 不提前生成该身份。生成身份不会提前登记实体，实体注册仍由 SinglePoint 自身初始化发起。
 
-单例生命周期检查位于 [IdGeneratorLifecycleChecks.cs](../code/tests/singlepoint/IdGeneratorLifecycleChecks.cs)，覆盖未初始化、初始化失败、取消清理、并发初始化、并发发号、租约监督和释放。ID 算法及 ZooKeeper 分配检查位于 [IdGeneratorChecks.cs](../code/tests/singlepoint/IdGeneratorChecks.cs)。
+单例生命周期检查位于 [IdGeneratorLifecycleChecks.cs](../code/tests/singlepoint/IdGeneratorLifecycleChecks.cs)，覆盖未初始化、初始化失败、取消清理、顺序初始化、并发发号、租约监督和释放。ID 算法及 ZooKeeper 分配检查位于 [IdGeneratorChecks.cs](../code/tests/singlepoint/IdGeneratorChecks.cs)。
 
 当前分支已移除运行 ID；控制台和验收目录沿用时间目录名，不重新引入运行批次 ID。请求、实体和连接 ID 已统一为十进制文本，升级时需要统一更新服务器并重启整组进程。本次不改写存量数据库文档。测试用临时目录由系统临时目录 API 创建，不属于业务 ID。
 

@@ -37,7 +37,7 @@
 
 ### 2.2 再追 IdGenerator：身份从哪里来
 
-- [ ] [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)：按 `GenId` → `Current` → `InitializeAsync` → `LeaseLost` → `DisposeAsync` 阅读。先理解使用前必须初始化、每个进程只保留一个实例、重复初始化报错和释放后不能继续发号。
+- [ ] [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)：按 `GenId` → `Current` → `InitializeAsync` → `LeaseLost` → `DisposeAsync` 阅读。先理解宿主按顺序初始化和释放、使用前必须初始化、每个进程只保留一个实例、重复初始化报错和释放后不能继续发号；生命周期没有并发锁。
 - [ ] [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)、[id-generator.json](../code/server/config/id-generator.json)：看配置加载与校验。ZooKeeper 地址来自宿主的 `ServerSettings`，编号根路径和超时来自 ID 配置。
 - [ ] [IdText.cs](../code/server/engine/identifiers/IdText.cs)：这是 ID 文本格式校验，接受无前导零的正 `long` 十进制文本，不负责生成 ID 或判断实体是否存在。
 
