@@ -15,8 +15,7 @@ internal static class LogChecks
     public static void Run(string checkout)
     {
         var name = ServerProcess.FormatName(ProcessName, 1);
-        var idGenerator = new TGame.Server.Engine.SnowflakeIdGenerator(0, TimeProvider.System);
-        var id = idGenerator.GenId().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var id = Guid.NewGuid().ToString("N");
         var run = Directory.CreateDirectory(Path.Combine(checkout, "build", "log-check", id)).FullName;
         var logs = Directory.CreateDirectory(Path.Combine(run, name + "Server")).FullName;
         var exe = Path.Combine(run, name + "Server.exe");
