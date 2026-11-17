@@ -97,7 +97,7 @@ internal static class IdGeneratorChecks
             }
 
             Check(generators.Select(g => g.WorkerId).Distinct().Count() == generators.Count, "ZooKeeper assigned duplicate workers");
-            Check(generators.All(g => ReferenceEquals(g.LeaseLost, proxy.SessionLost)), "Workers must share the proxy session");
+            Check(generators.All(g => ReferenceEquals(g.LeaseLost, ZooKeeperProxy.SessionLost)), "Workers must share the proxy session");
             var ids = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
             Parallel.For(0, 20000, i => Check(ids.TryAdd(generators[i % generators.Count].GenId(), 0), "cross-worker duplicate"));
 
@@ -107,7 +107,7 @@ internal static class IdGeneratorChecks
             generators.Add(replacement);
             Check(replacement.WorkerId == first.WorkerId, "released worker was not reused");
             Check(ids.TryAdd(replacement.GenId(), 0), "reused worker duplicated an earlier ID");
-            Check(!proxy.SessionLost.IsCompleted, "Releasing a worker must preserve the shared session");
+            Check(!ZooKeeperProxy.SessionLost.IsCompleted, "Releasing a worker must preserve the shared session");
             await proxy.DisposeAsync();
             Check(replacement.LeaseLost.IsCompletedSuccessfully, "Proxy disposal must invalidate the worker lease");
             Expect<InvalidOperationException>(() => replacement.GenId());

@@ -16,7 +16,7 @@ await using var idLifetime = await IdGenerator.InitializeAsync(idOptions);
 using var node = new ServerNode(process.Name, group);
 ```
 
-`await using` 确保节点和服务退出后先释放生成器的 worker 租约，最后关闭 ZooKeeper 代理。宿主通过 `ZooKeeperProxy.Instance.SessionLost` 监督共享会话；`IdGenerator.LeaseLost` 指向同一失效通知，业务代码只需调用 `IdGenerator.GenId()`。现有协议和日志的字符串字段直接使用返回值。
+`await using` 确保节点和服务退出后先释放生成器的 worker 租约，最后关闭 ZooKeeper 代理。宿主通过 `ZooKeeperProxy.SessionLost` 监督共享会话；`IdGenerator.LeaseLost` 指向同一失效通知，业务代码只需调用 `IdGenerator.GenId()`。现有协议和日志的字符串字段直接使用返回值。
 
 未初始化、初始化尚未完成或已释放时调用会明确报错；已有活动实例时重复初始化也会报错。生命周期由宿主按顺序管理，不支持并发初始化或并发释放，也不为此设置锁。生命周期对象释放后不再使用；下一次初始化须等上一次完整释放。初始化失败或取消不会发布半初始化实例，取消时已创建的生成器会被释放。正常服务器仍在租约丢失后退出，由重启重新申请编号。
 

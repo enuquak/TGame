@@ -21,12 +21,12 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         zk = new ZooKeeper(options.Endpoint, options.SessionTimeoutMilliseconds, session);
     }
 
-    public static ZooKeeperProxy Instance => Volatile.Read(ref instance)
+    private static ZooKeeperProxy Instance => Volatile.Read(ref instance)
         ?? throw new InvalidOperationException("Initialize the process ZooKeeper proxy before use.");
 
-    public Task SessionLost => session.Lost.Task;
+    public static Task SessionLost => Instance.session.Lost.Task;
 
-    // 宿主顺序初始化和释放，其他模块通过 Instance 共用同一会话。
+    // 宿主顺序初始化和释放，其他模块通过静态入口共用同一会话。
     public static async Task<ZooKeeperProxy> InitializeAsync(ZooKeeperOptions options, CancellationToken stop = default)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -55,7 +55,10 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         }
     }
 
-    public async Task RegisterProcessAsync(ServerGroup group, ServerProcess process, string address, CancellationToken stop)
+    public static Task RegisterProcessAsync(ServerGroup group, ServerProcess process, string address, CancellationToken stop)
+        => Instance.RegisterProcessCoreAsync(group, process, address, stop);
+
+    private async Task RegisterProcessCoreAsync(ServerGroup group, ServerProcess process, string address, CancellationToken stop)
     {
         session.CheckActive();
         stop.ThrowIfCancellationRequested();
@@ -91,7 +94,10 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         GameLog.Debug(ServerLogEvents.ZkDiscover, process.Role, detail: string.Join(",", registered));
     }
 
-    public async Task<string> ResolveProcessAsync(ServerProcess peer, CancellationToken stop)
+    public static Task<string> ResolveProcessAsync(ServerProcess peer, CancellationToken stop)
+        => Instance.ResolveProcessCoreAsync(peer, stop);
+
+    private async Task<string> ResolveProcessCoreAsync(ServerProcess peer, CancellationToken stop)
     {
         var path = $"{options.DiscoveryRoot}/{NodePrefix}{peer.Name}";
         while (true)
@@ -127,7 +133,10 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         }
     }
 
-    internal async Task<WorkerLease> AcquireWorkerAsync(string root, CancellationToken stop)
+    internal static Task<WorkerLease> AcquireWorkerAsync(string root, CancellationToken stop)
+        => Instance.AcquireWorkerCoreAsync(root, stop);
+
+    private async Task<WorkerLease> AcquireWorkerCoreAsync(string root, CancellationToken stop)
     {
         ZooKeeperOptions.ValidatePath(root);
         session.CheckActive();

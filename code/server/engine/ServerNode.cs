@@ -109,7 +109,7 @@ public partial class ServerNode : IDisposable
         var peerProcess = group.GetProcess(peer);
         while (true)
         {
-            var address = await ZooKeeperProxy.Instance.ResolveProcessAsync(peerProcess, stop);
+            var address = await ZooKeeperProxy.ResolveProcessAsync(peerProcess, stop);
 
             try
             {

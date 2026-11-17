@@ -83,7 +83,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     {
         using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
         registrationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
-        var registration = ZooKeeperProxy.Instance.RegisterProcessAsync(group, process, address, registrationTimeout.Token);
+        var registration = ZooKeeperProxy.RegisterProcessAsync(group, process, address, registrationTimeout.Token);
 
         var workers = new List<Task>();
         foreach (var peer in Topology.DialTargets(group, process.Name))
@@ -122,7 +122,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
     async Task WatchZooKeeperSessionAsync()
     {
-        await ZooKeeperProxy.Instance.SessionLost.WaitAsync(stop);
+        await ZooKeeperProxy.SessionLost.WaitAsync(stop);
         throw new InvalidOperationException("The process lost its ZooKeeper session.");
     }
 

@@ -25,7 +25,7 @@ internal static class ZooKeeperProxyChecks
 
     internal static async Task CheckSessionAsync()
     {
-        Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.Instance);
+        Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.SessionLost);
         var options = new ZooKeeperOptions
         {
             Endpoint = "127.0.0.1:2181",
@@ -39,7 +39,7 @@ internal static class ZooKeeperProxyChecks
         await ExpectAsync<OperationCanceledException>(() => ZooKeeperProxy.InitializeAsync(options, cancelled.Token));
         await ExpectAsync<ArgumentException>(() => ZooKeeperProxy.InitializeAsync(options with { DiscoveryRoot = "/bad//root" }));
         await ExpectAsync<ArgumentOutOfRangeException>(() => ZooKeeperProxy.InitializeAsync(options with { SessionTimeoutMilliseconds = 0 }));
-        Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.Instance);
+        Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.SessionLost);
 
         var initial = new ZooKeeperSession();
         initial.StateChanged(Watcher.Event.KeeperState.Disconnected);
@@ -79,7 +79,8 @@ internal static class ZooKeeperProxyChecks
         counts[ProcessType.Router] = 1;
         var group = new ServerGroup(counts);
         await using var proxy = await ZooKeeperProxy.InitializeAsync(options, stop);
-        Check(ReferenceEquals(proxy, ZooKeeperProxy.Instance), "Initialization must publish the shared proxy.");
+        var sessionLost = ZooKeeperProxy.SessionLost;
+        Check(!sessionLost.IsCompleted, "Initialization must publish an active shared session.");
         await ExpectAsync<InvalidOperationException>(() => ZooKeeperProxy.InitializeAsync(options, stop));
         var owner = new ZooKeeper(options.Endpoint, options.SessionTimeoutMilliseconds, new WatcherStub());
         try
@@ -91,7 +92,7 @@ internal static class ZooKeeperProxyChecks
             bool rejected = false;
             try
             {
-                await proxy.RegisterProcessAsync(group, Process, ReplacementAddress, stop);
+                await ZooKeeperProxy.RegisterProcessAsync(group, Process, ReplacementAddress, stop);
             }
             catch (InvalidOperationException error) when (error.InnerException is KeeperException.NodeExistsException)
             {
@@ -114,19 +115,19 @@ internal static class ZooKeeperProxyChecks
             await owner.closeAsync();
         }
 
-        var discovery = proxy.ResolveProcessAsync(Process, stop);
-        await proxy.RegisterProcessAsync(group, Process, ReplacementAddress, stop);
+        var discovery = ZooKeeperProxy.ResolveProcessAsync(Process, stop);
+        await ZooKeeperProxy.RegisterProcessAsync(group, Process, ReplacementAddress, stop);
         if (await discovery != ReplacementAddress)
         {
             throw new Exception("Registration and discovery must use the same fixed service path.");
         }
 
         await proxy.DisposeAsync();
-        Check(proxy.SessionLost.IsCompletedSuccessfully, "Proxy disposal must invalidate all users of the session.");
-        Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.Instance);
+        Check(sessionLost.IsCompletedSuccessfully, "Proxy disposal must invalidate all users of the session.");
+        Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.SessionLost);
         await using var next = await ZooKeeperProxy.InitializeAsync(options, stop);
-        await next.RegisterProcessAsync(group, Process, Address, stop);
-        Check(await next.ResolveProcessAsync(Process, stop) == Address, "The next lifecycle must use its new session.");
+        await ZooKeeperProxy.RegisterProcessAsync(group, Process, Address, stop);
+        Check(await ZooKeeperProxy.ResolveProcessAsync(Process, stop) == Address, "The next lifecycle must use its new session.");
 
         Console.WriteLine("PASS singleton lifecycle, fixed service paths, duplicate rejection, node ownership and discovery across registration.");
     }

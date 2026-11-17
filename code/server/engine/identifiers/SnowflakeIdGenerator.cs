@@ -34,7 +34,7 @@ internal sealed class SnowflakeIdGenerator : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
-        var worker = await ZooKeeperProxy.Instance.AcquireWorkerAsync(options.WorkerRootPath, stop).ConfigureAwait(false);
+        var worker = await ZooKeeperProxy.AcquireWorkerAsync(options.WorkerRootPath, stop).ConfigureAwait(false);
         return new SnowflakeIdGenerator(worker);
     }
 
