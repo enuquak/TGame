@@ -33,10 +33,5 @@ internal static class TestNodes
         return Create(ServerProcess.FormatName(type.ToString(), 1), new ServerGroup(counts));
     }
 
-    public static ServerNode Create(string name, ServerGroup group)
-    {
-        var messages = new RpcDispatcher();
-        var node = new ServerNode(name, group, messages);
-        return node;
-    }
+    public static ServerNode Create(string name, ServerGroup group) => new(name, group);
 }

@@ -12,7 +12,6 @@ public partial class ServerNode : IDisposable
     private const int RequestQueueCapacity = 64;
 
     private readonly ServerGroup group;
-    private readonly RpcDispatcher messages;
     private readonly HashSet<string> expectedPeers;
     private volatile bool linksReady;
     private volatile ServerSinglePoint? singlePoint;
@@ -22,11 +21,10 @@ public partial class ServerNode : IDisposable
     private readonly ConcurrentDictionary<string, string> owners = new();
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
 
-    public ServerNode(string name, ServerGroup group, RpcDispatcher messages)
+    public ServerNode(string name, ServerGroup group)
     {
         Name = name;
         this.group = group;
-        this.messages = messages;
         Role = group.GetProcess(name).Role;
         expectedPeers = Topology.Peers(group, name);
         UpdateLinkReadiness();
@@ -227,12 +225,6 @@ public partial class ServerNode : IDisposable
                         if (frame.Request.Payload?.Is(RegisterEntitiesRequest.Descriptor) == true)
                         {
                             await HandleRegistrationAsync(frame.Request, link, transport.Token);
-                            continue;
-                        }
-
-                        if (frame.Request.TargetCase == RpcRequest.TargetOneofCase.None && frame.Request.SourceProcess.Length == 0)
-                        {
-                            await messages.DispatchAsync(frame.Request, peer, link, transport.Token);
                             continue;
                         }
 

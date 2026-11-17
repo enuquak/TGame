@@ -7,7 +7,7 @@ internal static class SinglePointChecks
     internal static void CheckBeforeIdInitialization()
     {
         using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1),
-            TestNodes.DefaultGroup, new RpcDispatcher());
+            TestNodes.DefaultGroup);
         if (node.SinglePoint is not null || node.Ready)
         {
             throw new Exception("Engine construction must not create a SinglePoint or become ready.");

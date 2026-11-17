@@ -90,9 +90,8 @@ Router 保存实体到进程的归属及按类型选择 SinglePoint 的索引；
 - [ ] [transport.proto](../code/server/engine/protocols/transport.proto)：区分进程握手、请求、响应，以及独立的实体注册请求与确认；理解 `Any`、目标、来源、截止时间和错误结果。通用协议编译到 Engine，不导入业务协议。
 - [ ] 对照 `Frame` 与 `RegisterEntitiesRequest` / `RegisterEntitiesReply`：`Frame.hello` 只是进程实例名字符串，旧 `Frame.single_point_id` 已移除并保留原字段名与编号；SinglePoint ID 和实体名单现在放在独立注册请求中，通过已有 RPC 信封发送和关联回包。
 - [ ] [EntityRpcContext.cs](../code/server/engine/EntityRpcContext.cs)：区分原始调用进程 `SourceProcess` 与本跳来源 `PeerProcess`。
-- [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：按 `CallAsync`、`WriteAsync`、`Receive`、`ReadReply`、`Close` 跟踪请求关联、超时、取消和断线。
-- [ ] [RpcDispatcher.cs](../code/server/engine/RpcDispatcher.cs)：理解无目标连接消息的注册、解包与未知消息错误；实体请求由 ServerNode 直接投递给 SinglePoint。
-- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：看读循环如何直接处理响应、请求如何排队，以及实体请求如何支持嵌套调用。
+- [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：按 `ValidateEnvelope`、`CallAsync`、`WriteAsync`、`Receive`、`ReadReply`、`Close` 跟踪信封校验、请求关联、超时、取消和断线。
+- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：看读循环如何直接处理响应、请求如何排队，以及实体请求如何支持嵌套调用；实体注册请求单独处理，其余请求按目标路由并直接投递给 SinglePoint。
 
 读完应能画出：发起调用 → 保存等待项 → 写出请求 → 接收响应 → 找到等待项 → 完成原来的 `Task`。
 
@@ -170,8 +169,8 @@ Router 只负责通用路由与来源校验。Profile 的业务入口只接受�
 | 静态 ID 入口的初始化、取消、并发发号、租约监督和释放 | [IdGeneratorLifecycleChecks.cs](../code/tests/singlepoint/IdGeneratorLifecycleChecks.cs)，随上述内存检查模式运行 |
 | 握手不登记实体、业务初始化后发起注册、等待确认、注册拒绝与重连确认 | [EntityRegistrationChecks.cs](../code/tests/singlepoint/EntityRegistrationChecks.cs)，随 `--routing` 小范围检查运行 |
 | 服务注册冲突与重新注册 | [ServiceRegistryChecks.cs](../code/tests/singlepoint/ServiceRegistryChecks.cs) |
-| 消息关联、嵌套调用、排队与取消 | [RpcChecks.cs](../code/tests/singlepoint/RpcChecks.cs)、[MessageDispatchChecks.cs](../code/tests/singlepoint/MessageDispatchChecks.cs) |
-| Gate 接入、实例选择、身份冲突、断线路由清理和重连恢复 | [EntityRoutingChecks.cs](../code/tests/singlepoint/EntityRoutingChecks.cs)、[GroupChecks.cs](../code/tests/singlepoint/GroupChecks.cs)，随 `--routing` 小范围检查运行 |
+| 消息关联、信封校验、排队与取消 | [RpcChecks.cs](../code/tests/singlepoint/RpcChecks.cs)、[MessageDispatchChecks.cs](../code/tests/singlepoint/MessageDispatchChecks.cs) |
+| Gate 接入、实例选择、嵌套调用、无目标请求拒绝、身份冲突、断线路由清理和重连恢复 | [EntityRoutingChecks.cs](../code/tests/singlepoint/EntityRoutingChecks.cs)、[GroupChecks.cs](../code/tests/singlepoint/GroupChecks.cs)，随 `--routing` 小范围检查运行 |
 | 本地实体 RPC 的真实截止时间、超时错误和超时后继续调用 | `EntityRoutingChecks.CheckLocalDeadlineAsync`，随 `--routing` 运行，使用现有 12 秒超时 |
 | Profile 写入归属、参数校验与回包 | [ProfileRpcChecks.cs](../code/tests/singlepoint/ProfileRpcChecks.cs) |
 | 真实 MongoDB/Redis 与 Profile 服务处理 | [ProfileStorageChecks.cs](../code/tests/singlepoint/ProfileStorageChecks.cs) |

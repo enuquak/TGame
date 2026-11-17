@@ -106,7 +106,7 @@ public partial class ServerNode
     private async Task<RpcReply> RouteRequestAsync(RpcRequest request, string? peer, CancellationToken stop)
     {
         stop.ThrowIfCancellationRequested();
-        RpcDispatcher.ValidateEnvelope(request.RequestId, request.Payload);
+        PeerLink.ValidateEnvelope(request.RequestId, request.Payload);
         ValidateSource(request.SourceProcess, peer);
 
         if (request.TargetCase == RpcRequest.TargetOneofCase.SinglePointType)

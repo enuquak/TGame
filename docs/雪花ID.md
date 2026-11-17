@@ -12,7 +12,7 @@ string id = IdGenerator.GenId();
 
 ```csharp
 await using var idLifetime = await IdGenerator.InitializeAsync(options);
-using var node = new ServerNode(process.Name, group, messages);
+using var node = new ServerNode(process.Name, group);
 ```
 
 `await using` 确保节点和服务退出后释放生成器及 ZooKeeper 会话。宿主通过 `IdGenerator.LeaseLost` 继续监督编号租约；业务代码只需调用 `IdGenerator.GenId()`。现有协议和日志的字符串字段直接使用返回值。

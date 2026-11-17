@@ -42,9 +42,8 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     GameLog.SetMinimumLevel(settings.MinimumLogLevel);
 
     var builder = WebApplication.CreateSlimBuilder();
-    var messages = new RpcDispatcher();
     await using var idLifetime = await InitializeSingletonsAsync();
-    using var node = new ServerNode(process.Name, group, messages);
+    using var node = new ServerNode(process.Name, group);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>

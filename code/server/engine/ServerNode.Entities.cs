@@ -100,7 +100,7 @@ public partial class ServerNode
     {
         try
         {
-            RpcDispatcher.ValidateEnvelope(request.RequestId, request.Payload);
+            PeerLink.ValidateEnvelope(request.RequestId, request.Payload);
             if (request.TargetCase != RpcRequest.TargetOneofCase.None || request.SourceProcess.Length != 0)
             {
                 throw new InvalidDataException("Entity registration must come directly from the connected process.");

@@ -28,7 +28,7 @@ internal static class EntityRegistrationChecks
         var group = new ServerGroup(counts);
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
         var router = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
-        using var node = new ServerNode(profile, group, new RpcDispatcher());
+        using var node = new ServerNode(profile, group);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var stream = new FrameStream { AcknowledgeRegistration = false };
         stream.Input.Writer.TryWrite(TestNodes.Hello(router));

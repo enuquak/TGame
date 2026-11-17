@@ -151,11 +151,10 @@ internal static class EntityRoutingChecks
         counts[ProcessType.Gate] = 1;
         counts[ProcessType.Login] = 1;
         var group = new ServerGroup(counts);
-        var dispatcher = new RpcDispatcher();
         var gate = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);
         var login = ServerProcess.FormatName(nameof(ProcessType.Login), 1);
         var expiredHandler = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var node = new ServerNode(login, group, dispatcher);
+        using var node = new ServerNode(login, group);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(gate));
@@ -182,6 +181,18 @@ internal static class EntityRoutingChecks
                     expiredHandler.TrySetResult();
                 }
             };
+
+            var untargeted = RpcFrames.Request(new Empty(), NewId());
+            untargeted.Request.DeadlineUnixMs = DateTimeOffset.UtcNow.Add(PeerLink.RequestTimeout).ToUnixTimeMilliseconds();
+            stream.Input.Writer.TryWrite(untargeted);
+            var receiving = stream.Output.Reader.ReadAsync(stop).AsTask();
+            var finished = await Task.WhenAny(receiving, running);
+            await finished;
+            var untargetedReply = (await receiving).Reply;
+            Check(untargetedReply.RequestId == untargeted.Request.RequestId &&
+                untargetedReply.Error?.StatusCode == (int)StatusCode.InvalidArgument,
+                "A request without a target or source did not return a routing error.");
+
             var forged = new RpcRequest
             {
                 RequestId = NewId(), SourceProcess = login,
@@ -234,7 +245,7 @@ internal static class EntityRoutingChecks
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
-        using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group, new RpcDispatcher());
+        using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(profile));
         var running = router.RunLinkAsync(profile, NewId(), stream, stream, stop);
@@ -322,8 +333,7 @@ internal static class EntityRoutingChecks
 
             foreach (var process in group.Processes)
             {
-                var dispatcher = new RpcDispatcher();
-                var node = new ServerNode(process.Name, group, dispatcher);
+                var node = new ServerNode(process.Name, group);
                 nodes.Add(process.Name, node);
                 handlers.Add(process.Name, async (context, payload, token) =>
                 {
