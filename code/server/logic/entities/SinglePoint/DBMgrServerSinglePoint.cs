@@ -11,7 +11,6 @@ internal sealed class DBMgrServerSinglePoint : ServerSinglePoint, IDisposable
     private const string ConfigFileName = "dbmgr-storage.yaml";
 
     private MongoClient? mongo;
-    private IMongoDatabase? database;
 
     protected override Task InitializeRoleAsync(CancellationToken stop)
     {
@@ -24,18 +23,7 @@ internal sealed class DBMgrServerSinglePoint : ServerSinglePoint, IDisposable
         }
 
         mongo = MongoStorage.CreateClient(settings, password);
-        database = mongo.GetDatabase(settings.DatabaseName);
-
-        return CheckDatabaseConnectionAsync(stop);
-    }
-
-    public Task CheckDatabaseConnectionAsync(CancellationToken stop)
-    {
-        if (database is null)
-        {
-            throw new InvalidOperationException("DBMgr database connection has not been initialized.");
-        }
-
+        var database = mongo.GetDatabase(settings.DatabaseName);
         return MongoStorage.CheckConnectionAsync(database, stop);
     }
 

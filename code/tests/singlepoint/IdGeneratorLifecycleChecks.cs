@@ -31,28 +31,31 @@ internal static class IdGeneratorLifecycleChecks
         Expect<InvalidOperationException>(() => IdGenerator.GenId());
 
         var generator = new SnowflakeIdGenerator(WorkerId, TimeProvider.System);
-        await using var lifetime = await IdGenerator.InitializeAsync(_ => Task.FromResult(generator), stop);
-        await ExpectAsync<InvalidOperationException>(() => IdGenerator.InitializeAsync(_ => Task.FromResult(generator), stop));
+        await using (var lifetime = await IdGenerator.InitializeAsync(_ => Task.FromResult(generator), stop))
+        {
+            await ExpectAsync<InvalidOperationException>(() => IdGenerator.InitializeAsync(_ => Task.FromResult(generator), stop));
 
-        var generated = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
-        Parallel.For(0, ConcurrentIds, _ => Check(generated.TryAdd(IdGenerator.GenId(), 0), "Static entry produced duplicate IDs."));
-        var point = new ServerSinglePoint();
-        Check(IdText.IsValid(point.EntityId) && generated.TryAdd(point.EntityId, 0),
-            "SinglePoint did not use the process generator without constructor injection.");
+            var generated = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+            Parallel.For(0, ConcurrentIds, _ => Check(generated.TryAdd(IdGenerator.GenId(), 0), "Static entry produced duplicate IDs."));
+            var point = new ServerSinglePoint();
+            Check(IdText.IsValid(point.EntityId) && generated.TryAdd(point.EntityId, 0),
+                "SinglePoint did not use the process generator without constructor injection.");
+        }
 
-        await lifetime.DisposeAsync();
+        Expect<ObjectDisposedException>(() => generator.GenId());
         Expect<InvalidOperationException>(() => IdGenerator.GenId());
 
         var session = new IdSession();
         session.StateChanged(Watcher.Event.KeeperState.SyncConnected);
         var next = new SnowflakeIdGenerator(WorkerId, TimeProvider.System, session: session);
-        await using var nextLifetime = await IdGenerator.InitializeAsync(_ => Task.FromResult(next), stop);
-        await lifetime.DisposeAsync();
-        Check(IdText.IsValid(IdGenerator.GenId()), "Disposing an old lifetime cleared a newer singleton.");
-        Check(ReferenceEquals(IdGenerator.LeaseLost, next.LeaseLost), "Singleton hid the active generator's lease supervision.");
-        session.StateChanged(Watcher.Event.KeeperState.Disconnected);
-        await IdGenerator.LeaseLost.WaitAsync(stop);
-        await nextLifetime.DisposeAsync();
+        await using (var nextLifetime = await IdGenerator.InitializeAsync(_ => Task.FromResult(next), stop))
+        {
+            Check(IdText.IsValid(IdGenerator.GenId()), "The next lifecycle did not initialize its generator.");
+            Check(ReferenceEquals(IdGenerator.LeaseLost, next.LeaseLost), "Singleton hid the active generator's lease supervision.");
+            session.StateChanged(Watcher.Event.KeeperState.Disconnected);
+            await IdGenerator.LeaseLost.WaitAsync(stop);
+        }
+
         Expect<ObjectDisposedException>(() => next.GenId());
         Expect<InvalidOperationException>(() => IdGenerator.GenId());
 

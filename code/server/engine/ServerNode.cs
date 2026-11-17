@@ -104,15 +104,7 @@ public partial class ServerNode : IDisposable
         return Topology.Dials[group.GetProcess(peer).Role].Contains(Role);
     }
 
-    private string PeerRole(string peer)
-    {
-        if (peer == EnginePeerNames.Client)
-        {
-            return peer;
-        }
-
-        return group.GetProcess(peer).Role;
-    }
+    private string PeerRole(string peer) => group.GetProcess(peer).Role;
 
     public async Task MaintainLinkAsync(string peer, ServiceRegistry registry, bool reconnect, CancellationToken stop)
     {

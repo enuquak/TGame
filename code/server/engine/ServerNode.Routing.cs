@@ -53,17 +53,8 @@ public partial class ServerNode
         where TReply : IMessage<TReply>, new()
     {
         stop.ThrowIfCancellationRequested();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        deadline.CancelAfter(PeerLink.RequestTimeout);
-        try
-        {
-            var reply = await RouteReplyAsync(request, null, deadline.Token).WaitAsync(deadline.Token);
-            return PeerLink.ReadReply<TReply>(reply);
-        }
-        catch (OperationCanceledException) when (!stop.IsCancellationRequested && deadline.IsCancellationRequested)
-        {
-            throw new TimeoutException("Entity RPC timed out.");
-        }
+        var reply = await RouteReplyAsync(request, null, stop);
+        return PeerLink.ReadReply<TReply>(reply);
     }
 
     private async Task<RpcReply> RouteReplyAsync(RpcRequest request, string? peer, CancellationToken stop)
@@ -271,11 +262,6 @@ public partial class ServerNode
     // 与连接及实体归属的更新共用 linkChanges 锁。
     private void RegisterPeerSinglePoint(string peer, string entityId)
     {
-        if (entityId.Length == 0)
-        {
-            return;
-        }
-
         peerSinglePoints.Add(peer, entityId);
         if (Role == nameof(ProcessType.Router))
         {

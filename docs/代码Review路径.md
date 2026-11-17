@@ -100,8 +100,8 @@ Router 保存实体到进程的归属及按类型选择 SinglePoint 的索引；
 
 ## 6. 实体与 SinglePoint 路由
 
-- [ ] [ServerNode.Routing.cs](../code/server/engine/ServerNode.Routing.cs)：依次阅读 `CallEntityAsync`、`CallSinglePointAsync`、`CreateRequest`、`RouteReplyAsync`、`RouteRequestAsync`。
-- [ ] 再看同文件的 `ValidateSource`、`SelectSinglePoint`、`SelectNextLink`、`RegisterPeerSinglePoint`、`RemovePeerSinglePoint`，最后看错误转换；索引登记由独立注册请求触发，移除由断线清理触发。
+- [ ] [ServerNode.Routing.cs](../code/server/engine/ServerNode.Routing.cs)：依次阅读 `CallEntityAsync`、`CallSinglePointAsync`、`CreateRequest`、`CallRoutedAsync`、`RouteReplyAsync`、`RouteRequestAsync`。实体 RPC 的截止时间统一由 `RouteReplyAsync` 管理，本地调用不再额外创建一套超时取消源；超时统一为 `RpcException(DeadlineExceeded)`，主动取消仍抛出取消异常。
+- [ ] 再看同文件的 `ValidateSource`、`SelectSinglePoint`、`SelectNextLink`、`RegisterPeerSinglePoint`、`RemovePeerSinglePoint`，最后看错误转换；索引登记由独立注册请求触发，ID 在注册入口统一校验，内部登记方法不再静默忽略空 ID；移除由断线清理触发。
 
 重点区分：
 
@@ -161,6 +161,8 @@ RPC 目标是执行方法的 **Profile SinglePoint**，业务请求中的实体 
 - 状态归属调整（`4e5b707`）记录了隔离编译及 `--engine`、`--routing` 通过，详见 [SinglePoint 自持身份与实体集合执行记录](superpowers/plans/2026-11-17-singlepoint-owned-state.md)。这些历史记录各自对应当时版本。
 - 本次改为传入所属 `ServerNode` 并直接注册后，检查工程编译通过（0 警告、0 错误），`--node`、`--routing` 通过，覆盖初始化取消、业务失败、注册确认、拒绝与重连。未运行数据库检查、外部服务或完整联调。
 
+- 清理冗余注册分支、Client 特例、DBMgr 包装、旧 ID 生命周期保护及重复 RPC 超时后，检查工程编译通过（0 警告、0 错误），`--engine`、`--routing` 通过；其中包含一次现有 12 秒截止时间的本地 RPC 检查。未运行数据库检查、外部服务或完整联调。
+
 | 想确认的行为 | 对应检查 |
 | --- | --- |
 | Engine 不引用业务 Shared、通用协议和基础类型归属正确 | [RpcChecks.CheckTransportBoundary](../code/tests/singlepoint/RpcChecks.cs)，随 `--engine` 小范围检查运行 |
@@ -171,6 +173,7 @@ RPC 目标是执行方法的 **Profile SinglePoint**，业务请求中的实体 
 | 服务注册冲突与重新注册 | [ServiceRegistryChecks.cs](../code/tests/singlepoint/ServiceRegistryChecks.cs) |
 | 消息关联、嵌套调用、排队与取消 | [RpcChecks.cs](../code/tests/singlepoint/RpcChecks.cs)、[MessageDispatchChecks.cs](../code/tests/singlepoint/MessageDispatchChecks.cs) |
 | Gate 接入、实例选择、身份冲突、断线路由清理和重连恢复 | [EntityRoutingChecks.cs](../code/tests/singlepoint/EntityRoutingChecks.cs)、[GroupChecks.cs](../code/tests/singlepoint/GroupChecks.cs)，随 `--routing` 小范围检查运行 |
+| 本地实体 RPC 的真实截止时间、超时错误和超时后继续调用 | `EntityRoutingChecks.CheckLocalDeadlineAsync`，随 `--routing` 运行，使用现有 12 秒超时 |
 | Profile 写入归属、参数校验与回包 | [ProfileRpcChecks.cs](../code/tests/singlepoint/ProfileRpcChecks.cs) |
 | 真实 MongoDB/Redis 与 Profile 服务处理 | [ProfileStorageChecks.cs](../code/tests/singlepoint/ProfileStorageChecks.cs) |
 | 日志等级配置、过滤、JSON 等级和文件输出 | [LogLevelChecks.cs](../code/tests/singlepoint/LogLevelChecks.cs)，`--logging` 模式 |

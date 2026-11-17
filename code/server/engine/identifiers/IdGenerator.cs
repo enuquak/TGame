@@ -48,11 +48,6 @@ public sealed class IdGenerator : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (!ReferenceEquals(instance, this))
-        {
-            return;
-        }
-
         Volatile.Write(ref instance, null);
         await generator.DisposeAsync().ConfigureAwait(false);
     }

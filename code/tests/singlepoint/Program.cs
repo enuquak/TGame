@@ -65,11 +65,12 @@ if (args is ["--profile"])
 
 if (args is ["--routing"])
 {
-    using var routingDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    using var routingDeadline = new CancellationTokenSource(PeerLink.RequestTimeout + TimeSpan.FromSeconds(TestTimeoutSeconds));
     try
     {
         await EntityRegistrationChecks.RunAsync(routingDeadline.Token);
         await EntityRoutingChecks.RunAsync(routingDeadline.Token);
+        await EntityRoutingChecks.CheckLocalDeadlineAsync(routingDeadline.Token);
         await GroupChecks.RunAsync(routingDeadline.Token);
         return 0;
     }

@@ -99,6 +99,27 @@ internal static class EntityRoutingChecks
         }
     }
 
+    public static async Task CheckLocalDeadlineAsync(CancellationToken stop)
+    {
+        await using var network = await Network.CreateAsync(ProcessType.Login, stop);
+        var node = network.Node(ProcessType.Login);
+        try
+        {
+            var pending = node.CallEntityAsync<StringValue>(node.SinglePoint!.EntityId, new StringValue { Value = "hold" }, stop);
+            await network.HoldStarted.Task.WaitAsync(stop);
+            await ExpectStatus(StatusCode.DeadlineExceeded, () => pending);
+        }
+        finally
+        {
+            network.HoldRelease.TrySetResult();
+        }
+
+        var response = await node.CallEntityAsync<StringValue>(node.SinglePoint!.EntityId,
+            new StringValue { Value = "after-deadline" }, stop);
+        Check(response.Value.EndsWith("|after-deadline", StringComparison.Ordinal), "Local deadline broke subsequent calls.");
+        Console.WriteLine("PASS local entity RPC deadline: DeadlineExceeded and recovery after timeout.");
+    }
+
     private static async Task CheckReadinessAsync(CancellationToken stop)
     {
         await using var network = await Network.CreateAsync(ProcessType.Login, stop, initializeProfile: false);
