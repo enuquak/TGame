@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.Options;
 using TGame;
 using TGame.Server;
 using TGame.Server.Engine;
@@ -41,8 +42,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
     using var node = new ServerNode(process.Name, group);
 
-    using var certificate = process.Type == ProcessType.Gate ? FindDevelopmentCertificate() : null;
-    await using var app = await InitializeApplicationAsync(process, node, certificate);
+    await using var app = await InitializeApplicationAsync(process, node);
     var address = app.Urls.Single();
 
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
@@ -118,32 +118,37 @@ static Task<IdGenerator> InitializeIdGeneratorAsync()
     return IdGenerator.InitializeAsync(idOptions);
 }
 
-static async Task<WebApplication> InitializeApplicationAsync(ServerProcess process, ServerNode node, X509Certificate2? certificate)
+static async Task<WebApplication> InitializeApplicationAsync(ServerProcess process, ServerNode node)
 {
     var builder = WebApplication.CreateSlimBuilder();
     builder.Logging.ClearProviders();
-    builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen =>
+    if (process.Type == ProcessType.Gate)
     {
-        if (certificate is not null)
-        {
-            listen.Protocols = HttpProtocols.Http1;
-        }
-        else
-        {
-            listen.Protocols = HttpProtocols.Http2;
-        }
+        builder.Services.AddSingleton<X509Certificate2>(_ => FindDevelopmentCertificate());
+    }
 
-        if (certificate is not null)
-        {
-            listen.UseHttps(certificate);
-        }
-    }));
     builder.Services.AddGrpc();
     builder.Services.AddSingleton<ServerNode>(node);
 
     var app = builder.Build();
     try
     {
+        // 构建应用后再创建证书，初始化失败也由 app 统一释放。
+        var certificate = process.Type == ProcessType.Gate ? app.Services.GetRequiredService<X509Certificate2>() : null;
+        var serverOptions = app.Services.GetRequiredService<IOptions<KestrelServerOptions>>().Value;
+        serverOptions.Listen(IPAddress.Loopback, 0, listen =>
+        {
+            if (certificate is not null)
+            {
+                listen.Protocols = HttpProtocols.Http1;
+                listen.UseHttps(certificate);
+            }
+            else
+            {
+                listen.Protocols = HttpProtocols.Http2;
+            }
+        });
+
         if (process.Type != ProcessType.Gate)
         {
             app.MapGrpcService<LinkService>();
