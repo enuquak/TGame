@@ -217,11 +217,11 @@ async Task CheckDuplicateRegistrationAsync()
     using var original = Process.GetProcessById(router.Pid!.Value);
     var directory = Directory.CreateDirectory(Path.Combine(checkout, "duplicate-registration")).FullName;
     File.Copy(Path.Combine(checkout, ServerGroup.ConfigurationPath), Path.Combine(directory, ServerGroup.FileName), true);
-    foreach (bool consoleMode in new[] { false, true })
+    foreach (bool hasSessionMarker in new[] { false, true })
     {
-        if (consoleMode)
+        if (hasSessionMarker)
         {
-            File.WriteAllText(Path.Combine(directory, ServerRunFiles.ConsoleMode), "");
+            File.WriteAllText(Path.Combine(directory, ConsoleSession.SessionMarker), "");
         }
 
         var info = new ProcessStartInfo(original.MainModule!.FileName)
@@ -243,7 +243,7 @@ async Task CheckDuplicateRegistrationAsync()
             await duplicate.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(DuplicateExitTimeoutSeconds));
             if (duplicate.ExitCode != 1 || !(await error).Contains($"ZooKeeper node '/tgame/test/server-{name}' already exists."))
             {
-                throw new InvalidOperationException("Duplicate startup must report the occupied path and exit with code 1 in both modes.");
+                throw new InvalidOperationException("Duplicate startup must report the occupied path and exit with code 1 regardless of the console session marker.");
             }
         }
         finally
@@ -262,5 +262,5 @@ async Task CheckDuplicateRegistrationAsync()
         throw new InvalidOperationException("A rejected duplicate disrupted the existing Router.");
     }
 
-    Console.WriteLine("PASS duplicate Router startup fails in console and non-console modes without disturbing the owner.");
+    Console.WriteLine("PASS duplicate Router startup fails with or without a console session marker without disturbing the owner.");
 }

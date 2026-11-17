@@ -106,7 +106,7 @@ public partial class ServerNode : IDisposable
 
     private string PeerRole(string peer) => group.GetProcess(peer).Role;
 
-    public async Task MaintainLinkAsync(string peer, ServiceRegistry registry, bool reconnect, CancellationToken stop)
+    public async Task MaintainLinkAsync(string peer, ServiceRegistry registry, CancellationToken stop)
     {
         while (true)
         {
@@ -117,7 +117,7 @@ public partial class ServerNode : IDisposable
                 await ConnectAsync(peer, address, stop);
                 throw new IOException($"Link to {peer} closed.");
             }
-            catch (Exception error) when (reconnect && !stop.IsCancellationRequested &&
+            catch (Exception error) when (!stop.IsCancellationRequested &&
                 (error is IOException or OperationCanceledException || error is RpcException
                 {
                     StatusCode: StatusCode.Unavailable or StatusCode.Cancelled

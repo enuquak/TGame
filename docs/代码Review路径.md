@@ -64,7 +64,7 @@
 
 `FirstLinks` 只表示首次进程连接齐备，不表示实体已注册。`Ready` 还要求 SinglePoint 初始化成功、当前连接齐备以及 `RegistrationsComplete`。断线不会重置首次连接信号或重新执行业务初始化，但会撤销当前就绪，重连并收到注册确认后才恢复。
 
-Gate 节点的 `RegisterEntitiesAsync` 直接返回，不向邻居登记自身为 RPC 目标；它仍需完成业务初始化和本地登记。宿主把 `consoleMode` 传给连接维护的 `reconnect` 参数，自动重连的启用条件也应一起核对。
+Gate 节点的 `RegisterEntitiesAsync` 直接返回，不向邻居登记自身为 RPC 目标；它仍需完成业务初始化和本地登记。首次拓扑等待和连接维护不区分启动工具；宿主等待 `FirstLinks` 或停止请求，引擎统一自动重连。控制台会话标记仅由控制台工具维护。
 
 宿主直接创建 `ServerNode`。当前不存在 `GameServerNode`；具体业务实现放在 `logic/entities/SinglePoint/`。
 

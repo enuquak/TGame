@@ -8,7 +8,7 @@ using TGame.Server.Engine;
 using TGame.Server.Logic;
 
 const int ProcessArgumentCount = 2;
-const int StartupTimeoutSeconds = 40;
+const int RegistrationTimeoutSeconds = 40;
 const int ShutdownTimeoutSeconds = 3;
 const int StopPollIntervalMilliseconds = 100;
 const string DevelopmentCertificateOid = "1.3.6.1.4.1.311.84.1.1";
@@ -81,14 +81,13 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
     var stop = lifetime.Token;
-    bool consoleMode = File.Exists(Path.Combine(runDir, ServerRunFiles.ConsoleMode));
 
     try
     {
         await using var registry = new ServiceRegistry(group, settings.ZooKeeper, settings.DiscoveryRoot);
-        using var startupTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        startupTimeout.CancelAfter(TimeSpan.FromSeconds(StartupTimeoutSeconds));
-        var registration = registry.RegisterAsync(process, address, startupTimeout.Token);
+        using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        registrationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
+        var registration = registry.RegisterAsync(process, address, registrationTimeout.Token);
 
         var workers = new List<Task>();
         foreach (var peer in Topology.DialTargets(group, process.Name))
@@ -110,19 +109,13 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
         async Task InitializeEngineAsync()
         {
             await registration;
-            if (consoleMode)
-            {
-                await node.FirstLinks.WaitAsync(stop);
-                return;
-            }
-
-            await node.FirstLinks.WaitAsync(startupTimeout.Token);
+            await node.FirstLinks.WaitAsync(stop);
         }
 
         async Task ConnectAsync(string peer)
         {
             await registration;
-            await node.MaintainLinkAsync(peer, registry, consoleMode, stop);
+            await node.MaintainLinkAsync(peer, registry, stop);
         }
     }
     finally
