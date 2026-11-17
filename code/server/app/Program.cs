@@ -42,15 +42,8 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     using var node = new ServerNode(process.Name, group);
 
     using var certificate = process.Type == ProcessType.Gate ? FindDevelopmentCertificate() : null;
-    await using var app = CreateApplication(node, certificate);
-    if (process.Type != ProcessType.Gate)
-    {
-        app.MapGrpcService<LinkService>();
-    }
-
-    await app.StartAsync();
+    await using var app = await InitializeApplicationAsync(process, node, certificate);
     var address = app.Urls.Single();
-    GameLog.Info(ServerLogEvents.Listen, process.Role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
 
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
     var stop = lifetime.Token;
@@ -125,7 +118,7 @@ static Task<IdGenerator> InitializeIdGeneratorAsync()
     return IdGenerator.InitializeAsync(idOptions);
 }
 
-static WebApplication CreateApplication(ServerNode node, X509Certificate2? certificate)
+static async Task<WebApplication> InitializeApplicationAsync(ServerProcess process, ServerNode node, X509Certificate2? certificate)
 {
     var builder = WebApplication.CreateSlimBuilder();
     builder.Logging.ClearProviders();
@@ -148,7 +141,24 @@ static WebApplication CreateApplication(ServerNode node, X509Certificate2? certi
     builder.Services.AddGrpc();
     builder.Services.AddSingleton<ServerNode>(node);
 
-    return builder.Build();
+    var app = builder.Build();
+    try
+    {
+        if (process.Type != ProcessType.Gate)
+        {
+            app.MapGrpcService<LinkService>();
+        }
+
+        await app.StartAsync();
+        var address = app.Urls.Single();
+        GameLog.Info(ServerLogEvents.Listen, process.Role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
+        return app;
+    }
+    catch
+    {
+        await app.DisposeAsync();
+        throw;
+    }
 }
 
 static async Task WatchZooKeeperSessionAsync(CancellationToken stop)
