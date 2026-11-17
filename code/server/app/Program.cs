@@ -29,8 +29,7 @@ try
 }
 catch (Exception error)
 {
-    GameLog.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString());
-    Console.Error.WriteLine(error);
+    GameLog.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString(), bothPrintConsole: true);
     Environment.ExitCode = 1;
 }
 

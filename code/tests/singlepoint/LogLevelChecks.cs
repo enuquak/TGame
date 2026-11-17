@@ -12,6 +12,7 @@ internal static class LogLevelChecks
         var process = new ServerProcess(ProcessType.Login, 1);
         var originalRoot = Environment.GetEnvironmentVariable(EngineEnvironment.LogRoot);
         var originalOutput = Console.Out;
+        var originalError = Console.Error;
         Directory.CreateDirectory(root);
         try
         {
@@ -25,31 +26,61 @@ internal static class LogLevelChecks
                 CheckRows(output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), minimum, process.Role);
             }
 
-            Console.SetOut(originalOutput);
+            {
+                using var output = new StringWriter();
+                using var error = new StringWriter();
+                Console.SetOut(output);
+                Console.SetError(error);
+                GameLog.Error(ServerLogEvents.ProcessFailed, process.Role, detail: "进程失败", bothPrintConsole: true);
+                CheckRows(error.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), ServerLogLevel.Error, process.Role);
+                if (output.ToString().Length != 0)
+                {
+                    throw new Exception("Console mirroring duplicated an error on standard output before opening a log file.");
+                }
+            }
+
             foreach (var minimum in Enum.GetValues<ServerLogLevel>())
             {
                 var logRoot = Path.Combine(root, minimum.ToString());
+                using var output = new StringWriter();
+                using var error = new StringWriter();
+                Console.SetOut(output);
+                Console.SetError(error);
                 Environment.SetEnvironmentVariable(EngineEnvironment.LogRoot, logRoot);
                 GameLog.SetMinimumLevel(minimum);
                 using (GameLog.OpenServer(process))
                 {
                     WriteSamples(process);
+                    if (output.ToString().Length != 0 || error.ToString().Length != 0)
+                    {
+                        throw new Exception("File logging printed to the console without an explicit request.");
+                    }
+
+                    GameLog.Error(ServerLogEvents.ProcessFailed, process.Role,
+                        detail: "同时写入日志与终端：'错误'\n详细信息", bothPrintConsole: true);
                 }
 
                 var files = Directory.GetFiles(logRoot, "*.log", SearchOption.AllDirectories);
                 var lines = files.Order(StringComparer.Ordinal).SelectMany(File.ReadLines).ToArray();
-                CheckRows(lines, minimum, process.Name);
+                CheckRows(lines[..^1], minimum, process.Name);
+                var consoleLines = error.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+                CheckRows(consoleLines, ServerLogLevel.Error, process.Name);
+                if (output.ToString().Length != 0 || consoleLines[0] != lines[^1])
+                {
+                    throw new Exception("Console mirroring must write the same error record exactly once to standard error.");
+                }
             }
         }
         finally
         {
             Console.SetOut(originalOutput);
+            Console.SetError(originalError);
             GameLog.SetMinimumLevel(ServerLogLevel.Info);
             Environment.SetEnvironmentVariable(EngineEnvironment.LogRoot, originalRoot);
             Directory.Delete(root, recursive: true);
         }
 
-        Console.WriteLine("PASS DEBUG/INFO/ERROR filtering, JSON fields and server log configuration.");
+        Console.WriteLine("PASS DEBUG/INFO/ERROR filtering, JSON fields, server log configuration and optional console mirroring.");
     }
 
     private static void CheckSettings(string root)

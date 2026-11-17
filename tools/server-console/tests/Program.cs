@@ -241,7 +241,11 @@ async Task CheckDuplicateRegistrationAsync()
         try
         {
             await duplicate.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(DuplicateExitTimeoutSeconds));
-            if (duplicate.ExitCode != 1 || !(await error).Contains($"ZooKeeper node '/tgame/test/server-{name}' already exists."))
+            using var failure = JsonDocument.Parse(await error);
+            var detail = failure.RootElement.GetProperty(ServerLogFields.Detail).GetString();
+            if (duplicate.ExitCode != 1 ||
+                failure.RootElement.GetProperty(ServerLogFields.Event).GetString() != ServerLogEvents.ProcessFailed ||
+                detail?.Contains($"ZooKeeper node '/tgame/test/server-{name}' already exists.") != true)
             {
                 throw new InvalidOperationException("Duplicate startup must report the occupied path and exit with code 1 regardless of the console session marker.");
             }

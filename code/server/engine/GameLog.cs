@@ -42,11 +42,11 @@ public static class GameLog
         Write(ServerLogLevel.Info, ev, role, peer, id, entity, link, detail);
 
     public static void Error(string ev, string role, string? peer = null, string? id = null,
-        string? entity = null, string? link = null, string? detail = null) =>
-        Write(ServerLogLevel.Error, ev, role, peer, id, entity, link, detail);
+        string? entity = null, string? link = null, string? detail = null, bool bothPrintConsole = false) =>
+        Write(ServerLogLevel.Error, ev, role, peer, id, entity, link, detail, bothPrintConsole);
 
     private static void Write(ServerLogLevel level, string ev, string role, string? peer, string? id,
-        string? entity, string? link, string? detail)
+        string? entity, string? link, string? detail, bool bothPrintConsole = false)
     {
         var severity = ToSerilogLevel(level);
         if (severity < minimumLevel.MinimumLevel)
@@ -56,13 +56,19 @@ public static class GameLog
 
         var json = LogEventJson.Serialize(level, ev, role, peer, id, entity, link, detail, instance);
 
-        if (serverLog is null)
+        if (serverLog is not null)
+        {
+            serverLog.Write(severity, "{Json:l}", json);
+        }
+        else if (!bothPrintConsole)
         {
             Console.WriteLine(json);
-            return;
         }
 
-        serverLog.Write(severity, "{Json:l}", json);
+        if (bothPrintConsole)
+        {
+            Console.Error.WriteLine(json);
+        }
     }
 
     private static LogEventLevel ToSerilogLevel(ServerLogLevel level) => level switch
