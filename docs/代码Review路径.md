@@ -1,10 +1,10 @@
 # 代码 Review 路径
 
-更新时间：2026-11-17（Asia/Shanghai）。本次按 `review-1117` 分支当前代码核对：Engine 与业务 Shared 已分离，使用进程级 `IdGenerator.GenId()`，SinglePoint 直接持有身份和本地实体集合，初始化时传入所属 `ServerNode`，实体在业务初始化后直接调用节点方法注册；日志支持配置最低等级。
+更新时间：2026-11-18（Asia/Shanghai）。阅读分支为 `review-1117`：Engine 与业务 Shared 已分离，使用进程级 `IdGenerator.GenId()`，SinglePoint 直接持有身份和本地实体集合，初始化时传入所属 `ServerNode`，实体在业务初始化后直接调用节点方法注册；日志支持配置最低等级。
 
-当前进度：**第一节已读完**（用户于 2026-11-17 确认），第二节起待阅读或待复读。只有用户明确确认读完后才勾选；详细确认记录保留在[代码 Review 进度](代码Review进度.md)。
+当前进度：**第一节已读完**（2026-11-17 确认），**第三节的 `Program.cs` 已理解**（2026-11-18 确认）。其余条目保留原勾选状态；详细确认记录见[代码 Review 进度](代码Review进度.md)。
 
-**现在从第 2.1 节的 `ServerSinglePoint.cs` 开始。** 先按第 2.1～2.3 节读懂单个 SinglePoint，再通过第 3 节串起启动顺序，第 4 节跟踪注册确认、断线与重连。读通这条主线后回看第 2.4 节的 ID 内部实现，再继续第 5～7 节的 RPC 与业务链路。
+**下一步核对第三节的 `ServerNode.cs`。** 把构造函数、`FirstLinks`、`InitializeSinglePointAsync`、`Ready` 和 `Dispose` 与已读的宿主调用对应起来，再进入第四节跟踪拓扑、服务发现、连接和实体注册。第 2.4 节的 ID 内部实现可在读通连接主线后回看。
 
 旧标签页中的 `SinglePointState.cs`、`IIdGenerator.cs` 已删除，不再作为阅读入口。阅读源码无需启动服务；测试入口与历史验证范围放在第 9 节，按需对照。
 
@@ -17,7 +17,7 @@
 
 读完应能回答：所有角色为何运行同一个程序？业务代码编译到哪个程序集？宿主如何通过业务程序集扫描 SinglePoint 类型？移除业务 Shared 后 Engine 为什么仍能独立编译？
 
-## 2. 身份与 SinglePoint（当前起点）
+## 2. 身份与 SinglePoint
 
 ### 2.1 先读 ServerSinglePoint：它持有什么，何时初始化完成
 
@@ -57,10 +57,10 @@
 
 ## 3. 沿启动流程读一遍
 
-- [ ] [Program.cs](../code/server/app/Program.cs)：从参数解析进入 `RunServerAsync`，按 `SinglePointRegistry` → `IdGenerator.InitializeAsync` → `ServerNode` 创建 → `app.StartAsync` → 服务注册和工作任务阅读。再追局部函数 `InitializeAsync` 中的 `InitializeEngineAsync` → `node.InitializeSinglePointAsync`，最后看 `WatchIdLeaseAsync`、`SuperviseAsync` 和资源释放。
+- [x] [Program.cs](../code/server/app/Program.cs)：用户于 2026-11-18 确认已理解。当前顺序为配置加载 → `InitializeZooKeeperAsync` → `InitializeIdGeneratorAsync` → 创建 `ServerNode` 和网络宿主 → `app.StartAsync` → `RunWorkersAsync`。初始化任务先等待进程注册与 `FirstLinks`，再扫描业务程序集建立 `SinglePointRegistry`，调用 `node.InitializeSinglePointAsync`。已讨论 `Task.WhenAll`、`WatchStopAsync`、`WatchZooKeeperSessionAsync`、`SuperviseAsync`、取消传播和资源释放。
 - [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数只准备进程信息和拓扑，不创建 SinglePoint 或分配其实体 ID；`InitializeSinglePointAsync` 在 `FirstLinks` 成功后创建 SinglePoint，并调用 `singlePoint.InitializeAsync(this, stop)`，传入所属节点。再看 `Ready` 与 `Dispose`。
 
-当前顺序为：初始化进程 ID 生成器 → 监听与 ZooKeeper 服务注册 → 建立首次拓扑连接（只交换进程名）→ 创建 SinglePoint 并生成身份 → 执行业务初始化 → SinglePoint 登记本地实体并发起远端注册 → 收到注册确认 → 标记 SinglePoint 初始化完成。
+当前顺序为：初始化进程 ZooKeeper 代理和 ID 生成器 → 监听与 ZooKeeper 进程注册 → 建立首次拓扑连接（只交换进程名）→ 创建 SinglePoint 并生成身份 → 执行业务初始化 → SinglePoint 登记本地实体并发起远端注册 → 收到注册确认 → 标记 SinglePoint 初始化完成。
 
 `FirstLinks` 只表示首次进程连接齐备，不表示实体已注册。`Ready` 还要求 SinglePoint 初始化成功、当前连接齐备以及 `RegistrationsComplete`。断线不会重置首次连接信号或重新执行业务初始化，但会撤销当前就绪，重连并收到注册确认后才恢复。
 
@@ -73,7 +73,7 @@ Gate 节点的 `RegisterEntitiesAsync` 直接返回，不向邻居登记自身�
 ## 4. 服务发现、拓扑与连接
 
 - [ ] [Topology.cs](../code/server/engine/Topology.cs)：从类型间连接关系展开每个实例的连接目标和预期邻居。
-- [ ] [ServiceRegistry.cs](../code/server/engine/ServiceRegistry.cs)：跟踪 `RegisterAsync`、`ResolveAsync`、重复注册失败及会话释放。这一层向 ZooKeeper 登记进程地址，与向 Router 登记实体归属是两件事。
+- [ ] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs)：跟踪 `InitializeAsync`、`RegisterProcessAsync`、`ResolveProcessAsync`、`SessionLost` 和释放。服务发现现由进程级代理统一负责；向 ZooKeeper 登记进程地址，与向 Router 登记实体归属是两件事。
 - [ ] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[LinkService.cs](../code/server/engine/LinkService.cs)：检查 `peer`、`link` 元数据、来源检查和连接交接；原来的 `EntityHeader` 已移除。
 - [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：按 `MaintainLinkAsync` → `ConnectAsync` → `RunLinkAsync` 阅读进程握手；此时只建立连接，不生成实体路由。
 - [ ] 先扫一遍 [transport.proto](../code/server/engine/protocols/transport.proto) 的 `Frame`、`RegisterEntitiesRequest` 和 `RegisterEntitiesReply`，认识握手与独立注册的消息形状；通用 RPC 的等待与回包留到第 5 节。
@@ -178,4 +178,4 @@ Router 只负责通用路由与来源校验。Profile 的业务入口只接受�
 | 配置、日志、起停、恢复与编译重启 | [控制台检查](../tools/server-console/tests/Program.cs)、[Test-ServerConsole.ps1](../tools/scripts/powershell/Test-ServerConsole.ps1) |
 | 从无生成文件的目录导出引擎和业务两套协议 | [控制台检查](../tools/server-console/tests/Program.cs) 的 `--export-only` 模式；仅在带 `.console-check` 标记的隔离副本使用，不启动服务器 |
 
-每次完成一个小节后记录问题与用户确认结果。下一次从第 2.1 节开始，不重复第一节；第 2～4 节的目标是读通从创建身份到注册确认、再到断线恢复的完整过程。
+每次完成一个小节后记录问题与用户确认结果。下一步核对第三节的 `ServerNode` 生命周期，再进入第四节；`Program.cs` 已确认，不重复从入口讲起。
