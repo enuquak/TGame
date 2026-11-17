@@ -42,6 +42,13 @@ if (args is ["--profile-storage", var profileIdConfig])
     }
 }
 
+if (args is ["--zookeeper-session"])
+{
+    await ZooKeeperProxyChecks.CheckSessionAsync();
+    await IdGeneratorLifecycleChecks.RunAsync();
+    return 0;
+}
+
 SinglePointChecks.CheckBeforeIdInitialization();
 await IdGeneratorLifecycleChecks.RunAsync();
 // 内存检查共用一个进程内生成器，不向真实服务器组发布 ID。
@@ -101,7 +108,7 @@ if (args is ["--engine"])
 
 if (args is ["--id-zookeeper", var idConfig])
 {
-    await IdGeneratorChecks.RunZooKeeperAsync(idConfig, ServerSettings.Current.Value.ZooKeeper);
+    await IdGeneratorChecks.RunZooKeeperAsync(idConfig);
     return 0;
 }
 
@@ -109,7 +116,7 @@ if (args is ["--registry"])
 {
     try
     {
-        await ServiceRegistryChecks.RunAsync(ServerSettings.Current.Value.ZooKeeper, ServerSettings.Current.Value.DiscoveryRoot);
+        await ZooKeeperProxyChecks.RunAsync();
         return 0;
     }
     catch (Exception error)
@@ -129,7 +136,7 @@ if (engineAssembly == typeof(ProfileServerSinglePoint).Assembly)
     throw new Exception("Engine primitives and business handlers must be compiled into separate assemblies.");
 }
 
-Type[] engineTypes = [typeof(LinkService), typeof(ServerNode), typeof(PeerLink), typeof(ServiceRegistry),
+Type[] engineTypes = [typeof(LinkService), typeof(ServerNode), typeof(PeerLink), typeof(ZooKeeperProxy),
     typeof(ServerSinglePoint), typeof(SinglePointRegistry), typeof(SinglePointForAttribute)];
 foreach (var type in engineTypes)
 {

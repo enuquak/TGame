@@ -9,7 +9,8 @@ internal static class ProfileStorageChecks
 {
     public static async Task RunAsync(string idConfig, CancellationToken stop)
     {
-        var options = IdGeneratorOptions.Load(idConfig, ServerSettings.Current.Value.ZooKeeper);
+        var options = IdGeneratorOptions.Load(idConfig);
+        await using var zooKeeperLifetime = await ZooKeeperProxy.InitializeAsync(ZooKeeperProxyChecks.LoadOptions(), stop);
         await using var idLifetime = await IdGenerator.InitializeAsync(options, stop);
         var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
         counts[ProcessType.Router] = 1;

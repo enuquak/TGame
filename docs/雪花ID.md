@@ -8,18 +8,19 @@ using TGame.Server.Engine;
 string id = IdGenerator.GenId();
 ```
 
-宿主在创建节点和实体身份之前显式初始化一次，内部完成 ZooKeeper 连接和编号分配。返回对象只用于管理生命周期，不传给业务对象：
+宿主在创建节点和实体身份之前，先初始化 ZooKeeper 代理，再初始化 ID 生成器。代理持有进程唯一的连接和会话，生成器通过代理申请编号。返回对象用于管理生命周期：
 
 ```csharp
-await using var idLifetime = await IdGenerator.InitializeAsync(options);
+await using var zooKeeperLifetime = await ZooKeeperProxy.InitializeAsync(zooKeeperOptions);
+await using var idLifetime = await IdGenerator.InitializeAsync(idOptions);
 using var node = new ServerNode(process.Name, group);
 ```
 
-`await using` 确保节点和服务退出后释放生成器及 ZooKeeper 会话。宿主通过 `IdGenerator.LeaseLost` 继续监督编号租约；业务代码只需调用 `IdGenerator.GenId()`。现有协议和日志的字符串字段直接使用返回值。
+`await using` 确保节点和服务退出后先释放生成器的 worker 租约，最后关闭 ZooKeeper 代理。宿主通过 `ZooKeeperProxy.Instance.SessionLost` 监督共享会话；`IdGenerator.LeaseLost` 指向同一失效通知，业务代码只需调用 `IdGenerator.GenId()`。现有协议和日志的字符串字段直接使用返回值。
 
 未初始化、初始化尚未完成或已释放时调用会明确报错；已有活动实例时重复初始化也会报错。生命周期由宿主按顺序管理，不支持并发初始化或并发释放，也不为此设置锁。生命周期对象释放后不再使用；下一次初始化须等上一次完整释放。初始化失败或取消不会发布半初始化实例，取消时已创建的生成器会被释放。正常服务器仍在租约丢失后退出，由重启重新申请编号。
 
-底层 `SnowflakeIdGenerator` 保留为引擎内部实现，便于独立检查算法、时钟回拨和编号分配；外部不再使用 `IIdGenerator` 或访问节点上的生成器属性。
+底层 `SnowflakeIdGenerator` 保留算法、时钟回拨和租约有效性检查，不直接创建 ZooKeeper 客户端或读写节点。节点创建、读取、监听、worker 申请与释放均由 `ZooKeeperProxy` 完成；代理关闭后旧生成器也立即失效。外部不再使用 `IIdGenerator` 或访问节点上的生成器属性。
 
 `IdText.IsValid()` 校验正整数的规范文本，拒绝负号、空白、前导零和超出 `long` 范围的值。
 
@@ -36,11 +37,11 @@ using var node = new ServerNode(process.Name, group);
 
 ## 配置与调用点
 
-[id-generator.json](../code/server/config/id-generator.json) 声明编号根路径及连接/会话超时。ZooKeeper 地址继续由统一的 ServerSettings 配置提供，ID 生成和服务发现共用该地址。
+[id-generator.json](../code/server/config/id-generator.json) 仅声明编号根路径。[zookeeper.json](../code/server/config/zookeeper.json) 统一声明连接和会话超时。ZooKeeper 地址与进程发现根路径继续由宿主 ServerSettings 提供，ID 分配和服务发现共用同一个代理会话。宿主将配置显式传给引擎，引擎不读取业务配置。
 
 已接入请求 ID、实体 ID、连接 ID 和 Redis 缓存占用标记。`ServerSinglePoint` 创建时通过属性初始化表达式调用 `IdGenerator.GenId()`，直接持有 `EntityId` 和本地实体集合；`ServerNode` 不提前生成该身份。生成身份不会提前登记实体，实体注册仍由 SinglePoint 自身初始化发起。
 
-单例生命周期检查位于 [IdGeneratorLifecycleChecks.cs](../code/tests/singlepoint/IdGeneratorLifecycleChecks.cs)，覆盖未初始化、初始化失败、取消清理、顺序初始化、并发发号、租约监督和释放。ID 算法及 ZooKeeper 分配检查位于 [IdGeneratorChecks.cs](../code/tests/singlepoint/IdGeneratorChecks.cs)。
+单例生命周期检查位于 [IdGeneratorLifecycleChecks.cs](../code/tests/singlepoint/IdGeneratorLifecycleChecks.cs)，覆盖未初始化、初始化失败、取消清理、顺序初始化、并发发号、租约监督和释放。ID 算法及 ZooKeeper 分配检查位于 [IdGeneratorChecks.cs](../code/tests/singlepoint/IdGeneratorChecks.cs)。[ZooKeeperProxyChecks.cs](../code/tests/singlepoint/ZooKeeperProxyChecks.cs) 覆盖代理会话状态与进程注册发现；真实 ZK 检查另外验证共享会话、worker 释放复用和关闭代理后停发。
 
 当前分支已移除运行 ID；控制台和验收目录沿用时间目录名，不重新引入运行批次 ID。请求、实体和连接 ID 已统一为十进制文本，升级时需要统一更新服务器并重启整组进程。本次不改写存量数据库文档。测试用临时目录由系统临时目录 API 创建，不属于业务 ID。
 
@@ -48,6 +49,7 @@ using var node = new ServerNode(process.Name, group);
 
 ```powershell
 dotnet build code/tests/singlepoint/TGame.SinglePointTests.csproj --no-restore
+dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj --no-build -- --zookeeper-session
 dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj --no-build -- --node
 ```
 

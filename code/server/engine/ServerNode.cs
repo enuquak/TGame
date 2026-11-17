@@ -104,11 +104,12 @@ public partial class ServerNode : IDisposable
 
     private string PeerRole(string peer) => group.GetProcess(peer).Role;
 
-    public async Task MaintainLinkAsync(string peer, ServiceRegistry registry, CancellationToken stop)
+    public async Task MaintainLinkAsync(string peer, CancellationToken stop)
     {
+        var peerProcess = group.GetProcess(peer);
         while (true)
         {
-            var address = await registry.ResolveAsync(peer, stop);
+            var address = await ZooKeeperProxy.Instance.ResolveProcessAsync(peerProcess, stop);
 
             try
             {

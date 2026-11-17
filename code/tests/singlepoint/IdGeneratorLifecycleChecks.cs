@@ -45,7 +45,7 @@ internal static class IdGeneratorLifecycleChecks
         Expect<ObjectDisposedException>(() => generator.GenId());
         Expect<InvalidOperationException>(() => IdGenerator.GenId());
 
-        var session = new IdSession();
+        var session = new ZooKeeperSession();
         session.StateChanged(Watcher.Event.KeeperState.SyncConnected);
         var next = new SnowflakeIdGenerator(WorkerId, TimeProvider.System, session: session);
         await using (var nextLifetime = await IdGenerator.InitializeAsync(_ => Task.FromResult(next), stop))
@@ -54,6 +54,9 @@ internal static class IdGeneratorLifecycleChecks
             Check(ReferenceEquals(IdGenerator.LeaseLost, next.LeaseLost), "Singleton hid the active generator's lease supervision.");
             session.StateChanged(Watcher.Event.KeeperState.Disconnected);
             await IdGenerator.LeaseLost.WaitAsync(stop);
+            Expect<InvalidOperationException>(() => IdGenerator.GenId());
+            session.StateChanged(Watcher.Event.KeeperState.SyncConnected);
+            Expect<InvalidOperationException>(() => IdGenerator.GenId());
         }
 
         Expect<ObjectDisposedException>(() => next.GenId());

@@ -43,7 +43,7 @@ internal static class IdGeneratorChecks
         await concurrent.DisposeAsync();
         Expect<ObjectDisposedException>(() => concurrent.GenId());
 
-        var session = new IdSession();
+        var session = new ZooKeeperSession();
         session.StateChanged(Watcher.Event.KeeperState.SyncConnected);
         session.CheckActive();
         session.StateChanged(Watcher.Event.KeeperState.Disconnected);
@@ -61,23 +61,22 @@ internal static class IdGeneratorChecks
         Console.WriteLine("PASS Snowflake layout, sequence exhaustion, rollback, 50000 concurrent IDs, session loss, disposal and ID validation.");
     }
 
-    internal static async Task RunZooKeeperAsync(string configPath, string endpoint)
+    internal static async Task RunZooKeeperAsync(string configPath)
     {
-        var configured = IdGeneratorOptions.Load(configPath, endpoint);
+        var configured = IdGeneratorOptions.Load(configPath);
+        var zooKeeperOptions = ZooKeeperProxyChecks.LoadOptions();
         var root = configured.WorkerRootPath + "-checks/" + IdGenerator.GenId();
         var options = new IdGeneratorOptions
         {
-            ZooKeeperEndpoint = configured.ZooKeeperEndpoint,
-            WorkerRootPath = root,
-            SessionTimeoutMilliseconds = configured.SessionTimeoutMilliseconds,
-            ConnectTimeoutMilliseconds = configured.ConnectTimeoutMilliseconds
+            WorkerRootPath = root
         };
 
         var generators = new List<SnowflakeIdGenerator>();
-        var session = new IdSession();
-        var zk = new ZooKeeper(options.ZooKeeperEndpoint, options.SessionTimeoutMilliseconds, session);
+        var session = new ZooKeeperSession();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var stop = timeout.Token;
+        await using var proxy = await ZooKeeperProxy.InitializeAsync(zooKeeperOptions, stop);
+        var zk = new ZooKeeper(zooKeeperOptions.Endpoint, zooKeeperOptions.SessionTimeoutMilliseconds, session);
         try
         {
             await session.Connected.Task.WaitAsync(stop);
@@ -98,6 +97,7 @@ internal static class IdGeneratorChecks
             }
 
             Check(generators.Select(g => g.WorkerId).Distinct().Count() == generators.Count, "ZooKeeper assigned duplicate workers");
+            Check(generators.All(g => ReferenceEquals(g.LeaseLost, proxy.SessionLost)), "Workers must share the proxy session");
             var ids = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
             Parallel.For(0, 20000, i => Check(ids.TryAdd(generators[i % generators.Count].GenId(), 0), "cross-worker duplicate"));
 
@@ -107,6 +107,10 @@ internal static class IdGeneratorChecks
             generators.Add(replacement);
             Check(replacement.WorkerId == first.WorkerId, "released worker was not reused");
             Check(ids.TryAdd(replacement.GenId(), 0), "reused worker duplicated an earlier ID");
+            Check(!proxy.SessionLost.IsCompleted, "Releasing a worker must preserve the shared session");
+            await proxy.DisposeAsync();
+            Check(replacement.LeaseLost.IsCompletedSuccessfully, "Proxy disposal must invalidate the worker lease");
+            Expect<InvalidOperationException>(() => replacement.GenId());
             Console.WriteLine("PASS real ZooKeeper concurrent allocation, 20000 cross-worker IDs and worker reuse.");
         }
         finally

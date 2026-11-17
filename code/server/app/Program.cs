@@ -42,7 +42,8 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     GameLog.SetMinimumLevel(settings.MinimumLogLevel);
 
     var builder = WebApplication.CreateSlimBuilder();
-    await using var idLifetime = await InitializeSingletonsAsync();
+    await using var zooKeeperLifetime = await InitializeZooKeeperAsync(settings);
+    await using var idLifetime = await InitializeIdGeneratorAsync();
     using var node = new ServerNode(process.Name, group);
     builder.Logging.ClearProviders();
     using var certificate = processType == ProcessType.Gate ? FindDevelopmentCertificate() : null;
@@ -80,10 +81,9 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
     try
     {
-        await using var registry = new ServiceRegistry(group, settings.ZooKeeper, settings.DiscoveryRoot);
         using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
         registrationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
-        var registration = registry.RegisterAsync(process, address, registrationTimeout.Token);
+        var registration = ZooKeeperProxy.Instance.RegisterProcessAsync(group, process, address, registrationTimeout.Token);
 
         var workers = new List<Task>();
         foreach (var peer in Topology.DialTargets(group, process.Name))
@@ -93,7 +93,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
         workers.Add(SuperviseAsync(InitializeAsync()));
         workers.Add(SuperviseAsync(WatchStopAsync()));
-        workers.Add(SuperviseAsync(WatchIdLeaseAsync()));
+        workers.Add(SuperviseAsync(WatchZooKeeperSessionAsync()));
         await Task.WhenAll(workers);
 
         async Task InitializeAsync()
@@ -111,7 +111,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
         async Task ConnectAsync(string peer)
         {
             await registration;
-            await node.MaintainLinkAsync(peer, registry, stop);
+            await node.MaintainLinkAsync(peer, stop);
         }
     }
     finally
@@ -120,10 +120,10 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
         await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
     }
 
-    async Task WatchIdLeaseAsync()
+    async Task WatchZooKeeperSessionAsync()
     {
-        await IdGenerator.LeaseLost.WaitAsync(stop);
-        throw new InvalidOperationException("The ID generator lost its ZooKeeper session.");
+        await ZooKeeperProxy.Instance.SessionLost.WaitAsync(stop);
+        throw new InvalidOperationException("The process lost its ZooKeeper session.");
     }
 
     async Task WatchStopAsync()
@@ -155,16 +155,17 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     }
 }
 
-static Task<IdGenerator> InitializeSingletonsAsync()
+static Task<ZooKeeperProxy> InitializeZooKeeperAsync(ServerSettings settings)
 {
-    return InitializeIdGeneratorAsync();
+    var configPath = Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName);
+    var options = ZooKeeperOptions.Load(configPath, settings.ZooKeeper, settings.DiscoveryRoot);
+    return ZooKeeperProxy.InitializeAsync(options);
 }
 
 static Task<IdGenerator> InitializeIdGeneratorAsync()
 {
-    var settings = ServerSettings.Current.Value;
     var idConfigPath = Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName);
-    var idOptions = IdGeneratorOptions.Load(idConfigPath, settings.ZooKeeper);
+    var idOptions = IdGeneratorOptions.Load(idConfigPath);
     return IdGenerator.InitializeAsync(idOptions);
 }
 
