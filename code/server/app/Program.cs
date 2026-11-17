@@ -43,8 +43,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
 
     var builder = WebApplication.CreateSlimBuilder();
     var messages = new RpcDispatcher();
-    var idOptions = IdGeneratorOptions.Load(Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName), settings.ZooKeeper);
-    await using var idLifetime = await IdGenerator.InitializeAsync(idOptions);
+    await using var idLifetime = await InitializeSingletonsAsync();
     using var node = new ServerNode(process.Name, group, messages);
     ServerMessages.Register(messages, node);
     builder.Logging.ClearProviders();
@@ -156,6 +155,19 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
             throw;
         }
     }
+}
+
+static Task<IdGenerator> InitializeSingletonsAsync()
+{
+    return InitializeIdGeneratorAsync();
+}
+
+static Task<IdGenerator> InitializeIdGeneratorAsync()
+{
+    var settings = ServerSettings.Current.Value;
+    var idConfigPath = Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName);
+    var idOptions = IdGeneratorOptions.Load(idConfigPath, settings.ZooKeeper);
+    return IdGenerator.InitializeAsync(idOptions);
 }
 
 static X509Certificate2 FindDevelopmentCertificate()
