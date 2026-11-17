@@ -19,8 +19,8 @@ internal static class MessageDispatchChecks
     private static async Task VerifyNestedDispatchAsync(CancellationToken stop)
     {
         var messages = new RpcDispatcher();
-        var requestId = TestIds.Generator.GenId();
-        var linkId = TestIds.Generator.GenId();
+        var requestId = IdGenerator.GenId();
+        var linkId = IdGenerator.GenId();
 
         messages.Register<StringValue>(request => request.Value, async (peer, request, link, token) =>
         {
@@ -34,7 +34,7 @@ internal static class MessageDispatchChecks
         });
 
         var stream = new FrameStream();
-        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         stream.Input.Writer.TryWrite(TestNodes.Hello(ServerProcess.FormatName(nameof(ProcessType.Login), 1)));
         var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), linkId, stream, stream, lifetime.Token);
@@ -74,9 +74,9 @@ internal static class MessageDispatchChecks
     private static async Task VerifyProfileReadinessAsync(CancellationToken stop)
     {
         var messages = new RpcDispatcher();
-        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages);
         ServerMessages.Register(messages, node);
-        var profile = new ProfileRequest { RequestId = TestIds.Generator.GenId(), Fetch = node.State.EntityId };
+        var profile = new ProfileRequest { RequestId = IdGenerator.GenId(), Fetch = node.State.EntityId };
         var reply = (ProfileReply)await messages.DispatchEntityAsync(RpcFrames.Request(profile).Request, stop);
         if (reply.Result != ProfileReply.Types.Result.Unavailable)
         {
@@ -97,15 +97,15 @@ internal static class MessageDispatchChecks
             return release.Task.WaitAsync(token);
         });
 
-        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages, TestIds.Generator);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup, messages);
         stream.Input.Writer.TryWrite(TestNodes.Hello(ServerProcess.FormatName(nameof(ProcessType.Login), 1)));
-        var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), TestIds.Generator.GenId(), stream, stream, stop);
-        var id = TestIds.Generator.GenId();
+        var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), IdGenerator.GenId(), stream, stream, stop);
+        var id = IdGenerator.GenId();
         stream.Input.Writer.TryWrite(RpcFrames.Request(new StringValue { Value = id }, id));
         await started.Task.WaitAsync(stop);
         for (int i = 0; i < RequestCount; i++)
         {
-            id = TestIds.Generator.GenId();
+            id = IdGenerator.GenId();
             stream.Input.Writer.TryWrite(RpcFrames.Request(new StringValue { Value = id }, id));
         }
 

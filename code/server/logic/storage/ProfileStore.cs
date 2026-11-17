@@ -23,22 +23,20 @@ internal sealed class ProfileStore : IDisposable
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan CacheReservationLifetime = TimeSpan.FromSeconds(5);
 
-    private readonly IIdGenerator idGenerator;
     private readonly IDatabase cache;
     private readonly MongoClient mongo;
     private readonly ConnectionMultiplexer redis;
     private readonly IMongoCollection<BsonDocument> summaries;
 
-    private ProfileStore(MongoClient mongo, ConnectionMultiplexer redis, IIdGenerator idGenerator)
+    private ProfileStore(MongoClient mongo, ConnectionMultiplexer redis)
     {
-        this.idGenerator = idGenerator;
         this.mongo = mongo;
         this.redis = redis;
         summaries = mongo.GetDatabase(ServerSettings.Current.Value.MongoDatabase).GetCollection<BsonDocument>(CollectionName);
         cache = redis.GetDatabase();
     }
 
-    public static async Task<ProfileStore> OpenAsync(IIdGenerator idGenerator, CancellationToken stop)
+    public static async Task<ProfileStore> OpenAsync(CancellationToken stop)
     {
         var settings = ServerSettings.Current.Value;
         var options = new ConfigurationOptions
@@ -57,7 +55,7 @@ internal sealed class ProfileStore : IDisposable
         {
             await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(ServerSettings.Current.Value.MongoDatabase), stop);
             var redis = await ConnectionMultiplexer.ConnectAsync(options);
-            return new ProfileStore(mongo, redis, idGenerator);
+            return new ProfileStore(mongo, redis);
         }
         catch
         {
@@ -86,7 +84,7 @@ internal sealed class ProfileStore : IDisposable
             // Reserve a cache miss before reading Mongo. A concurrent writer removes this
             // token, so the older reader cannot repopulate a key after invalidation.
             bool reserved = false;
-            RedisValue token = CacheReservationMarker + idGenerator.GenId();
+            RedisValue token = CacheReservationMarker + IdGenerator.GenId();
 
             try
             {

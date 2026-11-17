@@ -1,17 +1,25 @@
 # 统一 ID 生成
 
-引擎接口为 `IIdGenerator.GenId()`，返回使用 `CultureInfo.InvariantCulture` 格式化的十进制 `string`，调用方直接使用。同一进程的 `ServerNode`、业务 SinglePoint 和依赖注入中的 `IIdGenerator` 共用一个实例。
+引擎统一入口为 `IdGenerator.GenId()`，返回使用 `CultureInfo.InvariantCulture` 格式化的十进制 `string`。同一进程的节点、SinglePoint 和业务代码共用唯一生成器，不再通过构造函数或初始化参数传递生成器。
 
 ```csharp
-IIdGenerator idGenerator = node.IdGenerator;
-string id = idGenerator.GenId();
+using TGame.Server.Engine;
+
+string id = IdGenerator.GenId();
 ```
 
-业务 SinglePoint 子类可以直接使用继承的 `IdGenerator` 属性。生成器在创建节点和实体身份之前初始化；调用方不自行构造生成器或分配编号。现有协议和日志的字符串字段直接使用生成结果：
+宿主在创建节点和实体身份之前显式初始化一次，内部完成 ZooKeeper 连接和编号分配。返回对象只用于管理生命周期，不传给业务对象：
 
 ```csharp
-string requestId = idGenerator.GenId();
+await using var idLifetime = await IdGenerator.InitializeAsync(options);
+using var node = new ServerNode(process.Name, group, messages);
 ```
+
+`await using` 确保节点和服务退出后释放生成器及 ZooKeeper 会话。宿主通过 `IdGenerator.LeaseLost` 继续监督编号租约；业务代码只需调用 `IdGenerator.GenId()`。现有协议和日志的字符串字段直接使用返回值。
+
+未初始化、初始化尚未完成或已释放时调用会明确报错；已有活动实例时重复初始化也会报错。初始化与释放按顺序执行，初始化失败或取消不会发布半初始化实例，取消时已创建的生成器会被释放。正常服务器仍在租约丢失后退出，由重启重新申请编号。
+
+底层 `SnowflakeIdGenerator` 保留为引擎内部实现，便于独立检查算法、时钟回拨和编号分配；外部不再使用 `IIdGenerator` 或访问节点上的生成器属性。
 
 `IdText.IsValid()` 校验正整数的规范文本，拒绝负号、空白、前导零和超出 `long` 范围的值。
 
@@ -30,15 +38,22 @@ string requestId = idGenerator.GenId();
 
 [id-generator.json](../code/server/config/id-generator.json) 声明编号根路径及连接/会话超时。ZooKeeper 地址继续由统一的 ServerSettings 配置提供，ID 生成和服务发现共用该地址。
 
-已接入请求 ID、实体 ID、连接 ID 和 Redis 缓存占用标记。ID 算法及 ZooKeeper 分配检查位于 `code/tests/singlepoint/IdGeneratorChecks.cs`。
+已接入请求 ID、实体 ID、连接 ID 和 Redis 缓存占用标记。`SinglePointState` 直接通过属性初始化表达式调用 `IdGenerator.GenId()`；生成身份不会提前登记实体，实体注册仍由 SinglePoint 自身初始化发起。
+
+单例生命周期检查位于 [IdGeneratorLifecycleChecks.cs](../code/tests/singlepoint/IdGeneratorLifecycleChecks.cs)，覆盖未初始化、初始化失败、取消清理、并发初始化、并发发号、租约监督和释放。ID 算法及 ZooKeeper 分配检查位于 [IdGeneratorChecks.cs](../code/tests/singlepoint/IdGeneratorChecks.cs)。
 
 当前分支已移除运行 ID；控制台和验收目录沿用时间目录名，不重新引入运行批次 ID。请求、实体和连接 ID 已统一为十进制文本，升级时需要统一更新服务器并重启整组进程。本次不改写存量数据库文档。测试用临时目录由系统临时目录 API 创建，不属于业务 ID。
 
 ## 验证
 
 ```powershell
-dotnet build TGame.slnx
-dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj
+dotnet build code/tests/singlepoint/TGame.SinglePointTests.csproj --no-restore
+dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj --no-build -- --node
+```
+
+上述小范围检查无需连接外部服务。真实 ZooKeeper、数据库或完整控制台联调须先按项目规范说明范围并获得确认，再执行相应检查，例如：
+
+```powershell
 $env:TGAME_SERVER_CONFIG = (Resolve-Path code/server/config/server.local.yaml).Path
 dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --id-zookeeper code/server/config/id-generator.json
 pwsh -NoProfile -File tools/scripts/powershell/Test-ServerConsole.ps1

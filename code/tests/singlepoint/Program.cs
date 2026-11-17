@@ -11,6 +11,7 @@ using TGame.Server.Logic;
 const int TestTimeoutSeconds = 5;
 const int HandshakeObservationMilliseconds = 200;
 const string InvalidEntityId = "body-1";
+const int TestWorkerId = 0;
 
 if (args is ["--profile-storage", var profileIdConfig])
 {
@@ -26,6 +27,11 @@ if (args is ["--profile-storage", var profileIdConfig])
         return 1;
     }
 }
+
+await IdGeneratorLifecycleChecks.RunAsync();
+// 内存检查共用一个进程内生成器，不向真实服务器组发布 ID。
+await using var idLifetime = await IdGenerator.InitializeAsync(
+    _ => Task.FromResult(new SnowflakeIdGenerator(TestWorkerId, TimeProvider.System)));
 
 if (args is ["--profile"])
 {
@@ -155,7 +161,7 @@ if (!loginNode.Ready || loginNode.SinglePoint?.GetType() != typeof(ServerSingleP
     throw new Exception("A connected role with no business SinglePoint did not become ready.");
 }
 
-var profileRequest = new ProfileRequest { RequestId = TestIds.Generator.GenId(), Fetch = TestIds.Generator.GenId() };
+var profileRequest = new ProfileRequest { RequestId = IdGenerator.GenId(), Fetch = IdGenerator.GenId() };
 var profileCall = loginNode.CallProfileAsync(profileRequest, stop);
 var profileFrame = await router.Output.Reader.ReadAsync(stop);
 if (profileFrame.Request.SinglePointType != nameof(ProcessType.Profile) ||
@@ -266,7 +272,7 @@ if (gate.Ready)
 
 var cancelling = new WaitingSinglePoint();
 using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
-var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), new SinglePointState(TestIds.Generator), TestIds.Generator, _ => Task.CompletedTask, cancel.Token);
+var pending = cancelling.InitializeAsync(nameof(ProcessType.Gate), new SinglePointState(), _ => Task.CompletedTask, cancel.Token);
 await cancelling.Started.Task.WaitAsync(stop);
 cancel.Cancel();
 try
@@ -319,7 +325,7 @@ if (!failedPoint.Disposed)
 }
 
 using var routes = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
-var duplicateEntityId = TestIds.Generator.GenId();
+var duplicateEntityId = IdGenerator.GenId();
 string[][] invalidRegistrations = [[], [InvalidEntityId], [duplicateEntityId, duplicateEntityId]];
 foreach (var ids in invalidRegistrations)
 {
@@ -352,7 +358,7 @@ foreach (var pair in Topology.Dials)
 
     var peer = ServerProcess.FormatName(pair.Key, 1);
     neighbors.Add(peer, new FrameStream());
-    neighborIds.Add(peer, TestIds.Generator.GenId());
+    neighborIds.Add(peer, IdGenerator.GenId());
 }
 
 var routeTasks = new List<Task>();
@@ -375,7 +381,7 @@ var baseRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Base), 1)]
 var profileRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
 var publish = new ProfileRequest
 {
-    RequestId = TestIds.Generator.GenId(),
+    RequestId = IdGenerator.GenId(),
     Publish = new EntitySummary
     {
         EntityId = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)],
@@ -403,28 +409,28 @@ if (published?.RequestId != publish.RequestId || published.EntityId != publish.P
 }
 
 var foreignPublish = publish.Clone();
-foreignPublish.RequestId = TestIds.Generator.GenId();
+foreignPublish.RequestId = IdGenerator.GenId();
 foreignPublish.Publish.EntityId = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Scene), 1)];
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), foreignPublish);
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), new ProfileRequest
 {
-    RequestId = TestIds.Generator.GenId(),
+    RequestId = IdGenerator.GenId(),
     Withdraw = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Scene), 1)]
 });
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.Base), 1), new ProfileRequest
 {
-    RequestId = TestIds.Generator.GenId(),
+    RequestId = IdGenerator.GenId(),
     Fetch = InvalidEntityId
 });
 await ExpectProfileRejected(ServerProcess.FormatName(nameof(ProcessType.GM), 1), new ProfileRequest
 {
-    RequestId = TestIds.Generator.GenId(),
+    RequestId = IdGenerator.GenId(),
     Fetch = neighborIds[ServerProcess.FormatName(nameof(ProcessType.Base), 1)]
 });
 
-var missing = RpcFrames.Request(new Empty(), TestIds.Generator.GenId());
+var missing = RpcFrames.Request(new Empty(), IdGenerator.GenId());
 missing.Request.SourceProcess = ServerProcess.FormatName(nameof(ProcessType.Base), 1);
-missing.Request.EntityId = TestIds.Generator.GenId();
+missing.Request.EntityId = IdGenerator.GenId();
 missing.Request.DeadlineUnixMs = DateTimeOffset.UtcNow.Add(PeerLink.RequestTimeout).ToUnixTimeMilliseconds();
 baseRoute.Input.Writer.TryWrite(missing);
 var notFound = (await baseRoute.Output.Reader.ReadAsync(stop)).Reply;
@@ -462,14 +468,14 @@ async Task ExpectProfileRejected(string peer, ProfileRequest request)
 Task Open(ServerNode node, string peer, FrameStream stream)
 {
     stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-    return node.RunLinkAsync(peer, TestIds.Generator.GenId(), stream, stream, stop);
+    return node.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, stop);
 }
 
 async Task ExpectProfileResult(ProfileReply.Types.Result result)
 {
     var request = new ProfileRequest
     {
-        RequestId = TestIds.Generator.GenId(),
+        RequestId = IdGenerator.GenId(),
         Fetch = gate.State.EntityId
     };
     var messages = new RpcDispatcher();

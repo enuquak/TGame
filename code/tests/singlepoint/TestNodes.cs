@@ -11,7 +11,7 @@ internal static class TestNodes
     {
         var request = new RegisterEntitiesRequest { SinglePointId = entities.FirstOrDefault() ?? "" };
         request.EntityIds.Add(entities);
-        var frame = RpcFrames.Request(request, TestIds.Generator.GenId());
+        var frame = RpcFrames.Request(request, IdGenerator.GenId());
         await stream.Input.Writer.WriteAsync(frame, stop);
         var response = await stream.Output.Reader.ReadAsync(stop);
         if (response.Reply?.RequestId != frame.Request.RequestId)
@@ -30,7 +30,7 @@ internal static class TestNodes
     public static ServerNode Create(string name, ServerGroup group)
     {
         var messages = new RpcDispatcher();
-        var node = new ServerNode(name, group, messages, TestIds.Generator);
+        var node = new ServerNode(name, group, messages);
         ServerMessages.Register(messages, node);
         return node;
     }

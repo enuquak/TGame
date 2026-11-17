@@ -67,7 +67,7 @@ internal static class MongoStorageChecks
             using (var missingCredential = new DBMgrServerSinglePoint())
             {
                 await ExpectAsync<InvalidOperationException>(() => missingCredential.InitializeAsync(
-                    nameof(ProcessType.DBMgr), new SinglePointState(TestIds.Generator), TestIds.Generator, _ => Task.CompletedTask, CancellationToken.None));
+                    nameof(ProcessType.DBMgr), new SinglePointState(), _ => Task.CompletedTask, CancellationToken.None));
                 if (missingCredential.Initialized)
                 {
                     throw new Exception("DBMgr became ready without its own credential.");
@@ -78,7 +78,7 @@ internal static class MongoStorageChecks
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
             using var unavailable = new DBMgrServerSinglePoint();
             await ExpectAsync<TimeoutException>(() => unavailable.InitializeAsync(
-                nameof(ProcessType.DBMgr), new SinglePointState(TestIds.Generator), TestIds.Generator, _ => Task.CompletedTask, deadline.Token));
+                nameof(ProcessType.DBMgr), new SinglePointState(), _ => Task.CompletedTask, deadline.Token));
             if (unavailable.Initialized)
             {
                 throw new Exception("DBMgr became ready before its database connection check succeeded.");

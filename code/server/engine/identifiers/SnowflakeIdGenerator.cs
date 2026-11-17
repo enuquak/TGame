@@ -3,7 +3,7 @@ using org.apache.zookeeper;
 
 namespace TGame.Server.Engine;
 
-public sealed class SnowflakeIdGenerator : IIdGenerator, IAsyncDisposable
+internal sealed class SnowflakeIdGenerator : IAsyncDisposable
 {
     private const int SequenceWaitMilliseconds = 1;
     private readonly object sync = new();

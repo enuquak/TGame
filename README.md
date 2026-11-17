@@ -61,7 +61,7 @@ dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --e
 
 服务端入口工程为 `code/server/app/TGame.Server.csproj`，输出 `TGame.Server.dll`。独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现及 SinglePoint 基础能力，使用 `TGame.Server.Engine` 命名空间。可选的业务 SinglePoint 子类与 Profile 处理位于 `code/server/logic/`；宿主统一创建引擎 `ServerNode`，提供业务类型集合并按两个阶段启动服务。Profile 通过通用 RPC 调用，其参数与写入归属校验由 `ProfileMessages` 承担，存储处理由 `ProfileServerSinglePoint` 承担。引擎可以单独构建，不引用宿主或业务实现。GM 进程使用引擎默认 SinglePoint，保留与 Router 的拓扑连接。
 
-唯一 ID 统一调用引擎的 `idGenerator.GenId()`，使用雪花算法；ZooKeeper 自动分配进程编号，引擎与业务共用生成器。请求、实体、连接和缓存占用标记均已接入，详见[雪花 ID](docs/雪花ID.md)。
+唯一 ID 统一调用引擎的 `IdGenerator.GenId()`，使用雪花算法；宿主启动时初始化进程内唯一实例，ZooKeeper 自动分配进程编号。引擎与业务直接使用静态入口，无需通过构造函数传递生成器。请求、实体、连接和缓存占用标记均已接入，详见[雪花 ID](docs/雪花ID.md)。
 
 日志 JSON 格式由 Engine 中的 `TGame.Logging` 维护。连接服务与通用 RPC 帧定义在 [transport.proto](code/server/engine/protocols/transport.proto)，请求与响应通过 Protobuf `Any` 承载。`RpcDispatcher` 根据消息类型分发，`logic/messages/ServerMessages.cs` 注册 Profile 处理器。引擎协议生成到 `code/server/engine/generated/protocols/`，业务 [profile.proto](code/shared/protocols/profile.proto) 生成到 `code/shared/generated/protocols/`；控制台导出命令同时处理两者。宿主显式引用 Engine 和业务 Shared，Engine 不引用 Shared。
 

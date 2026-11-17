@@ -137,5 +137,5 @@ internal static class ProfileRpcChecks
         }
     };
 
-    private static string NewId() => TestIds.Generator.GenId();
+    private static string NewId() => IdGenerator.GenId();
 }

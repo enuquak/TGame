@@ -10,7 +10,7 @@ internal sealed class ProfileServerSinglePoint : ServerSinglePoint, IDisposable
     private ProfileStore store = null!;
 
     protected override async Task InitializeRoleAsync(CancellationToken stop) =>
-        store = await ProfileStore.OpenAsync(IdGenerator, stop);
+        store = await ProfileStore.OpenAsync(stop);
 
     internal async Task<ProfileReply> HandleAsync(ProfileRequest request, CancellationToken stop)
     {

@@ -21,7 +21,7 @@ internal static class EntityRegistrationChecks
         var group = new ServerGroup(counts);
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
         var router = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
-        using var node = new ServerNode(profile, group, new RpcDispatcher(), TestIds.Generator);
+        using var node = new ServerNode(profile, group, new RpcDispatcher());
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var stream = new FrameStream { AcknowledgeRegistration = false };
         stream.Input.Writer.TryWrite(TestNodes.Hello(router));
@@ -106,12 +106,12 @@ internal static class EntityRegistrationChecks
 
     private static async Task CheckBusinessFailureAsync(CancellationToken stop)
     {
-        var state = new SinglePointState(TestIds.Generator);
+        var state = new SinglePointState();
         var point = new InitializationFailureSinglePoint();
         bool registered = false;
         try
         {
-            await point.InitializeAsync(nameof(ProcessType.Gate), state, TestIds.Generator, _ =>
+            await point.InitializeAsync(nameof(ProcessType.Gate), state, _ =>
             {
                 registered = true;
                 return Task.CompletedTask;
@@ -126,7 +126,7 @@ internal static class EntityRegistrationChecks
             "Failed business initialization registered local or remote entities.");
     }
 
-    private static string NewId() => TestIds.Generator.GenId();
+    private static string NewId() => IdGenerator.GenId();
 
     private static void Check(bool condition, string message)
     {

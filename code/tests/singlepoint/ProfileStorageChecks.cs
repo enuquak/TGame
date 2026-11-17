@@ -10,14 +10,14 @@ internal static class ProfileStorageChecks
     public static async Task RunAsync(string idConfig, CancellationToken stop)
     {
         var options = IdGeneratorOptions.Load(idConfig, ServerSettings.Current.Value.ZooKeeper);
-        await using var ids = await SnowflakeIdGenerator.CreateAsync(options, stop);
+        await using var idLifetime = await IdGenerator.InitializeAsync(options, stop);
         var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
         counts[ProcessType.Router] = 1;
         counts[ProcessType.Login] = 1;
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
         var messages = new RpcDispatcher();
-        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Profile), 1), group, messages, ids);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Profile), 1), group, messages);
         ServerMessages.Register(messages, node);
         var stream = new FrameStream();
         var router = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
@@ -80,7 +80,7 @@ internal static class ProfileStorageChecks
             }
         }
 
-        string NewId() => ids.GenId();
+        string NewId() => IdGenerator.GenId();
 
         async Task CheckAsync(ProfileRequest request, Result expected, string? title = null)
         {

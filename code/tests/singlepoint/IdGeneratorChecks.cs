@@ -64,7 +64,7 @@ internal static class IdGeneratorChecks
     internal static async Task RunZooKeeperAsync(string configPath, string endpoint)
     {
         var configured = IdGeneratorOptions.Load(configPath, endpoint);
-        var root = configured.WorkerRootPath + "-checks/" + TestIds.Generator.GenId();
+        var root = configured.WorkerRootPath + "-checks/" + IdGenerator.GenId();
         var options = new IdGeneratorOptions
         {
             ZooKeeperEndpoint = configured.ZooKeeperEndpoint,

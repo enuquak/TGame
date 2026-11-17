@@ -22,11 +22,9 @@ public partial class ServerNode : IDisposable
     private readonly ConcurrentDictionary<string, string> owners = new();
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
 
-    public ServerNode(string name, ServerGroup group, RpcDispatcher messages, IIdGenerator idGenerator)
+    public ServerNode(string name, ServerGroup group, RpcDispatcher messages)
     {
-        ArgumentNullException.ThrowIfNull(idGenerator);
-        IdGenerator = idGenerator;
-        State = new SinglePointState(idGenerator);
+        State = new SinglePointState();
         Name = name;
         this.group = group;
         this.messages = messages;
@@ -41,7 +39,6 @@ public partial class ServerNode : IDisposable
     public string Role { get; }
     public bool Ready => singlePoint?.Initialized == true && linksReady && RegistrationsComplete;
     public SinglePointState State { get; }
-    public IIdGenerator IdGenerator { get; }
     public ServerSinglePoint? SinglePoint => singlePoint;
 
     public ProcessType GetProcessType(string process) => group.GetProcess(process).Type;
@@ -70,7 +67,7 @@ public partial class ServerNode : IDisposable
         }
 
         singlePoint = registry.Create(Enum.Parse<ProcessType>(Role));
-        await singlePoint.InitializeAsync(Role, State, IdGenerator, RegisterEntitiesAsync, stop);
+        await singlePoint.InitializeAsync(Role, State, RegisterEntitiesAsync, stop);
     }
 
     public void Dispose()

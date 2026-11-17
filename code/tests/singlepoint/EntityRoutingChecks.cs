@@ -138,7 +138,7 @@ internal static class EntityRoutingChecks
                 expiredHandler.TrySetResult();
             }
         });
-        using var node = new ServerNode(login, group, dispatcher, TestIds.Generator);
+        using var node = new ServerNode(login, group, dispatcher);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(gate));
@@ -200,7 +200,7 @@ internal static class EntityRoutingChecks
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
-        using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group, new RpcDispatcher(), TestIds.Generator);
+        using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group, new RpcDispatcher());
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(profile));
         var running = router.RunLinkAsync(profile, NewId(), stream, stream, stop);
@@ -238,7 +238,7 @@ internal static class EntityRoutingChecks
         }
     }
 
-    private static string NewId() => TestIds.Generator.GenId();
+    private static string NewId() => IdGenerator.GenId();
 
     private sealed class Network : IAsyncDisposable
     {
@@ -286,7 +286,7 @@ internal static class EntityRoutingChecks
             foreach (var process in group.Processes)
             {
                 var dispatcher = new RpcDispatcher();
-                var node = new ServerNode(process.Name, group, dispatcher, TestIds.Generator);
+                var node = new ServerNode(process.Name, group, dispatcher);
                 nodes.Add(process.Name, node);
                 dispatcher.RegisterEntity<StringValue, StringValue>(async (context, request, token) =>
                 {
