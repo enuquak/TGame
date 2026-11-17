@@ -41,59 +41,56 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     await using var idLifetime = await InitializeIdGeneratorAsync();
 
     using var node = new ServerNode(process.Name, group);
-
     await using var app = await InitializeApplicationAsync(process, node);
-    var address = app.Urls.Single();
 
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
     var stop = lifetime.Token;
-
+    var workers = new List<Task>();
     try
     {
-        await RunWorkersAsync();
+        workers.Add(SuperviseAsync(WatchStopAsync(runDir, process.Name, lifetime), lifetime));
+        workers.Add(SuperviseAsync(WatchZooKeeperSessionAsync(stop), lifetime));
+
+        await InitializeEngineAsync();
+        await InitializeSinglePointAsync();
+        await Task.WhenAll(workers);
+    }
+    catch (OperationCanceledException) when (stop.IsCancellationRequested)
+    {
     }
     finally
     {
         lifetime.Cancel();
-        await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
+        try
+        {
+            await Task.WhenAll(workers);
+        }
+        finally
+        {
+            await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
+        }
     }
 
-    async Task RunWorkersAsync()
+    async Task InitializeEngineAsync()
     {
-        using var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        registrationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
-        var registration = ZooKeeperProxy.RegisterProcessAsync(group, process, address, registrationTimeout.Token);
+        using (var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop))
+        {
+            registrationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
+            await ZooKeeperProxy.RegisterProcessAsync(group, process, app.Urls.Single(), registrationTimeout.Token);
+        }
 
-        var workers = new List<Task>();
         foreach (var peer in Topology.DialTargets(group, process.Name))
         {
-            workers.Add(SuperviseAsync(ConnectAsync(peer), lifetime));
+            workers.Add(SuperviseAsync(node.MaintainLinkAsync(peer, stop), lifetime));
         }
 
-        workers.Add(SuperviseAsync(InitializeSinglePointAsync(), lifetime));
-        workers.Add(SuperviseAsync(WatchStopAsync(runDir, process.Name, lifetime), lifetime));
-        workers.Add(SuperviseAsync(WatchZooKeeperSessionAsync(stop), lifetime));
-        await Task.WhenAll(workers);
+        await node.FirstLinks.WaitAsync(stop);
+    }
 
-        async Task InitializeSinglePointAsync()
-        {
-            await InitializeEngineAsync();
-
-            var singlePoints = new SinglePointRegistry(typeof(ProfileServerSinglePoint).Assembly.GetTypes());
-            await node.InitializeSinglePointAsync(singlePoints, stop);
-        }
-
-        async Task InitializeEngineAsync()
-        {
-            await registration;
-            await node.FirstLinks.WaitAsync(stop);
-        }
-
-        async Task ConnectAsync(string peer)
-        {
-            await registration;
-            await node.MaintainLinkAsync(peer, stop);
-        }
+    async Task InitializeSinglePointAsync()
+    {
+        var singlePoints = new SinglePointRegistry(typeof(ProfileServerSinglePoint).Assembly.GetTypes());
+        await node.InitializeSinglePointAsync(singlePoints, stop);
     }
 }
 
