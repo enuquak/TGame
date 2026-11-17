@@ -22,9 +22,20 @@ session.Output += Console.WriteLine;
 try
 {
     await session.ExportAsync();
-    if (!Directory.EnumerateFiles(Path.Combine(checkout, "code/shared/generated"), "*.cs", SearchOption.AllDirectories).Any())
+    string[] generatedFiles = ["code/server/engine/generated/protocols/Transport.cs",
+        "code/server/engine/generated/protocols/TransportGrpc.cs", "code/shared/generated/protocols/Profile.cs"];
+    foreach (var generatedFile in generatedFiles)
     {
-        throw new InvalidOperationException("Protobuf export produced no C# sources.");
+        if (!File.Exists(Path.Combine(checkout, generatedFile)))
+        {
+            throw new InvalidOperationException($"Protobuf export did not generate {generatedFile}.");
+        }
+    }
+
+    if (args.Length == 2 && args[1] == "--export-only")
+    {
+        Console.WriteLine("PASS engine and business Protobuf export.");
+        return 0;
     }
 
     await session.StartAsync();
@@ -222,7 +233,7 @@ async Task CheckDuplicateRegistrationAsync()
         };
         info.ArgumentList.Add(name);
         info.ArgumentList.Add(directory);
-        info.Environment[ServerEnvironment.LogRoot] = Path.Combine(directory, "logs");
+        info.Environment[EngineEnvironment.LogRoot] = Path.Combine(directory, "logs");
         info.Environment[ServerEnvironment.Config] = Path.Combine(Path.GetDirectoryName(original.MainModule!.FileName)!, "config", "server.local.yaml");
 
         using var duplicate = Process.Start(info)!;

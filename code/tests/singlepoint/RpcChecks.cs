@@ -9,6 +9,29 @@ internal static class RpcChecks
 {
     public static void CheckTransportBoundary()
     {
+        var engine = typeof(ServerNode).Assembly;
+        var business = typeof(TGame.Profile.ProfileRequest).Assembly;
+        if (engine.GetReferencedAssemblies().Any(reference => reference.Name == business.GetName().Name))
+        {
+            throw new Exception("Engine must not reference business Shared.");
+        }
+
+        if (business.GetReferencedAssemblies().Any(reference => reference.Name == engine.GetName().Name))
+        {
+            throw new Exception("Business Shared must not reference the server engine.");
+        }
+
+        System.Type[] engineTypes = [typeof(Frame), typeof(ServerLink), typeof(ProcessType), typeof(ServerGroup),
+            typeof(ServerProcess), typeof(IdText), typeof(ServerRunFiles), typeof(ServerLogEvents),
+            typeof(ServerLogFields), typeof(TGame.Logging.LogEventJson)];
+        foreach (var type in engineTypes)
+        {
+            if (type.Assembly != engine)
+            {
+                throw new Exception($"{type.Name} must belong to the engine assembly.");
+            }
+        }
+
         foreach (var dependency in Frame.Descriptor.File.Dependencies)
         {
             if (dependency.Package.StartsWith("tgame.", StringComparison.Ordinal))

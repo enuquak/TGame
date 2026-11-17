@@ -18,7 +18,7 @@ public static class TraceLog
         instance = server.Name;
         using var process = Process.GetCurrentProcess();
         long startedUtcTicks = process.StartTime.ToUniversalTime().Ticks;
-        var root = Environment.GetEnvironmentVariable(ServerEnvironment.LogRoot) ?? Path.Combine("logs", "server");
+        var root = Environment.GetEnvironmentVariable(EngineEnvironment.LogRoot) ?? Path.Combine("logs", "server");
         var directory = Directory.CreateDirectory(Path.Combine(root, server.Name + "Server"));
         var path = Path.Combine(directory.FullName, $"{Environment.ProcessId}-{startedUtcTicks}-.log");
         SelfLog.Enable(TextWriter.Synchronized(Console.Error));

@@ -63,7 +63,7 @@ dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --e
 
 唯一 ID 统一调用引擎的 `idGenerator.GenId()`，使用雪花算法；ZooKeeper 自动分配进程编号，引擎与业务共用生成器。请求、实体、连接和缓存占用标记均已接入，详见[雪花 ID](docs/雪花ID.md)。
 
-共享日志 JSON 格式属于 `TGame.Logging`。连接服务与通用 RPC 帧定义在 [transport.proto](code/shared/protocols/transport.proto)，请求与响应通过 Protobuf `Any` 承载。`RpcDispatcher` 根据消息类型分发，`logic/messages/ServerMessages.cs` 注册 Profile 处理器。协议构建时生成到 `code/shared/generated/protocols/`。
+日志 JSON 格式由 Engine 中的 `TGame.Logging` 维护。连接服务与通用 RPC 帧定义在 [transport.proto](code/server/engine/protocols/transport.proto)，请求与响应通过 Protobuf `Any` 承载。`RpcDispatcher` 根据消息类型分发，`logic/messages/ServerMessages.cs` 注册 Profile 处理器。引擎协议生成到 `code/server/engine/generated/protocols/`，业务 [profile.proto](code/shared/protocols/profile.proto) 生成到 `code/shared/generated/protocols/`；控制台导出命令同时处理两者。宿主显式引用 Engine 和业务 Shared，Engine 不引用 Shared。
 
 内部 gRPC 服务为 `tgame.transport.ServerLink`，服务发现采用固定的 `server-<实例名>` 节点；各进程须使用统一重新构建的版本，不能混用仍带运行 ID 的旧构建。控制台的“编译并重启”会统一构建、启动各角色。强制终止后若 ZooKeeper 会话尚未过期，新进程会起服失败，待旧节点消失后再启动。可运行 `dotnet run --project code/tests/singlepoint/TGame.SinglePointTests.csproj -- --registry` 检查节点冲突与正常退出后的重新注册；该检查需要 ZooKeeper 隧道。
 

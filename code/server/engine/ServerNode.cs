@@ -119,7 +119,7 @@ public partial class ServerNode : IDisposable
 
     private string PeerRole(string peer)
     {
-        if (peer == ServerPeerNames.Client)
+        if (peer == EnginePeerNames.Client)
         {
             return peer;
         }

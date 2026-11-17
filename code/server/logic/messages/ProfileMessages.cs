@@ -32,9 +32,9 @@ internal static class ProfileMessages
         var subject = ProfileStore.Subject(request);
         try
         {
-            TraceLog.Event(ServerLogEvents.ProfileRequestTx, node.Role, id: request.RequestId, entity: subject);
+            TraceLog.Event(ProfileLogEvents.RequestTx, node.Role, id: request.RequestId, entity: subject);
             var reply = await node.CallSinglePointAsync<ProfileReply>(ProcessType.Profile, request, stop);
-            TraceLog.Event(ServerLogEvents.ProfileReplyRx, node.Role, id: reply.RequestId, entity: reply.EntityId);
+            TraceLog.Event(ProfileLogEvents.ReplyRx, node.Role, id: reply.RequestId, entity: reply.EntityId);
             if (reply.RequestId != request.RequestId || reply.EntityId != subject)
             {
                 throw new InvalidDataException("Profile reply request or entity mismatch.");
@@ -45,7 +45,7 @@ internal static class ProfileMessages
         catch (Exception error) when (!stop.IsCancellationRequested &&
             error is IOException or RpcException or TimeoutException or InvalidOperationException or OperationCanceledException)
         {
-            TraceLog.Event(ServerLogEvents.ProfileDeliveryFailed, node.Role, id: request.RequestId, entity: subject, detail: error.GetType().Name);
+            TraceLog.Event(ProfileLogEvents.DeliveryFailed, node.Role, id: request.RequestId, entity: subject, detail: error.GetType().Name);
             return Failure(request, Result.Unavailable);
         }
     }
@@ -73,7 +73,7 @@ internal static class ProfileMessages
     private static async Task<ProfileReply> HandleAsync(ServerNode node, EntityRpcContext context, ProfileRequest request, CancellationToken stop)
     {
         var subject = ProfileStore.Subject(request);
-        TraceLog.Event(ServerLogEvents.ProfileRequestRx, node.Role, context.SourceProcess, request.RequestId, subject);
+        TraceLog.Event(ProfileLogEvents.RequestRx, node.Role, context.SourceProcess, request.RequestId, subject);
         if (!node.Ready)
         {
             return Failure(request, Result.Unavailable);
@@ -88,7 +88,7 @@ internal static class ProfileMessages
         }
 
         var reply = await profile.HandleAsync(request, stop);
-        TraceLog.Event(ServerLogEvents.ProfileReplyTx, node.Role, context.SourceProcess, reply.RequestId, reply.EntityId);
+        TraceLog.Event(ProfileLogEvents.ReplyTx, node.Role, context.SourceProcess, reply.RequestId, reply.EntityId);
         return reply;
     }
 

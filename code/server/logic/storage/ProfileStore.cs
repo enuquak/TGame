@@ -102,7 +102,7 @@ internal sealed class ProfileStore : IDisposable
 
                     reply.Summary = value;
                     reply.Result = Result.Found;
-                    Log(ServerLogEvents.ProfileCacheHit);
+                    Log(ProfileLogEvents.CacheHit);
                     return reply;
                 }
 
@@ -113,7 +113,7 @@ internal sealed class ProfileStore : IDisposable
             }
             catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
             {
-                Log(ServerLogEvents.ProfileCacheUnavailable, ex.GetType().Name);
+                Log(ProfileLogEvents.CacheUnavailable, ex.GetType().Name);
             }
 
             var doc = await summaries.Find(filter).FirstOrDefaultAsync(stop);
@@ -138,11 +138,11 @@ internal sealed class ProfileStore : IDisposable
                 }
                 catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
                 {
-                    Log(ServerLogEvents.ProfileCacheUnavailable, ex.GetType().Name);
+                    Log(ProfileLogEvents.CacheUnavailable, ex.GetType().Name);
                 }
             }
 
-            Log(doc is null ? ServerLogEvents.ProfileMissing : ServerLogEvents.ProfileMongoRead);
+            Log(doc is null ? ProfileLogEvents.Missing : ProfileLogEvents.MongoRead);
             return reply;
         }
 
@@ -168,10 +168,10 @@ internal sealed class ProfileStore : IDisposable
         }
         catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
         {
-            Log(ServerLogEvents.ProfileCacheUnavailable, ex.GetType().Name);
+            Log(ProfileLogEvents.CacheUnavailable, ex.GetType().Name);
         }
 
-        Log(reply.Result == Result.Stored ? ServerLogEvents.ProfileStored : ServerLogEvents.ProfileRemoved);
+        Log(reply.Result == Result.Stored ? ProfileLogEvents.Stored : ProfileLogEvents.Removed);
         return reply;
 
         void Log(string ev, string? detail = null) =>
