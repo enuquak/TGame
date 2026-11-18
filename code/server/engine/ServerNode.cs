@@ -1,12 +1,13 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
 using TGame.Transport;
 
 namespace TGame.Server.Engine;
 
-public partial class ServerNode : IDisposable
+public partial class ServerNode
 {
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
@@ -14,11 +15,10 @@ public partial class ServerNode : IDisposable
     private readonly ProcessType type;
     private readonly IReadOnlyList<ProcessType> requiredTypes;
     private volatile bool linksReady;
-    private volatile ServerSinglePoint? singlePoint;
     private readonly object linkChanges = new();
     private readonly HashSet<string> sessions = [];
     private readonly TaskCompletionSource firstLinks = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource<ServerSinglePoint> singlePointCreated = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource readinessChanges = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
 
     public ServerNode(string name)
@@ -35,8 +35,7 @@ public partial class ServerNode : IDisposable
 
     public Task FirstLinks => firstLinks.Task;
     public string Role { get; }
-    public bool Ready => singlePoint?.Initialized == true && linksReady && RegistrationsComplete;
-    public ServerSinglePoint? SinglePoint => singlePoint;
+    public bool Ready => linksReady;
 
     public async Task WaitUntilReadyAsync(CancellationToken stop)
     {
@@ -51,42 +50,32 @@ public partial class ServerNode : IDisposable
                     return;
                 }
 
-                changed = registrationChanges.Task;
+                changed = readinessChanges.Task;
             }
 
             await changed.WaitAsync(stop);
         }
     }
 
-    public async Task InitializeSinglePointAsync(SinglePointRegistry registry, CancellationToken stop)
+    public Task<TReply> CallPeerAsync<TReply>(string peer, IMessage request, CancellationToken stop)
+        where TReply : IMessage<TReply>, new()
     {
+        ArgumentNullException.ThrowIfNull(request);
         stop.ThrowIfCancellationRequested();
-        if (!firstLinks.Task.IsCompletedSuccessfully)
+        if (!ServerProcess.TryParse(peer, out _))
         {
-            throw new InvalidOperationException("Engine connections must be initialized before the SinglePoint.");
+            throw new ArgumentException("A process instance name is required.", nameof(peer));
         }
 
-        if (singlePoint is not null)
+        if (!links.TryGetValue(peer, out var link))
         {
-            throw new InvalidOperationException("SinglePoint initialization has already started.");
+            throw new RpcException(new Status(StatusCode.Unavailable, $"No connection to {peer}."));
         }
 
-        singlePoint = registry.Create(Enum.Parse<ProcessType>(Role));
-        singlePointCreated.SetResult(singlePoint);
-        GameLog.Info(ServerLogEvents.InitStepCompleted, Role, entity: singlePoint.EntityId,
-            detail: $"{singlePoint.GetType().Name} 实例创建完成");
-
-        await singlePoint.InitializeAsync(this, stop);
-        lock (linkChanges)
-        {
-            UpdateLinkReadiness();
-        }
+        return link.CallAsync<TReply>(request, IdGenerator.GenId(), stop);
     }
 
-    public void Dispose()
-    {
-        (singlePoint as IDisposable)?.Dispose();
-    }
+    private Frame CreateHello() => new() { Hello = Name };
 
     private static void ReceiveFrame(Frame frame, PeerLink link, ChannelWriter<Frame> requests)
     {
@@ -188,21 +177,19 @@ public partial class ServerNode : IDisposable
                 UpdateLinkReadiness();
             }
 
-            // Handlers can issue nested requests on the same stream.
-            // Keep receiving replies while a handler awaits its result.
+            // 请求输出与接收分开，写入回包时仍可接收当前连接上的响应。
             using var transport = CancellationTokenSource.CreateLinkedTokenSource(stop);
             var queue = Channel.CreateBounded<Frame>(new BoundedChannelOptions(RequestQueueCapacity) { SingleReader = true, SingleWriter = true });
             var read = ReadAsync();
             var serve = ServeAsync();
-            var registration = RestoreRegistrationAsync();
-            var finished = await Task.WhenAny(read, serve, registration);
+            var finished = await Task.WhenAny(read, serve);
 
             transport.Cancel();
             queue.Writer.TryComplete();
             link.Close();
             try
             {
-                await Task.WhenAll(read, serve, registration);
+                await Task.WhenAll(read, serve);
             }
             catch (OperationCanceledException) when (!stop.IsCancellationRequested)
             {
@@ -217,68 +204,22 @@ public partial class ServerNode : IDisposable
                 }
             }
 
-            async Task RestoreRegistrationAsync()
-            {
-                // 每条连接等待本地实体就绪，覆盖连接早于和晚于初始化的两种情况。
-                if (type != ProcessType.Gate)
-                {
-                    await entitiesReady.Task.WaitAsync(transport.Token);
-                    await RegisterLinkAsync(link, transport.Token);
-                }
-
-                await Task.Delay(Timeout.Infinite, transport.Token);
-            }
-
             async Task ServeAsync()
             {
-                var running = new List<Task>();
-                try
+                await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
                 {
-                    await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
+                    var request = frame.Request;
+                    PeerLink.ValidateEnvelope(request.RequestId, request.Payload);
+                    var reply = new RpcReply
                     {
-                        if (frame.Request.Payload?.Is(RegisterEntitiesRequest.Descriptor) == true)
+                        RequestId = request.RequestId,
+                        Error = new RpcError
                         {
-                            await HandleRegistrationAsync(frame.Request, link, transport.Token);
-                            continue;
+                            StatusCode = (int)StatusCode.Unimplemented,
+                            Detail = "This process does not handle RPC requests."
                         }
-
-                        for (int index = running.Count - 1; index >= 0; index--)
-                        {
-                            if (running[index].IsCompleted)
-                            {
-                                await running[index];
-                                running.RemoveAt(index);
-                            }
-                        }
-
-                        if (running.Count == RequestQueueCapacity)
-                        {
-                            var reply = ErrorReply(frame.Request.RequestId, StatusCode.ResourceExhausted, "Too many active entity RPCs.");
-                            await link.WriteAsync(new Frame { Reply = reply }, transport.Token);
-                            continue;
-                        }
-
-                        // Forwarding may call back through this stream before the original request completes.
-                        running.Add(ServeRoutedAsync(frame.Request));
-                    }
-                }
-                finally
-                {
-                    await Task.WhenAll(running);
-                }
-
-                async Task ServeRoutedAsync(RpcRequest request)
-                {
-                    try
-                    {
-                        var reply = await RouteReplyAsync(request, peer, transport.Token);
-                        await link.WriteAsync(new Frame { Reply = reply }, transport.Token);
-                    }
-                    catch
-                    {
-                        transport.Cancel();
-                        throw;
-                    }
+                    };
+                    await link.WriteAsync(new Frame { Reply = reply }, transport.Token);
                 }
             }
         }
@@ -289,12 +230,6 @@ public partial class ServerNode : IDisposable
                 sessions.Remove(peer);
                 if (links.TryRemove(peer, out _))
                 {
-                    if (peerSinglePoints.Remove(peer, out var singlePointId) && singlePoint is RouterServerSinglePoint router)
-                    {
-                        router.RemoveEntities(peer, singlePointId);
-                    }
-
-                    registeredLinks.Remove(link);
                     UpdateLinkReadiness();
                 }
             }
@@ -304,32 +239,30 @@ public partial class ServerNode : IDisposable
     }
 
     // 调用方持有 linkChanges；首次构造尚未发布节点时除外。
-    private bool HasRequiredLinks(bool requireRegistration)
+    private bool HasRequiredLinks()
     {
         return requiredTypes.All(target => links.Values.Any(link =>
-            ServerProcess.Parse(link.Peer).Type == target &&
-            (!requireRegistration || registeredLinks.Contains(link))));
+            ServerProcess.Parse(link.Peer).Type == target));
     }
 
     private void UpdateLinkReadiness()
     {
-        var previous = registrationChanges;
-        registrationChanges = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        previous.TrySetResult();
-        bool connected = HasRequiredLinks(requireRegistration: false);
+        bool connected = HasRequiredLinks();
         if (connected)
         {
             firstLinks.TrySetResult();
         }
 
-        bool complete = connected && (singlePoint?.Initialized != true || RegistrationsComplete);
-        if (complete == linksReady)
+        if (connected == linksReady)
         {
             return;
         }
 
-        linksReady = complete;
-        if (complete)
+        linksReady = connected;
+        var previous = readinessChanges;
+        readinessChanges = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        previous.TrySetResult();
+        if (connected)
         {
             GameLog.Info(ServerLogEvents.LinksReady, Role, detail: links.Count.ToString());
             return;

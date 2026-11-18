@@ -16,14 +16,14 @@ internal static class DiscoveryLinkChecks
     public static async Task RunAsync(CancellationToken stop)
     {
         using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        var first = new DiscoveryPeer("Router1");
-        var second = new DiscoveryPeer("Router2");
+        var first = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 1));
+        var second = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 2));
         await using var firstApp = await StartAsync(first, stop);
         await using var secondApp = await StartAsync(second, stop);
         var router1 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 1), firstApp.Urls.Single(), 1);
         var router2 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 2), secondApp.Urls.Single(), 2);
         var changes = Channel.CreateUnbounded<IReadOnlyList<DiscoveredProcess>>();
-        using var node = new ServerNode("Scene1");
+        var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Scene), 1));
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var maintenance = node.MaintainConnectionsAsync(changes.Reader.ReadAllAsync(lifetime.Token), lifetime.Token);
         try
@@ -31,10 +31,9 @@ internal static class DiscoveryLinkChecks
             changes.Writer.TryWrite([router1]);
             var old = await first.Connections.Reader.ReadAsync(stop);
             await node.FirstLinks.WaitAsync(stop);
-            await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
             changes.Writer.TryWrite([router1, router2]);
             var extra = await second.Connections.Reader.ReadAsync(stop);
-            await extra.Registered.Task.WaitAsync(stop);
+            await extra.Handshaken.Task.WaitAsync(stop);
             if (!node.Ready)
             {
                 throw new Exception("Adding an extra Router revoked readiness.");
@@ -50,7 +49,7 @@ internal static class DiscoveryLinkChecks
             changes.Writer.TryWrite([router2 with { Generation = 3 }]);
             await extra.Closed.Task.WaitAsync(stop);
             var replacement = await second.Connections.Reader.ReadAsync(stop);
-            await replacement.Registered.Task.WaitAsync(stop);
+            await replacement.Handshaken.Task.WaitAsync(stop);
             changes.Writer.TryWrite([]);
             await replacement.Closed.Task.WaitAsync(stop);
             while (node.Ready)
@@ -60,7 +59,7 @@ internal static class DiscoveryLinkChecks
 
             changes.Writer.TryWrite([router1]);
             var restored = await first.Connections.Reader.ReadAsync(stop);
-            await restored.Registered.Task.WaitAsync(stop);
+            await restored.Handshaken.Task.WaitAsync(stop);
             while (!node.Ready)
             {
                 await Task.Delay(1, stop);
@@ -118,7 +117,7 @@ internal sealed class DiscoveryPeer(string name) : ServerLink.ServerLinkBase
 {
     internal sealed class Connection
     {
-        internal TaskCompletionSource Registered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Handshaken { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Closed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
@@ -129,25 +128,24 @@ internal sealed class DiscoveryPeer(string name) : ServerLink.ServerLinkBase
         var connection = new Connection();
         try
         {
-            if (!await input.MoveNext(context.CancellationToken) || input.Current.Hello != "Scene1")
+            if (!await input.MoveNext(context.CancellationToken) || input.Current.Hello != ServerProcess.FormatName(nameof(ProcessType.Scene), 1))
             {
                 throw new InvalidDataException("Unexpected caller identity.");
             }
 
             await output.WriteAsync(new Frame { Hello = name }, context.CancellationToken);
+            var requestId = IdGenerator.GenId();
+            await output.WriteAsync(RpcFrames.Request(new Empty(), requestId), context.CancellationToken);
             Connections.Writer.TryWrite(connection);
             await foreach (var frame in input.ReadAllAsync(context.CancellationToken))
             {
-                if (frame.Request?.Payload.Is(RegisterEntitiesRequest.Descriptor) != true)
+                if (frame.Reply?.RequestId != requestId ||
+                    frame.Reply.Error?.StatusCode != (int)StatusCode.Unimplemented)
                 {
-                    throw new InvalidDataException("Expected entity registration.");
+                    throw new InvalidDataException("Expected an unimplemented reply after the process handshake.");
                 }
 
-                await output.WriteAsync(new Frame
-                {
-                    Reply = new RpcReply { RequestId = frame.Request.RequestId, Payload = Any.Pack(new RegisterEntitiesReply()) }
-                }, context.CancellationToken);
-                connection.Registered.TrySetResult();
+                connection.Handshaken.TrySetResult();
             }
         }
         finally

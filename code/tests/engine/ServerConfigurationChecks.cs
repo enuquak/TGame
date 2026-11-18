@@ -20,7 +20,7 @@ internal static class ServerConfigurationChecks
                 Check(Topology.DialTargets(ProcessType.Base).SequenceEqual(new[] { ProcessType.Router, ProcessType.DBMgr }),
                     "Base must retain Router and DBMgr type dependencies after its file changes.");
                 Check(Topology.DialTargets(ProcessType.Router).Count == 0, "Router must not wait for incoming types.");
-                using var node = new ServerNode("Router999");
+                var node = new ServerNode("Router999");
                 Check(node.FirstLinks.IsCompletedSuccessfully, "Valid identities must not be bounded by configured counts.");
                 Expect<InvalidOperationException>(() => ServerConfiguration.Initialize(defaults));
             }

@@ -7,7 +7,7 @@ internal static class StartupReadinessChecks
     internal static async Task RunAsync(CancellationToken stop)
     {
         await CheckPublicationWaitAsync(stop);
-        await CheckInitializationWaitAsync(stop);
+        await CheckWithoutDependenciesAsync(stop);
         await CheckDelayedHelloAsync(stop);
         Console.WriteLine("PASS current readiness wait, cancellation, recovery and delayed incoming handshake rejection.");
     }
@@ -15,7 +15,7 @@ internal static class StartupReadinessChecks
     private static async Task CheckPublicationWaitAsync(CancellationToken stop)
     {
         using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        using var node = TestNodes.Create(nameof(ProcessType.Gate));
+        var node = TestNodes.Create(nameof(ProcessType.Gate));
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var loginStream = new FrameStream();
         var baseStream = new FrameStream();
@@ -26,7 +26,6 @@ internal static class StartupReadinessChecks
             await node.FirstLinks.WaitAsync(stop);
             loginStream.Input.Writer.Complete();
             await login.WaitAsync(stop);
-            await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
             Check(!node.Ready, "The missing Login dependency did not revoke readiness.");
             var ready = node.WaitUntilReadyAsync(lifetime.Token);
             Check(!ready.IsCompleted, "Initial publication reused the first-link milestone after dependency loss.");
@@ -56,21 +55,20 @@ internal static class StartupReadinessChecks
         }
     }
 
-    private static async Task CheckInitializationWaitAsync(CancellationToken stop)
+    internal static async Task CheckWithoutDependenciesAsync(CancellationToken stop)
     {
-        using var configuration = TestNodes.InitializeIsolated(ProcessType.Router);
-        using var node = TestNodes.Create(nameof(ProcessType.Router));
-        var ready = node.WaitUntilReadyAsync(stop);
-        Check(!ready.IsCompleted, "Readiness completed before SinglePoint initialization.");
-        await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
-        await ready.WaitAsync(stop);
-        Check(node.Ready, "Initialization did not notify the pending readiness waiter.");
+        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
+        var node = TestNodes.Create(nameof(ProcessType.Router));
+        Check(node.Ready, "Router without outgoing dependencies must be ready without business initialization.");
+        Check(node.FirstLinks.IsCompletedSuccessfully, "Router waited for incoming connections.");
+        await node.WaitUntilReadyAsync(stop);
+        Console.WriteLine("PASS Router readiness requires no business initialization.");
     }
 
     private static async Task CheckDelayedHelloAsync(CancellationToken stop)
     {
         using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        using var node = TestNodes.Create(nameof(ProcessType.Login));
+        var node = TestNodes.Create(nameof(ProcessType.Login));
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var routerStream = new FrameStream();
         var router = Open(node, ProcessType.Router, routerStream, lifetime.Token);
@@ -78,7 +76,6 @@ internal static class StartupReadinessChecks
         try
         {
             await node.FirstLinks.WaitAsync(stop);
-            await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
             Check(node.Ready, "Login did not become ready before the incoming handshake.");
 
             var peer = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);

@@ -7,42 +7,42 @@ internal sealed class ServerSettings
 {
     public ServerLogLevel MinimumLogLevel { get; init; } = ServerLogLevel.Info;
 
-    public required string ProfileMongo
+    public string ProfileMongo
     {
         get; init;
-    }
-    public required string ProfileRedis
+    } = string.Empty;
+    public string ProfileRedis
     {
         get; init;
-    }
+    } = string.Empty;
     public required string ZooKeeper
     {
         get; init;
     }
-    public required string MongoDatabase
+    public string MongoDatabase
     {
         get; init;
-    }
-    public required string MongoUser
+    } = string.Empty;
+    public string MongoUser
     {
         get; init;
-    }
-    public required string MongoPasswordVariable
+    } = string.Empty;
+    public string MongoPasswordVariable
     {
         get; init;
-    }
-    public required string RedisUser
+    } = string.Empty;
+    public string RedisUser
     {
         get; init;
-    }
-    public required string RedisPasswordVariable
+    } = string.Empty;
+    public string RedisPasswordVariable
     {
         get; init;
-    }
-    public required string ProfileCachePrefix
+    } = string.Empty;
+    public string ProfileCachePrefix
     {
         get; init;
-    }
+    } = string.Empty;
     public required string DiscoveryRoot
     {
         get; init;
@@ -58,6 +58,16 @@ internal sealed class ServerSettings
 
         return Load(path);
     });
+
+    public void ValidateProfileStorage()
+    {
+        string[] values = [ProfileMongo, ProfileRedis, MongoDatabase, MongoUser,
+            MongoPasswordVariable, RedisUser, RedisPasswordVariable, ProfileCachePrefix];
+        if (values.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new InvalidDataException("Incomplete Profile storage configuration.");
+        }
+    }
 
     public static ServerSettings Load(string path)
     {
@@ -76,9 +86,7 @@ internal sealed class ServerSettings
             throw new InvalidDataException("Minimum log level must be DEBUG, INFO or ERROR.");
         }
 
-        string[] values = [settings.ProfileMongo, settings.ProfileRedis, settings.ZooKeeper,
-            settings.MongoDatabase, settings.MongoUser, settings.MongoPasswordVariable, settings.RedisUser,
-            settings.RedisPasswordVariable, settings.ProfileCachePrefix, settings.DiscoveryRoot];
+        string[] values = [settings.ZooKeeper, settings.DiscoveryRoot];
         if (values.Any(string.IsNullOrWhiteSpace))
         {
             throw new InvalidDataException($"Incomplete server configuration: {path}.");

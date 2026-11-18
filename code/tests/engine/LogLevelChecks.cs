@@ -188,7 +188,7 @@ internal static class LogLevelChecks
 
     private static void WriteSamples(ServerProcess process)
     {
-        GameLog.Debug(ServerLogEvents.EntityRoute, process.Role, detail: "路由细节");
+        GameLog.Debug(ServerLogEvents.ZkDiscover, process.Role, detail: "发现细节");
         GameLog.Info(ServerLogEvents.Listen, process.Role, detail: "开始监听");
         GameLog.Error(ServerLogEvents.ProcessFailed, process.Role, detail: "进程失败");
     }

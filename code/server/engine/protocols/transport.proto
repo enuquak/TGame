@@ -9,29 +9,18 @@ message Frame {
   reserved "ping", "pong", "profile_request", "profile_reply", "single_point_id";
 
   oneof body {
-    string hello = 3;     // 握手只交换进程实例名，实体由 SinglePoint 初始化后单独注册。
+    string hello = 3;     // 握手只交换进程实例名。
     RpcRequest request = 6;
     RpcReply reply = 7;
   }
 }
 
-// 在已建立的连接上注册实体，收到确认后才能完成 SinglePoint 初始化。
-message RegisterEntitiesRequest {
-  string single_point_id = 1;
-  repeated string entity_ids = 2;
-}
-
-message RegisterEntitiesReply {}
-
 message RpcRequest {
+  reserved 3, 4, 5, 6;
+  reserved "entity_id", "single_point_type", "source_process", "deadline_unix_ms";
+
   string request_id = 1;
   google.protobuf.Any payload = 2;
-  oneof target {
-    string entity_id = 3;
-    string single_point_type = 4; // Canonical ProcessType name, resolved by Router.
-  }
-  string source_process = 5;
-  int64 deadline_unix_ms = 6;
 }
 
 message RpcReply {

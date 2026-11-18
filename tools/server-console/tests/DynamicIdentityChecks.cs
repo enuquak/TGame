@@ -35,7 +35,7 @@ internal static class DynamicIdentityChecks
             }
 
             var logs = Directory.CreateDirectory(Path.Combine(root, assignedName + "Server")).FullName;
-            var rows = new[] { ServerLogEvents.LinksReady, ServerLogEvents.SinglePointReady }.Select(ev =>
+            var rows = new[] { ServerLogEvents.LinksReady, ServerLogEvents.ProcessReady }.Select(ev =>
                 JsonSerializer.Serialize(new { pid = child.Id, role = nameof(ProcessType.Router), instance = assignedName, ev }));
             File.WriteAllLines(Path.Combine(logs, key + "-2026111812.log"), rows);
             using var instance = new ServerInstance(nameof(ProcessType.Router));

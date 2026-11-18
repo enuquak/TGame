@@ -45,6 +45,8 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
     {
         ValidateEnvelope(request.RequestId, request.Payload);
         stop.ThrowIfCancellationRequested();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        deadline.CancelAfter(timeout ?? RequestTimeout);
         var requestId = request.RequestId;
         var reply = new TaskCompletionSource<RpcReply>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (pendingChanges)
@@ -62,10 +64,14 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
 
         try
         {
-            await WriteAsync(new Frame { Request = request }, stop);
+            await WriteAsync(new Frame { Request = request }, deadline.Token);
             sent?.Invoke();
 
-            return await reply.Task.WaitAsync(timeout ?? RequestTimeout, stop);
+            return await reply.Task.WaitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException) when (!stop.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("The RPC request timed out.");
         }
         finally
         {

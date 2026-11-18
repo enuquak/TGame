@@ -12,7 +12,6 @@ internal sealed class ConsoleSession : IDisposable
     private const string EngineProject = "code/server/engine/TGame.Server.Engine.csproj";
     private const string ProtocolProject = "code/shared/TGame.Shared.csproj";
     private const string RunConfigurationFile = "server.yaml";
-    private const string LocalCredentialsMarker = "local-credentials";
     private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
     private const string RedisPasswordKey = "REDIS_TEST_PASSWORD";
     private const string SessionDirectoryFormat = "yyyyMMdd-HHmmss-fffffff";
@@ -182,7 +181,7 @@ internal sealed class ConsoleSession : IDisposable
         File.WriteAllText(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker), "");
         group.Save(Path.Combine(runDir, ServerGroup.FileName));
         SaveRunConfiguration(runDir);
-        // Prepare credentials and a complete copy before asking healthy processes to shut down.
+        // 在停止健康进程前准备完整的启动信息和构建快照。
         var starts = nextInstances.Select(i => StartInfo(i, name)).ToArray();
         await Task.Run(() =>
         {
@@ -241,17 +240,12 @@ internal sealed class ConsoleSession : IDisposable
     private void SaveRunConfiguration(string runDir)
     {
         var source = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
-        bool localConfig = string.IsNullOrWhiteSpace(source);
-        if (localConfig)
+        if (string.IsNullOrWhiteSpace(source))
         {
             source = Path.Combine(root, "build", "bin", "TGame.Server", "debug", "config", "server.local.yaml");
         }
 
         File.Copy(Path.GetFullPath(source!, root), Path.Combine(runDir, RunConfigurationFile));
-        if (localConfig)
-        {
-            File.WriteAllText(Path.Combine(runDir, LocalCredentialsMarker), "");
-        }
     }
 
     private void Open(string name)
@@ -290,51 +284,10 @@ internal sealed class ConsoleSession : IDisposable
             throw new InvalidOperationException("当前运行缺少环境配置快照，请选择环境后编译并重启。");
         }
 
-        bool localConfig = File.Exists(Path.Combine(runDir, LocalCredentialsMarker));
         info.ArgumentList.Add(runDir);
         info.Environment[ServerEnvironment.Config] = config;
         info.Environment[EngineEnvironment.LogRoot] = logRoot;
-        if (instance.Role == nameof(ProcessType.DBMgr))
-        {
-            var password = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
-            if (string.IsNullOrWhiteSpace(password))
-            {
-                password = Password(ServerEnvironment.MongoPassword, MongoPasswordKey);
-            }
-
-            info.Environment[ServerEnvironment.DBMgrMongoPassword] = password;
-        }
-
-        if (instance.Role == nameof(ProcessType.Profile))
-        {
-            info.Environment[ServerEnvironment.MongoPassword] = Environment.GetEnvironmentVariable(ServerEnvironment.MongoPassword);
-            info.Environment[ServerEnvironment.RedisPassword] = Environment.GetEnvironmentVariable(ServerEnvironment.RedisPassword);
-            if (localConfig)
-            {
-                info.Environment[ServerEnvironment.MongoPassword] = Password(ServerEnvironment.MongoPassword, MongoPasswordKey);
-                info.Environment[ServerEnvironment.RedisPassword] = Password(ServerEnvironment.RedisPassword, RedisPasswordKey);
-            }
-        }
-
         return info;
-    }
-
-    private string Password(string envKey, string key)
-    {
-        if (Environment.GetEnvironmentVariable(envKey) is { Length: > 0 } password)
-        {
-            return password;
-        }
-
-        var path = Path.Combine(root, ".local", "secrets", "cloud.env");
-        var prefix = key + "=";
-        if (File.Exists(path) && File.ReadLines(path).FirstOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal)) is { } line &&
-            line.Length > prefix.Length)
-        {
-            return line[prefix.Length..];
-        }
-
-        throw new InvalidOperationException($"请设置 {envKey} 或在 .local/secrets/cloud.env 中配置 {key}。");
     }
 
     private ProcessStartInfo NewProcess(string exe)

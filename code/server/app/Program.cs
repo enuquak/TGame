@@ -7,7 +7,6 @@ using Microsoft.Extensions.Options;
 using TGame;
 using TGame.Server;
 using TGame.Server.Engine;
-using TGame.Server.Logic;
 
 const int ProcessArgumentCount = 2;
 const int RegistrationTimeoutSeconds = 40;
@@ -56,7 +55,7 @@ async Task RunServerAsync(ProcessType processType, string runDir)
     await using var idLifetime = await InitializeIdGeneratorAsync(process.Role);
     GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(IdGenerator)} 单例初始化完成");
 
-    using var node = new ServerNode(process.Name);
+    var node = new ServerNode(process.Name);
     GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(ServerNode)} 节点创建完成");
 
     await using var app = await InitializeApplicationAsync(process, node);
@@ -73,7 +72,6 @@ async Task RunServerAsync(ProcessType processType, string runDir)
         GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "ZooKeeper 会话监控已启动");
 
         await InitializeEngineAsync();
-        await InitializeSinglePointAsync();
         await node.WaitUntilReadyAsync(stop);
         using (var publicationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop))
         {
@@ -81,7 +79,7 @@ async Task RunServerAsync(ProcessType processType, string runDir)
             await ZooKeeperProxy.RegisterProcessAsync(process, app.Urls.Single(), publicationTimeout.Token);
         }
 
-        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "进程初始化完成");
+        GameLog.Info(ServerLogEvents.ProcessReady, process.Role, detail: "进程初始化完成");
 
         await Task.WhenAll(workers);
     }
@@ -108,14 +106,6 @@ async Task RunServerAsync(ProcessType processType, string runDir)
 
         await node.FirstLinks.WaitAsync(stop);
         GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "引擎层初始化完成");
-    }
-
-    async Task InitializeSinglePointAsync()
-    {
-        var singlePoints = new SinglePointRegistry(typeof(ProfileServerSinglePoint).Assembly.GetTypes());
-        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(SinglePointRegistry)} 类型映射加载完成");
-
-        await node.InitializeSinglePointAsync(singlePoints, stop);
     }
 }
 

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
@@ -35,22 +34,17 @@ internal static class StartupPublicationChecks
             Check(!await ZooKeeperProxy.IsProcessClaimedAsync(persistent.Name, stop), "A persistent node was accepted as a live process identity.");
 
             using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-            using var node = new ServerNode(process.Name);
+            var node = new ServerNode(process.Name);
             await using var app = await StartAsync(node, stop);
             using var channel = GrpcChannel.ForAddress(app.Urls.Single());
             var client = new ServerLink.ServerLinkClient(channel);
 
-            await owner.createAsync(PathFor(scene), Encoding.UTF8.GetBytes(app.Urls.Single()),
+            await owner.createAsync(PathFor(scene), [],
                 ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL).WaitAsync(stop);
-            await ExpectUnavailableAsync(client, scene.Name, stop);
-            Check(node.SinglePoint is null, "An incoming connection initialized the receiving process.");
-
-            await owner.setDataAsync(PathFor(scene), []).WaitAsync(stop);
             await using var discovery = ZooKeeperProxy.WatchProcessesAsync(stop).GetAsyncEnumerator(stop);
             Check(await discovery.MoveNextAsync() && discovery.Current.Count == 0,
                 "An initializing process was discoverable before publishing its address.");
 
-            await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
             Check(node.Ready, "Router was not ready after its initialization completed.");
             await ZooKeeperProxy.RegisterProcessAsync(process, app.Urls.Single(), stop);
             do

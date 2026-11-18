@@ -44,7 +44,9 @@ internal static class RpcChecks
         await CheckReplyCorrelationAsync(stop);
         await CheckInvalidMessagesAsync(stop);
         await CheckCancellationAndCloseAsync(stop);
-        Console.WriteLine("PASS RPC correlation, invalid envelopes, cancellation and disconnect.");
+        await CheckTimeoutAsync(stop);
+        await CheckBlockedWriteTimeoutAsync(stop);
+        Console.WriteLine("PASS RPC correlation, invalid envelopes, cancellation, timeout and disconnect.");
     }
 
     private static async Task CheckReplyCorrelationAsync(CancellationToken stop)
@@ -131,8 +133,74 @@ internal static class RpcChecks
         await ThrowsAsync<IOException>(() => link.CallAsync<Empty>(new Empty(), IdGenerator.GenId(), stop));
     }
 
+    private static async Task CheckTimeoutAsync(CancellationToken stop)
+    {
+        var stream = new FrameStream();
+        var link = CreateLink(stream);
+        var requestId = IdGenerator.GenId();
+        var pending = link.CallAsync<Empty>(new Empty(), requestId, stop, timeout: TimeSpan.FromMilliseconds(25));
+        await stream.Output.Reader.ReadAsync(stop);
+        await ThrowsAsync<TimeoutException>(() => pending);
+        link.Receive(RpcFrames.Reply(new Empty(), requestId).Reply);
+
+        var retry = link.CallAsync<Empty>(new Empty(), requestId, stop);
+        await stream.Output.Reader.ReadAsync(stop);
+        link.Receive(RpcFrames.Reply(new Empty(), requestId).Reply);
+        await retry;
+    }
+
+    private static async Task CheckBlockedWriteTimeoutAsync(CancellationToken stop)
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stream = new FrameStream { BeforeWrite = release.Task };
+        var link = CreateLink(stream);
+        var requestId = IdGenerator.GenId();
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        var pending = link.CallAsync<Empty>(new Empty(), requestId, lifetime.Token, timeout: TimeSpan.FromMilliseconds(75));
+        try
+        {
+            var guard = Task.Delay(TimeSpan.FromMilliseconds(500), stop);
+            if (await Task.WhenAny(pending, guard) != pending)
+            {
+                throw new Exception("RPC timeout did not cover a blocked transport write.");
+            }
+
+            await ThrowsAsync<TimeoutException>(() => pending);
+            if (stream.Output.Reader.TryPeek(out _))
+            {
+                throw new Exception("A timed-out RPC reached the blocked transport.");
+            }
+        }
+        finally
+        {
+            lifetime.Cancel();
+            try
+            {
+                await pending;
+            }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+            {
+            }
+            catch (TimeoutException)
+            {
+            }
+
+            release.TrySetResult();
+        }
+
+        var retry = link.CallAsync<Empty>(new Empty(), requestId, stop);
+        var request = await stream.Output.Reader.ReadAsync(stop);
+        if (request.Request.RequestId != requestId)
+        {
+            throw new Exception("A blocked RPC timeout left a stale transport write.");
+        }
+
+        link.Receive(RpcFrames.Reply(new Empty(), requestId).Reply);
+        await retry;
+    }
+
     private static PeerLink CreateLink(FrameStream stream) =>
-        new(nameof(ProcessType.Login), nameof(ProcessType.Router), IdGenerator.GenId(), stream);
+        new(nameof(ProcessType.Login), ServerProcess.FormatName(nameof(ProcessType.Router), 1), IdGenerator.GenId(), stream);
 
     private static async Task ThrowsAsync<TException>(Func<Task> action) where TException : Exception
     {

@@ -3,10 +3,16 @@ using System.Text.Json;
 using TGame;
 using TGame.ServerConsole;
 
-if (args is ["--identity-only"])
+if (args is ["--identity-only"] or ["--state-only"])
 {
     try
     {
+        if (args[0] == "--state-only")
+        {
+            var root = Directory.CreateTempSubdirectory("tgame-console-state-").FullName;
+            LogChecks.Run(root);
+        }
+
         await DynamicIdentityChecks.RunAsync();
         return 0;
     }
@@ -53,7 +59,7 @@ try
     }
 
     await session.StartAsync();
-    await UntilAsync("all SinglePoints ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
+    await UntilAsync("all processes ready", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
     await CheckDynamicRegistrationAsync();
     var pids = session.Instances.ToDictionary(i => i.SlotName, i => i.Pid);
     using (var reopened = new ConsoleSession(checkout))
@@ -105,27 +111,6 @@ try
     {
         throw new InvalidOperationException("Restarting the Router instance retained its old PID.");
     }
-
-    var dbMgr = session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.DBMgr), 1));
-    await session.StopAsync([dbMgr]);
-    var originalMongoPassword = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
-    try
-    {
-        Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, "invalid-storage-check-password");
-        await session.StartAsync();
-        await UntilAsync("DBMgr database initialization failed", () => dbMgr.Status == ServerStatus.Failed && !dbMgr.Alive);
-        if (!HasEvent(dbMgr, ServerLogEvents.SinglePointFailed) || HasEvent(dbMgr, ServerLogEvents.SinglePointReady))
-        {
-            throw new InvalidOperationException("DBMgr reported readiness despite a failed database connection check.");
-        }
-    }
-    finally
-    {
-        Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, originalMongoPassword);
-    }
-
-    await session.StartAsync();
-    await UntilAsync("DBMgr database initialization recovered", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
 
     // A compiler error must leave the running group and its PID associations intact.
     var broken = Path.Combine(checkout, "code/server/app/BrokenCheck.cs");
@@ -220,9 +205,6 @@ async Task UntilAsync(string stage, Func<bool> condition)
 
     throw new InvalidOperationException("Timed out or process failed: " + stage);
 }
-
-static bool HasEvent(ServerInstance instance, string name) =>
-    instance.Lines.Any(line => line.Contains($"\"{ServerLogFields.Event}\":\"{name}\"", StringComparison.Ordinal));
 
 async Task CheckDynamicRegistrationAsync()
 {

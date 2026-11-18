@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <InternalsVisibleTo Include="TGame.SinglePointTests" />
+    <InternalsVisibleTo Include="TGame.EngineTests" />
     <Compile Remove="generated/**/*.cs" />
     <PackageReference Include="Google.Protobuf" Version="3.36.2" />
     <PackageReference Include="Grpc.Tools" Version="2.85.0" PrivateAssets="All" />

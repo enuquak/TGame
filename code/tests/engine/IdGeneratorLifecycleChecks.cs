@@ -37,9 +37,6 @@ internal static class IdGeneratorLifecycleChecks
 
             var generated = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
             Parallel.For(0, ConcurrentIds, _ => Check(generated.TryAdd(IdGenerator.GenId(), 0), "Static entry produced duplicate IDs."));
-            var point = new ServerSinglePoint();
-            Check(IdText.IsValid(point.EntityId) && generated.TryAdd(point.EntityId, 0),
-                "SinglePoint did not use the process generator without constructor injection.");
         }
 
         Expect<ObjectDisposedException>(() => generator.GenId());

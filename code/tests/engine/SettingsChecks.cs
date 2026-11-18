@@ -23,6 +23,7 @@ internal static class SettingsChecks
                 """;
             File.WriteAllText(path, yaml);
             var settings = ServerSettings.Load(path);
+            settings.ValidateProfileStorage();
             if (settings.MongoDatabase != "game_staging" || settings.MongoUser != "game_service" ||
                 settings.MongoPasswordVariable != "GAME_DB_SECRET" || settings.RedisPasswordVariable != "GAME_CACHE_SECRET" ||
                 settings.ProfileCachePrefix != "game:staging:profile:" || settings.DiscoveryRoot != "/game/staging" ||
@@ -30,6 +31,22 @@ internal static class SettingsChecks
                 settings.ProfileRedis != "redis-a:6379" || settings.RedisUser != "cache_service" || settings.ZooKeeper != "zk-a:2181")
             {
                 throw new Exception("Selected environment settings were replaced by fixed test values.");
+            }
+
+            File.WriteAllText(path, "zooKeeper: zk-a:2181\ndiscoveryRoot: /game/staging\n");
+            var coreSettings = ServerSettings.Load(path);
+            if (coreSettings.ZooKeeper != "zk-a:2181" || coreSettings.DiscoveryRoot != "/game/staging")
+            {
+                throw new Exception("The process framework requires only ZooKeeper settings.");
+            }
+
+            try
+            {
+                coreSettings.ValidateProfileStorage();
+                throw new Exception("Incomplete optional storage settings were accepted by the storage entry.");
+            }
+            catch (InvalidDataException)
+            {
             }
 
             foreach (var invalid in new[] { "", "mongoDatabase: only-one-setting", yaml.Replace("/game/staging", "relative-root") })

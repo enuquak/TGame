@@ -281,10 +281,9 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
         switch (name)
         {
             case ServerLogEvents.Listen:
-            case ServerLogEvents.SinglePointInit:
                 initializing = true;
                 break;
-            case ServerLogEvents.SinglePointReady:
+            case ServerLogEvents.ProcessReady:
                 initialized = true;
                 break;
             case ServerLogEvents.LinksReady:

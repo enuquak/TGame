@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <InternalsVisibleTo Include="TGame.SinglePointTests" />
+    <InternalsVisibleTo Include="TGame.EngineTests" />
     <Compile Include="../model/entities/**/*.cs" />
     <Compile Include="../logic/**/*.cs" />
     <ProjectReference Include="../engine/TGame.Server.Engine.csproj" />

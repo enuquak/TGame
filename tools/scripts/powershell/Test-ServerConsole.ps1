@@ -3,7 +3,6 @@
 param([string]$Configuration)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Import-ServerTypes.ps1')
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
 $checkout = [IO.Directory]::CreateTempSubdirectory('tgame-console-check-').FullName
 $null = New-Item -ItemType File -Path "$checkout/.console-check"
@@ -13,12 +12,11 @@ if (!(Test-Path -LiteralPath $dotnet))
     $dotnet = (Get-Command dotnet -CommandType Application).Source
 }
 
-$addedEnvironment = @()
 Push-Location -LiteralPath $root
 
 try
 {
-    $files = @(git ls-files --cached --others --exclude-standard -- 'code/server' 'code/shared' 'code/tests/singlepoint' 'code/tests/fixtures' 'code/Directory.Build.props' 'global.json' 'tools/server-console/project.json')
+    $files = @(git ls-files --cached --others --exclude-standard -- 'code/server' 'code/shared' 'code/tests/engine' 'code/tests/fixtures' 'code/Directory.Build.props' 'global.json' 'tools/server-console/project.json')
     if ($LASTEXITCODE -ne 0)
     {
         throw 'Unable to list server inputs.'
@@ -36,44 +34,16 @@ try
         Copy-Item -LiteralPath $Configuration -Destination (Join-Path $checkout 'code/server/config/processes.json') -Force
     }
 
-    $credentials = @{
-        ([TGame.ServerEnvironment]::MongoPassword) = 'MONGO_TEST_PASSWORD'
-        ([TGame.ServerEnvironment]::RedisPassword) = 'REDIS_TEST_PASSWORD'
-    }
-    foreach ($variable in $credentials.Keys)
-    {
-        $key = $credentials[$variable]
-        if ([Environment]::GetEnvironmentVariable($variable))
-        {
-            continue
-        }
-
-        $line = Get-Content -LiteralPath '.local/secrets/cloud.env' |
-            Where-Object { $_.StartsWith("$key=") } | Select-Object -First 1
-        if (!$line)
-        {
-            throw "Missing $variable."
-        }
-
-        [Environment]::SetEnvironmentVariable($variable, $line.Substring($key.Length + 1))
-        $addedEnvironment += $variable
-    }
-
     & $dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- $checkout
     if ($LASTEXITCODE -ne 0)
     {
         exit $LASTEXITCODE
     }
 
-    & $dotnet run --project "$checkout/code/tests/singlepoint/TGame.SinglePointTests.csproj"
+    & $dotnet run --project "$checkout/code/tests/engine/TGame.EngineTests.csproj"
     exit $LASTEXITCODE
 }
 finally
 {
-    foreach ($key in $addedEnvironment)
-    {
-        [Environment]::SetEnvironmentVariable($key, $null)
-    }
-
     Pop-Location
 }

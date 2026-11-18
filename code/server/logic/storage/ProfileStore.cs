@@ -39,6 +39,7 @@ internal sealed class ProfileStore : IDisposable
     public static async Task<ProfileStore> OpenAsync(CancellationToken stop)
     {
         var settings = ServerSettings.Current.Value;
+        settings.ValidateProfileStorage();
         var options = new ConfigurationOptions
         {
             EndPoints = { settings.ProfileRedis },

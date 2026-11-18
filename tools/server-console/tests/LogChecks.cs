@@ -52,15 +52,18 @@ internal static class LogChecks
             SaveIdentity(ticks);
             File.WriteAllLines(prefix + ".log", [
                 Row(ServerLogEvents.ProcessFailed, time: ticks - 1), Row(ServerLogEvents.ProcessFailed, pid: 1),
-                Row(ServerLogEvents.ProcessFailed, role: nameof(ProcessType.Router)), Row(ServerLogEvents.SinglePointInit), Row(ServerLogEvents.LinksReady)
+                Row(ServerLogEvents.ProcessFailed, role: nameof(ProcessType.Router)), Row(ServerLogEvents.Listen)
             ]);
             File.WriteAllText(Path.Combine(logs, $"{child.Id}-{ticks - 1}-2026110712.log"), Row(ServerLogEvents.ProcessFailed) + "\n");
             using var item = new ServerInstance(ProcessName);
             item.Open(run, run, run);
-            Check(item.Alive && item.LineCount == 2 && item.Status == ServerStatus.Initializing, "validated identity and initialization");
-            File.AppendAllText(prefix + ".log", Row(ServerLogEvents.SinglePointReady) + "\n{damaged line}\n");
+            Check(item.Alive && item.LineCount == 1 && item.Status == ServerStatus.Initializing, "listening starts initialization");
+            File.AppendAllText(prefix + ".log", Row(ServerLogEvents.LinksReady) + "\n");
             item.Refresh();
-            Check(item.LineCount == 4 && item.Status == ServerStatus.Ready && item.Lines[^1] == "{damaged line}", "diagnostic row");
+            Check(item.LineCount == 2 && item.Status == ServerStatus.Initializing, "links alone cannot finish initialization");
+            File.AppendAllText(prefix + ".log", Row(ServerLogEvents.ProcessReady) + "\n{damaged line}\n");
+            item.Refresh();
+            Check(item.LineCount == 4 && item.Status == ServerStatus.Ready && item.Lines[^1] == "{damaged line}", "process readiness and diagnostic row");
 
             File.WriteAllLines(prefix + "_999.log", Enumerable.Repeat(Row(TrafficEvent, new string('a', 256)), 1200));
             File.WriteAllText(prefix + "_1000.log", Row(ServerLogEvents.LinksLost) + "\n");
