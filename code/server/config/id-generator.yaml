@@ -1,2 +1,0 @@
-# ID worker 租约根路径；保留原有路径及 ID 分配范围。
-workerRootPath: "${meta.paths.idWorkerRoot}"

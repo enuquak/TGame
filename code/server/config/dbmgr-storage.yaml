@@ -1,7 +1,0 @@
-# 独立存储配置；公共值由 server.yaml 的 meta 提供。
-# 密码仍从环境变量 TGAME_DBMGR_MONGO_PASSWORD 读取，不写入配置。
-endpoint: "${meta.endpoints.mongo}"
-databaseName: "${meta.storage.database}"
-authenticationDatabase: "${meta.storage.database}"
-userName: "${meta.storage.user}"
-serverSelectionTimeoutSeconds: 5

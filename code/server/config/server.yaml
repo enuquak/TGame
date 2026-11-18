@@ -1,32 +1,14 @@
 # 服务器配置总入口（结构草案，加载代码尚未接入）。
-# configs 中的路径均相对于本文件，各模块分别加载为对应的配置类型。
-# ${meta.xxx} 表示引用本入口 meta 下的完整值，保留原值类型；不进行字符串拼接。
-# 这是应用层引用约定，不是 YAML 原生语法；引用不存在或形成循环时应加载失败。
-meta:
-  project: TGame
-  environment: test
+# include 是应用层加载约定，不是 YAML 原生的文件引用功能。
+# 列表填写不带扩展名的文件名，加载本入口同目录下对应的 .yaml 文件。
+# 各文件独立解析后合并顶层配置，include 本身只作为加载清单。
+# 合并时任意来源的顶层字段重名即加载失败，不按顺序覆盖。
+# YAML 锚点和别名仅在各自文件内生效，不跨文件共享。
 
-  endpoints:
-    zooKeeper: "127.0.0.1:2181"
-    mongo: "127.0.0.1:37017"
-    redis: "127.0.0.1:16379"
+include: [ops, process]
 
-  storage:
-    database: tgame_test
-    user: tgame_test
-    profileCachePrefix: "tgame:test:profile:"
+environment: test
 
-  paths:
-    discoveryRoot: /tgame/test
-    idWorkerRoot: /tgame/id-workers
-    runDirectory: logs/server-runs
+loggingMinimumLevel: DEBUG
 
-configs:
-  settings: server.local.yaml
-  connections: connections.yaml
-  processes: processes.yaml
-  zooKeeper: zookeeper.yaml
-  idGenerator: id-generator.yaml
-  runtime: runtime.yaml
-  # 独立存储配置按需加载，基础框架启动不初始化 DBMgr 存储。
-  dbmgrStorage: dbmgr-storage.yaml
+runDirectory: logs/server-runs
