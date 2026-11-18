@@ -37,10 +37,19 @@ catch (Exception error)
 static async Task RunServerAsync(ServerProcess process, ServerGroup group, string runDir)
 {
     var settings = LoadConfiguration();
-    await using var zooKeeperLifetime = await InitializeZooKeeperAsync(settings);
-    await using var idLifetime = await InitializeIdGeneratorAsync();
+    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(GameLog)} 日志初始化完成");
+    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "进程组配置初始化完成");
+    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(ServerSettings)} 服务端配置加载完成");
+
+    await using var zooKeeperLifetime = await InitializeZooKeeperAsync(settings, process.Role);
+    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(ZooKeeperProxy)} 单例初始化完成");
+
+    await using var idLifetime = await InitializeIdGeneratorAsync(process.Role);
+    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(IdGenerator)} 单例初始化完成");
 
     using var node = new ServerNode(process.Name, group);
+    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(ServerNode)} 节点创建完成");
+
     await using var app = await InitializeApplicationAsync(process, node);
 
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
@@ -49,10 +58,15 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     try
     {
         workers.Add(SuperviseAsync(WatchStopAsync(runDir, process.Name, lifetime), lifetime));
+        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "停止信号监控已启动");
+
         workers.Add(SuperviseAsync(WatchZooKeeperSessionAsync(stop), lifetime));
+        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "ZooKeeper 会话监控已启动");
 
         await InitializeEngineAsync();
         await InitializeSinglePointAsync();
+        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "进程初始化完成");
+
         await Task.WhenAll(workers);
     }
     catch (OperationCanceledException) when (stop.IsCancellationRequested)
@@ -82,14 +96,18 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
         foreach (var peer in Topology.DialTargets(group, process.Name))
         {
             workers.Add(SuperviseAsync(node.MaintainLinkAsync(peer, stop), lifetime));
+            GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, peer, detail: "连接维护任务已启动");
         }
 
         await node.FirstLinks.WaitAsync(stop);
+        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "引擎层初始化完成");
     }
 
     async Task InitializeSinglePointAsync()
     {
         var singlePoints = new SinglePointRegistry(typeof(ProfileServerSinglePoint).Assembly.GetTypes());
+        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(SinglePointRegistry)} 类型映射加载完成");
+
         await node.InitializeSinglePointAsync(singlePoints, stop);
     }
 }
@@ -101,17 +119,21 @@ static ServerSettings LoadConfiguration()
     return settings;
 }
 
-static Task<ZooKeeperProxy> InitializeZooKeeperAsync(ServerSettings settings)
+static Task<ZooKeeperProxy> InitializeZooKeeperAsync(ServerSettings settings, string role)
 {
     var configPath = Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName);
     var options = ZooKeeperOptions.Load(configPath, settings.ZooKeeper, settings.DiscoveryRoot);
+    GameLog.Info(ServerLogEvents.InitStepCompleted, role, detail: $"{nameof(ZooKeeperOptions)} 配置加载完成");
+
     return ZooKeeperProxy.InitializeAsync(options);
 }
 
-static Task<IdGenerator> InitializeIdGeneratorAsync()
+static Task<IdGenerator> InitializeIdGeneratorAsync(string role)
 {
     var idConfigPath = Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName);
     var idOptions = IdGeneratorOptions.Load(idConfigPath);
+    GameLog.Info(ServerLogEvents.InitStepCompleted, role, detail: $"{nameof(IdGeneratorOptions)} 配置加载完成");
+
     return IdGenerator.InitializeAsync(idOptions);
 }
 
@@ -126,12 +148,20 @@ static async Task<WebApplication> InitializeApplicationAsync(ServerProcess proce
 
     builder.Services.AddGrpc();
     builder.Services.AddSingleton<ServerNode>(node);
+    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 服务注册完成");
 
     var app = builder.Build();
     try
     {
+        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 构建完成");
+
         // 构建应用后再创建证书，初始化失败也由 app 统一释放。
         var certificate = process.Type == ProcessType.Gate ? app.Services.GetRequiredService<X509Certificate2>() : null;
+        if (certificate is not null)
+        {
+            GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "HTTPS 证书加载完成");
+        }
+
         var serverOptions = app.Services.GetRequiredService<IOptions<KestrelServerOptions>>().Value;
         serverOptions.Listen(IPAddress.Loopback, 0, listen =>
         {
@@ -146,14 +176,18 @@ static async Task<WebApplication> InitializeApplicationAsync(ServerProcess proce
             }
         });
 
+        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 监听配置完成");
+
         if (process.Type != ProcessType.Gate)
         {
             app.MapGrpcService<LinkService>();
+            GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "gRPC 服务映射完成");
         }
 
         await app.StartAsync();
         var address = app.Urls.Single();
         GameLog.Info(ServerLogEvents.Listen, process.Role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
+        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 初始化完成");
         return app;
     }
     catch

@@ -12,8 +12,12 @@ internal sealed class ProfileServerSinglePoint : ServerSinglePoint, IDisposable
 {
     private ProfileStore store = null!;
 
-    protected override async Task InitializeRoleAsync(CancellationToken stop) =>
+    protected override async Task InitializeRoleAsync(CancellationToken stop)
+    {
         store = await ProfileStore.OpenAsync(stop);
+        GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), entity: EntityId,
+            detail: $"{nameof(ProfileStore)} 初始化完成");
+    }
 
     public override async Task<IMessage> HandleRequestAsync(EntityRpcContext context, Any payload, CancellationToken stop)
     {

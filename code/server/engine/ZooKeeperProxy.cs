@@ -91,7 +91,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
             }
         }
 
-        GameLog.Debug(ServerLogEvents.ZkDiscover, process.Role, detail: string.Join(",", registered));
+        GameLog.Info(ServerLogEvents.ZkDiscover, process.Role, detail: string.Join(",", registered));
     }
 
     public static Task<string> ResolveProcessAsync(ServerProcess peer, CancellationToken stop)

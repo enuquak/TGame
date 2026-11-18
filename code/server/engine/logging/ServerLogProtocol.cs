@@ -6,6 +6,7 @@ public static class ServerLogEvents
     public const string LegacyReady = "READY";
     public const string LegacyBaseSinglePointInit = "BASE_SINGLE_POINT_INIT";
     public const string LegacyBaseSinglePointReady = "BASE_SINGLE_POINT_READY";
+    public const string InitStepCompleted = "INIT_STEP_COMPLETED";
     public const string Listen = "LISTEN";
     public const string ProcessFailed = "PROCESS_FAILED";
     public const string SinglePointInit = "SINGLE_POINT_INIT";

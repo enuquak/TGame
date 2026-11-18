@@ -26,11 +26,17 @@ public class ServerSinglePoint
             stop.ThrowIfCancellationRequested();
             await InitializeRoleAsync(stop);
             stop.ThrowIfCancellationRequested();
+            GameLog.Info(ServerLogEvents.InitStepCompleted, role, entity: EntityId,
+                detail: $"{GetType().Name} 业务初始化完成");
 
             // 业务初始化成功后才登记实体，并等待对端确认。
             RegisterSinglePoint();
+            GameLog.Info(ServerLogEvents.InitStepCompleted, role, entity: EntityId, detail: "SinglePoint 本地实体登记完成");
+
             await node.RegisterEntitiesAsync(stop);
             stop.ThrowIfCancellationRequested();
+            GameLog.Info(ServerLogEvents.InitStepCompleted, role, entity: EntityId, detail: "SinglePoint 实体注册阶段完成");
+
             Volatile.Write(ref initialized, true);
             GameLog.Info(ServerLogEvents.SinglePointReady, role, entity: EntityId, detail: GetType().Name);
         }

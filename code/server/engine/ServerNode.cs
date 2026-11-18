@@ -63,6 +63,9 @@ public partial class ServerNode : IDisposable
         }
 
         singlePoint = registry.Create(Enum.Parse<ProcessType>(Role));
+        GameLog.Info(ServerLogEvents.InitStepCompleted, Role, entity: singlePoint.EntityId,
+            detail: $"{singlePoint.GetType().Name} 实例创建完成");
+
         await singlePoint.InitializeAsync(this, stop);
     }
 

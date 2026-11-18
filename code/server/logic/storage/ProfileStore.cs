@@ -50,11 +50,18 @@ internal sealed class ProfileStore : IDisposable
             ConnectRetry = RedisConnectRetryCount
         };
 
+        GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "Profile 存储配置加载完成");
+
         var mongo = StorageConnections.Mongo(settings.ProfileMongo);
         try
         {
+            GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "MongoDB 客户端创建完成");
+
             await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(ServerSettings.Current.Value.MongoDatabase), stop);
+            GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "MongoDB 连接检查完成");
+
             var redis = await ConnectionMultiplexer.ConnectAsync(options);
+            GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "Redis 客户端初始化完成");
             return new ProfileStore(mongo, redis);
         }
         catch

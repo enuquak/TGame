@@ -12,10 +12,13 @@ internal sealed class DBMgrServerSinglePoint : ServerSinglePoint, IDisposable
 
     private MongoClient? mongo;
 
-    protected override Task InitializeRoleAsync(CancellationToken stop)
+    protected override async Task InitializeRoleAsync(CancellationToken stop)
     {
         var path = Path.Combine(AppContext.BaseDirectory, ConfigDirectory, ConfigFileName);
         var settings = MongoStorageSettings.Load(path);
+        GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.DBMgr), entity: EntityId,
+            detail: $"{nameof(MongoStorageSettings)} 配置加载完成");
+
         var password = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
         if (string.IsNullOrWhiteSpace(password))
         {
@@ -23,8 +26,13 @@ internal sealed class DBMgrServerSinglePoint : ServerSinglePoint, IDisposable
         }
 
         mongo = MongoStorage.CreateClient(settings, password);
+        GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.DBMgr), entity: EntityId,
+            detail: "MongoDB 客户端创建完成");
+
         var database = mongo.GetDatabase(settings.DatabaseName);
-        return MongoStorage.CheckConnectionAsync(database, stop);
+        await MongoStorage.CheckConnectionAsync(database, stop);
+        GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.DBMgr), entity: EntityId,
+            detail: "MongoDB 连接检查完成");
     }
 
     public void Dispose() => mongo?.Dispose();
