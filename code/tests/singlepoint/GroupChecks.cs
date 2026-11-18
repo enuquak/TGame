@@ -37,9 +37,9 @@ internal static class GroupChecks
         await Rejected(ServerProcess.FormatName(nameof(ProcessType.Login), 3), StatusCode.InvalidArgument);
         await Rejected(ServerProcess.FormatName(nameof(ProcessType.Router), 1), StatusCode.InvalidArgument);
 
-        foreach (var peer in group.Processes.Where(peer => peer.Number > 1 && peer.Type is ProcessType.Login or ProcessType.Base))
+        foreach (var peer in group.Processes.Where(peer => peer.Channel > 1 && peer.Type is ProcessType.Login or ProcessType.Base))
         {
-            if (peer.Type == ProcessType.Base && peer.Number == 3)
+            if (peer.Type == ProcessType.Base && peer.Channel == 3)
             {
                 var failed = new FrameStream();
                 failed.Input.Writer.TryWrite(new Frame { Hello = ServerProcess.FormatName(nameof(ProcessType.Base), 1) });
@@ -165,7 +165,7 @@ internal static class GroupChecks
         string[] expected = [nameof(ProcessType.Router) + "1", nameof(ProcessType.Router) + "2"];
         var routers = group.Processes.Where(process => process.Type == ProcessType.Router);
         if (!routers.Select(process => process.Name).SequenceEqual(expected) ||
-            group.GetProcess(nameof(ProcessType.Base) + "1").Number != 1 ||
+            group.GetProcess(nameof(ProcessType.Base) + "1").Channel != 1 ||
             group.Contains(nameof(ProcessType.Router)))
         {
             throw new Exception("Every instance must include its number, including a single instance and instance 1.");

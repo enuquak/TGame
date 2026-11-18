@@ -28,7 +28,7 @@
 
 **Files:** code/shared/configuration/ServerGroup.cs; code/server/config/processes.json; code/server/app/{Topology,ServerNode,LinkService,ServiceRegistry,Program,TraceLog}.cs; code/server/app/diagnostics/ServerNode.*.cs; code/tests/singlepoint/GroupChecks.cs
 
-**Interfaces:** ServerGroup.Load(string path), Processes, GetProcess(string name); ServerProcess(Type, Number), Role, Name; ServerNode(string name, ServerSinglePoint singlePoint, ServerGroup group).
+**Interfaces:** ServerGroup.Load(string path), Processes, GetProcess(string name); ServerProcess(Type, Channel), Role, Name; ServerNode(string name, ServerSinglePoint singlePoint, ServerGroup group).
 
 - [x] 增加配置格式与 Gate 等待 2 Login / 3 Base 的失败用例，验证当前实现不满足要求。
 - [x] 实现共享配置、实例名称、拓扑展开、注册/握手身份和精确集合就绪检查，更新实体路由授权。

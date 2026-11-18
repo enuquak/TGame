@@ -17,7 +17,7 @@ internal static class ServerStatus
     public const string Failed = "异常退出";
 }
 
-internal sealed class ServerInstance(string role, int number = 1) : IDisposable
+internal sealed class ServerInstance(string role, int channel = 1) : IDisposable
 {
     internal const int MaxRetainedLines = 1000;
     private const int StopTimeoutSeconds = 10;
@@ -36,7 +36,7 @@ internal sealed class ServerInstance(string role, int number = 1) : IDisposable
     private bool initializing, initialized, connected, failed;
 
     public string Role { get; } = role;
-    public string Name { get; } = ServerProcess.FormatName(role, number);
+    public string Name { get; } = ServerProcess.FormatName(role, channel);
     public int? Pid
     {
         get; private set;
