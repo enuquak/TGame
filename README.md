@@ -14,6 +14,26 @@
 
 若更新 .NET SDK 后出现 `CS0518`（连 `System.Object` 都无法识别），先执行 `dotnet build TGame.slnx` 检查真实编译结果；编译通过时，在命令面板执行 `Developer: Reload Window`，让 C# 扩展重新加载 SDK 和工程引用。
 
+## 独立起停脚本
+
+服务器可以完全通过项目脚本运行，无需打开或编译服务器控制台。先运行 `tools/scripts/Start-EnvironmentTunnel.bat`，确保 ZooKeeper 可达；然后双击以下 BAT，或在仓库根目录执行：
+
+```powershell
+.\tools\scripts\StartAll.bat                 # 按 processes.json 的数量逐个调用对应类型脚本
+.\tools\scripts\StartRouter.bat              # 新增一个 Router 进程
+.\tools\scripts\StartScene.bat               # 新增一个 Scene 进程
+.\tools\scripts\StopAll.bat                  # 正常停止，默认等待 10 秒
+.\tools\scripts\KillAll.bat                  # 强制结束脚本管理的当前进程组
+```
+
+每种类型都有独立入口：`StartGate`、`StartLogin`、`StartBase`、`StartScene`、`StartRouter`、`StartDBMgr`、`StartProfile`、`StartGM`。各 BAT 调用同名 PowerShell 脚本；`StartAll.ps1` 的共用实现读取 [processes.json](code/server/config/processes.json)，按数量逐个调用这些类型脚本。新运行组默认只编译服务器 App；`-NoBuild` 使用已有产物。已有进程组继续使用本轮快照，重复 `StartAll` 只补齐缺失槽位，单类型入口每次新增一个实例。
+
+[runtime.json](code/server/config/runtime.json) 的 `runDirectory` 配置运行记录根目录，必须是相对仓库根目录的路径，默认 `logs/server-runs`。脚本固定工作目录、创建本轮子目录，并把相对路径写入本轮可执行快照的 `config/runtime.json`。服务器只读取这份配置，不创建运行目录。更改运行目录配置前须先停止原进程组。
+
+每轮构建快照保存在 `build/server-runs/`，环境 YAML 和启动数量同时留存。服务器在后台运行，真正就绪以 `logs/server/` 中的 `PROCESS_READY` 为准。脚本进程组与控制台进程组分别管理，`StopAll` 和 `KillAll` 仅操作脚本组。正常停止超时返回非零退出码，不自动强退；可用 `-TimeoutSeconds 30` 调整等待时间。自动化建议直接调用 `pwsh -NoProfile -File tools/scripts/powershell/StartAll.ps1`；调用 BAT 时设置 `TGAME_NONINTERACTIVE=1` 可避免失败后等待按键。
+
+不连接外部服务的脚本检查：`pwsh -NoProfile -File tools/scripts/powershell/Test-ServerScripts.ps1`，使用隔离假进程验证起停、退出码和进程识别。
+
 ## 服务器控制台
 
 Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目录运行它。进程基础框架使用本机游戏进程及下文的 ZooKeeper 隧道。打开窗口和查看已有日志可以离线进行。使用 `-Check` 可验证控制台能否加载。
@@ -28,7 +48,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 | 范围 | 保存位置 | 内容 |
 | --- | --- | --- |
 | 项目 | [控制台配置](tools/server-console/project.json) | `environmentName` 是左栏显示的环境名称。`commands` 决定可用命令和显示顺序。可选值为 `Start`、`Stop`、`ExportProtobuf`、`Build`、`BuildAndRestart`。 |
-| 项目 | [服务端进程数量](code/server/config/processes.json) | 仅供控制台决定各类型的启动数量；新运行组保存配置快照。 |
+| 项目 | [服务端进程数量](code/server/config/processes.json) | 决定脚本及控制台初始启动数量，并作为服务器首次连接门槛；新运行组保存配置快照。 |
 | 用户 | `%LOCALAPPDATA%\TGame\ServerConsole\<工作目录标识>\user.json` | 关闭窗口时保存尺寸、最大化状态、当前页签，以及各进程的搜索词、仅匹配行和跟踪最新选项。每个 Windows 账户和工作目录分别保存。 |
 
 项目配置随 Git 提交，下次打开控制台时生效。个人设置在本机自动生成。实际进程状态由控制台从运行实例和日志重新读取；独立存储联调所需凭据取自环境变量或本机秘密配置，不写入仓库。
@@ -49,7 +69,7 @@ discoveryRoot: "/tgame/test"
 minimumLogLevel: DEBUG
 ```
 
-主动连接规则由 [connections.json](code/server/config/connections.json) 声明，必须无环。运行时持续发现在线实例；[processes.json](code/server/config/processes.json) 只供控制台决定每种类型启动多少次，服务器不按固定数量等待连接。
+主动连接规则由 [connections.json](code/server/config/connections.json) 声明，必须无环。运行时持续发现在线实例；[processes.json](code/server/config/processes.json) 决定初始启动数量和各类型首次连接门槛，数量不构成连接上限。
 
 ## 服务器运行与验证
 
@@ -69,15 +89,15 @@ dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- --
 
 宿主启动依次完成日志 → 配置 → 构建 IoC 根容器 → ZooKeeper 会话与空地址临时占号 → ID → 监听及主动依赖连接 → 地址发布 → `PROCESS_READY`。每种主动目标类型至少有一条完成握手的连接时，`ServerNode.Ready` 为真；无主动依赖的 Router 可直接就绪，不等入站。`FirstLinks` 只记录首次连接齐备，当前就绪随依赖断线与重连变化。连接握手只交换进程身份。
 
-服务端入口 [Program.cs](code/server/app/Program.cs) 接受 `<进程类型> <运行目录>`，例如 `Scene <运行目录>`；类型启动后通过 ZooKeeper 自动抢占从 1 开始的空闲实例编号，统一生成为 `Scene1`、`Scene2` 等名称。空地址节点不参与服务发现，但可证明尚未发布地址的主动连接方持有合法身份。强制终止后，旧节点在会话过期时删除；期间新进程可抢占其他空闲编号。
+服务端入口 [Program.cs](code/server/app/Program.cs) 只接受 `<进程类型>`，例如 `Scene`；运行目录从可执行文件旁的 `config/runtime.json` 读取，相对进程工作目录解析。脚本与控制台均把工作目录设为仓库根目录，并通过脚本预先创建运行目录。类型启动后通过 ZooKeeper 自动抢占从 1 开始的空闲实例编号，统一生成为 `Scene1`、`Scene2` 等名称。空地址节点不参与服务发现，但可证明尚未发布地址的主动连接方持有合法身份。强制终止后，旧节点在会话过期时删除；期间新进程可抢占其他空闲编号。
 
 手动起服从仓库根目录执行；依赖类型应分别启动，例子和默认连接关系见[服务器启动与动态发现](docs/服务器组配置.md)：
 
 ```powershell
 dotnet build code/server/app/TGame.Server.csproj
 $env:TGAME_SERVER_CONFIG = (Resolve-Path code/server/config/server.local.yaml).Path
-$runDirectory = Join-Path $PWD "logs/manual/example"
-dotnet build/bin/TGame.Server/debug/TGame.Server.dll Router $runDirectory
+pwsh -NoProfile -File tools/scripts/powershell/New-ServerRunDirectory.ps1 -Configuration build/bin/TGame.Server/debug/config/runtime.json
+dotnet build/bin/TGame.Server/debug/TGame.Server.dll Router
 ```
 
 服务进程直接写入 `logs/server/<实例名称>Server/`，例如 `logs/server/Base1Server/`。每行是一条 JSON 事件，可按 PID、角色、实例、时间和请求 ID 查询。同一实例使用 `<PID>-<进程启动UTC ticks>-yyyyMMddHH.log`，按小时滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。`TGAME_SERVER_LOG_ROOT` 可指定服务日志根目录。控制台依据 `PROCESS_READY`、`LINKS_READY` 和 `LINKS_LOST` 更新就绪状态；前两项为 INFO 日志，最低级别设为 `ERROR` 时无法准确显示就绪。

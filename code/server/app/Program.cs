@@ -8,7 +8,7 @@ using TGame;
 using TGame.Server;
 using TGame.Server.Engine;
 
-const int ProcessArgumentCount = 2;
+const int ProcessArgumentCount = 1;
 const int RegistrationTimeoutSeconds = 40;
 const int ShutdownTimeoutSeconds = 3;
 const int StopPollIntervalMilliseconds = 100;
@@ -16,17 +16,16 @@ const string DevelopmentCertificateOid = "1.3.6.1.4.1.311.84.1.1";
 
 if (args.Length != ProcessArgumentCount)
 {
-    throw new ArgumentException("Usage: TGame.Server <process-type> <run-directory>");
+    throw new ArgumentException("Usage: TGame.Server <process-type>");
 }
 
-var runDir = Path.GetFullPath(args[1]);
 var processType = ServerProcess.ParseType(args[0]);
 var role = processType.ToString();
 using var log = new GameLog();
 Serilog.Debugging.SelfLog.Enable(TextWriter.Synchronized(Console.Error));
 try
 {
-    await RunServerAsync(processType, runDir, log);
+    await RunServerAsync(processType, log);
 }
 catch (Exception error)
 {
@@ -38,11 +37,18 @@ finally
     Serilog.Debugging.SelfLog.Disable();
 }
 
-async Task RunServerAsync(ProcessType processType, string runDir, GameLog log)
+async Task RunServerAsync(ProcessType processType, GameLog log)
 {
     var role = processType.ToString();
     var settings = ServerSettings.LoadSelected();
     log.SetMinimumLevel(settings.MinimumLogLevel);
+    var runDir = ServerRuntime.LoadDirectory(
+        Path.Combine(AppContext.BaseDirectory, "config", ServerRuntime.FileName), Directory.GetCurrentDirectory());
+    if (!Directory.Exists(runDir))
+    {
+        throw new DirectoryNotFoundException($"Runtime directory does not exist. Prepare it with the server scripts: {runDir}");
+    }
+
     var configuration = ServerConfiguration.Load(
         Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName));
     var startup = ServerGroup.Load(Path.Combine(AppContext.BaseDirectory, "config", ServerGroup.FileName));
@@ -115,7 +121,6 @@ async Task RunServerAsync(ProcessType processType, string runDir, GameLog log)
 
 static string WriteProcessIdentity(string runDir, ServerProcess process)
 {
-    Directory.CreateDirectory(runDir);
     using var currentProcess = Process.GetCurrentProcess();
     var identityKey = ServerRunFiles.ProcessKey(Environment.ProcessId, currentProcess.StartTime.ToUniversalTime().Ticks);
     var identityPath = Path.Combine(runDir, ServerRunFiles.IdentityPrefix + identityKey);

@@ -211,7 +211,8 @@ async Task CheckDynamicRegistrationAsync()
     const int StartupTimeoutSeconds = 10;
     var router = session.Instances.First(instance => instance.Role == nameof(ProcessType.Router));
     using var original = Process.GetProcessById(router.Pid!.Value);
-    var directory = Directory.CreateDirectory(Path.Combine(checkout, "dynamic-registration")).FullName;
+    var runtimeConfig = Path.Combine(Path.GetDirectoryName(original.MainModule!.FileName)!, "config", ServerRuntime.FileName);
+    var directory = ServerRuntime.LoadDirectory(runtimeConfig, checkout);
     var info = new ProcessStartInfo(original.MainModule!.FileName)
     {
         WorkingDirectory = checkout,
@@ -219,8 +220,7 @@ async Task CheckDynamicRegistrationAsync()
         CreateNoWindow = true
     };
     info.ArgumentList.Add(nameof(ProcessType.Router));
-    info.ArgumentList.Add(directory);
-    info.Environment[EngineEnvironment.LogRoot] = Path.Combine(directory, "logs");
+    info.Environment[EngineEnvironment.LogRoot] = Path.Combine(checkout, "dynamic-registration", "logs");
     info.Environment[ServerEnvironment.Config] = Path.Combine(Path.GetDirectoryName(original.MainModule!.FileName)!, "config", "server.local.yaml");
     using var extra = Process.Start(info)!;
     try

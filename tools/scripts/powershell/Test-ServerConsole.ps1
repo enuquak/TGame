@@ -16,7 +16,7 @@ Push-Location -LiteralPath $root
 
 try
 {
-    $files = @(git ls-files --cached --others --exclude-standard -- 'code/server' 'code/shared' 'code/tests/engine' 'code/tests/fixtures' 'code/Directory.Build.props' 'global.json' 'tools/server-console/project.json')
+    $files = @(git ls-files --cached --others --exclude-standard -- 'code/server' 'code/shared' 'code/tests/engine' 'code/tests/fixtures' 'code/Directory.Build.props' 'global.json' 'tools/server-console/project.json' 'tools/scripts/powershell/New-ServerRunDirectory.ps1' 'tools/scripts/powershell/Import-ServerTypes.ps1')
     if ($LASTEXITCODE -ne 0)
     {
         throw 'Unable to list server inputs.'

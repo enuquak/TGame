@@ -44,6 +44,27 @@ internal static class GroupConfigChecks
             throw new Exception("Restoring a running group used edited source counts instead of its snapshot.");
         }
 
+        File.WriteAllText(Path.Combine(run, "server.yaml"), "zooKeeper: localhost\ndiscoveryRoot: /test\n");
+        var startInfo = typeof(ConsoleSession).GetMethod("StartInfo", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        try
+        {
+            startInfo.Invoke(restored, [restored.Instances[0], sessionName]);
+            throw new Exception("An old binary snapshot must require build and restart before missing processes are launched.");
+        }
+        catch (System.Reflection.TargetInvocationException error) when (
+            error.InnerException is InvalidOperationException inner && inner.Message.Contains("编译并重启"))
+        {
+        }
+
+        var runConfig = Path.Combine(root, "build", "server-console", "runs", sessionName, "config", ServerRuntime.FileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(runConfig)!);
+        ServerRuntime.Save(runConfig, run, root);
+        var start = (System.Diagnostics.ProcessStartInfo)startInfo.Invoke(restored, [restored.Instances[0], sessionName])!;
+        if (start.ArgumentList.Count != 1 || start.ArgumentList[0] != restored.Instances[0].Role)
+        {
+            throw new Exception("The console must pass only the process type to the new server entry point.");
+        }
+
         var valid = JsonSerializer.Serialize(counts);
         var build = Directory.CreateDirectory(Path.Combine(root, "build-output")).FullName;
         Directory.CreateDirectory(Path.Combine(build, "config"));

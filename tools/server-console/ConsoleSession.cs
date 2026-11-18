@@ -147,18 +147,22 @@ internal sealed class ConsoleSession : IDisposable
 
         var name = DateTime.UtcNow.ToString(SessionDirectoryFormat, CultureInfo.InvariantCulture);
         var snapshot = Snapshot(name);
-        var runDir = Directory.CreateDirectory(Path.Combine(sessions, name)).FullName;
+        var runDir = Path.Combine(sessions, name);
+        // 在停止健康进程前准备完整的启动信息和构建快照。
+        await Task.Run(() =>
+        {
+            var source = Path.Combine(root, "build", "bin", "TGame.Server", "debug");
+            var apphosts = nextInstances.Select(instance => Path.Combine(snapshot, instance.ExecutableName));
+            PrepareSnapshot(source, snapshot, group, apphosts);
+        });
+        var runtimeConfig = Path.Combine(snapshot, "config", ServerRuntime.FileName);
+        ServerRuntime.Save(runtimeConfig, runDir, root);
+        await PrepareRunDirectory(runtimeConfig);
         File.WriteAllText(Path.Combine(runDir, SessionMarker), "");
         File.WriteAllText(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker), "");
         group.Save(Path.Combine(runDir, ServerGroup.FileName));
         SaveRunConfiguration(runDir);
-        // 在停止健康进程前准备完整的启动信息和构建快照。
         var starts = nextInstances.Select(i => StartInfo(i, name)).ToArray();
-        await Task.Run(() =>
-        {
-            var source = Path.Combine(root, "build", "bin", "TGame.Server", "debug");
-            PrepareSnapshot(source, snapshot, group, starts.Select(start => start.FileName));
-        });
         await Task.WhenAll(Instances.Select(i => i.StopAsync(Report)));
         if (changed)
         {
@@ -252,6 +256,11 @@ internal sealed class ConsoleSession : IDisposable
 
     private ProcessStartInfo StartInfo(ServerInstance instance, string name)
     {
+        if (!File.Exists(Path.Combine(Snapshot(name), "config", ServerRuntime.FileName)))
+        {
+            throw new InvalidOperationException("当前运行组使用旧版启动参数，请使用“编译并重启”升级后再补起进程；仍可正常关闭原有进程。");
+        }
+
         var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
         var runDir = Path.Combine(sessions, name);
         info.ArgumentList.Add(instance.Role);
@@ -261,7 +270,6 @@ internal sealed class ConsoleSession : IDisposable
             throw new InvalidOperationException("当前运行缺少环境配置快照，请选择环境后编译并重启。");
         }
 
-        info.ArgumentList.Add(runDir);
         info.Environment[ServerEnvironment.Config] = config;
         info.Environment[EngineEnvironment.LogRoot] = logRoot;
         return info;
@@ -288,6 +296,25 @@ internal sealed class ConsoleSession : IDisposable
             info.ArgumentList.Add(argument);
         }
 
+        await RunProcess(operation, info);
+    }
+
+    private async Task PrepareRunDirectory(string configuration)
+    {
+        var installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe");
+        var info = NewProcess(File.Exists(installed) ? installed : "pwsh.exe");
+        string[] arguments = ["-NoProfile", "-File", Path.Combine(root, "tools", "scripts", "powershell", "New-ServerRunDirectory.ps1"),
+            "-Configuration", configuration];
+        foreach (var argument in arguments)
+        {
+            info.ArgumentList.Add(argument);
+        }
+
+        await RunProcess("创建运行目录", info);
+    }
+
+    private async Task RunProcess(string operation, ProcessStartInfo info)
+    {
         info.RedirectStandardOutput = info.RedirectStandardError = true;
         Report(operation + "…");
         using var child = Process.Start(info) ?? throw new InvalidOperationException(operation + "启动失败。");

@@ -19,5 +19,6 @@
     <Content Include="../config/zookeeper.json" Link="config/zookeeper.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../config/connections.json" Link="config/connections.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../config/processes.json" Link="config/processes.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../config/runtime.json" Link="config/runtime.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
