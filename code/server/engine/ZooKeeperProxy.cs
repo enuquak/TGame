@@ -55,13 +55,14 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         }
     }
 
-    public static Task RegisterProcessAsync(ServerGroup group, ServerProcess process, string address, CancellationToken stop)
-        => Instance.RegisterProcessCoreAsync(group, process, address, stop);
+    public static Task RegisterProcessAsync(ServerProcess process, string address, CancellationToken stop)
+        => Instance.RegisterProcessCoreAsync(process, address, stop);
 
-    private async Task RegisterProcessCoreAsync(ServerGroup group, ServerProcess process, string address, CancellationToken stop)
+    private async Task RegisterProcessCoreAsync(ServerProcess process, string address, CancellationToken stop)
     {
         session.CheckActive();
         stop.ThrowIfCancellationRequested();
+        var processes = ServerConfiguration.Processes;
         var path = $"{options.DiscoveryRoot}/{NodePrefix}{process.Name}";
         try
         {
@@ -83,7 +84,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         GameLog.Info(ServerLogEvents.ZkRegister, process.Role, detail: address);
         var names = (await zk.getChildrenAsync(options.DiscoveryRoot).WaitAsync(stop).ConfigureAwait(false)).Children;
         var registered = new List<string>();
-        foreach (var peer in group.Processes)
+        foreach (var peer in processes)
         {
             if (names.Contains(NodePrefix + peer.Name))
             {

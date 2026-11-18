@@ -20,13 +20,13 @@ if (args.Length != ProcessArgumentCount)
 }
 
 var runDir = Path.GetFullPath(args[1]);
-var group = ServerGroup.Load(Path.Combine(runDir, ServerGroup.FileName));
-var process = group.GetProcess(args[0]);
+using var configuration = ServerConfiguration.Initialize(Path.Combine(runDir, ServerGroup.FileName));
+var process = ServerConfiguration.GetProcess(args[0]);
 var role = process.Role;
 using var serverLog = GameLog.OpenServer(process);
 try
 {
-    await RunServerAsync(process, group, runDir);
+    await RunServerAsync(process, runDir);
 }
 catch (Exception error)
 {
@@ -34,7 +34,7 @@ catch (Exception error)
     Environment.ExitCode = 1;
 }
 
-static async Task RunServerAsync(ServerProcess process, ServerGroup group, string runDir)
+static async Task RunServerAsync(ServerProcess process, string runDir)
 {
     var settings = LoadConfiguration();
     GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(GameLog)} 日志初始化完成");
@@ -47,7 +47,7 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
     await using var idLifetime = await InitializeIdGeneratorAsync(process.Role);
     GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(IdGenerator)} 单例初始化完成");
 
-    using var node = new ServerNode(process.Name, group);
+    using var node = new ServerNode(process.Name);
     GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(ServerNode)} 节点创建完成");
 
     await using var app = await InitializeApplicationAsync(process, node);
@@ -90,10 +90,10 @@ static async Task RunServerAsync(ServerProcess process, ServerGroup group, strin
         using (var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop))
         {
             registrationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
-            await ZooKeeperProxy.RegisterProcessAsync(group, process, app.Urls.Single(), registrationTimeout.Token);
+            await ZooKeeperProxy.RegisterProcessAsync(process, app.Urls.Single(), registrationTimeout.Token);
         }
 
-        foreach (var peer in Topology.DialTargets(group, process.Name))
+        foreach (var peer in Topology.DialTargets(process.Name))
         {
             workers.Add(SuperviseAsync(node.MaintainLinkAsync(peer, stop), lifetime));
             GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, peer, detail: "连接维护任务已启动");

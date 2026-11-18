@@ -151,10 +151,11 @@ internal static class EntityRoutingChecks
         counts[ProcessType.Gate] = 1;
         counts[ProcessType.Login] = 1;
         var group = new ServerGroup(counts);
+        using var configuration = ServerConfiguration.Initialize(group);
         var gate = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);
         var login = ServerProcess.FormatName(nameof(ProcessType.Login), 1);
         var expiredHandler = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var node = new ServerNode(login, group);
+        using var node = new ServerNode(login);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(gate));
@@ -244,8 +245,9 @@ internal static class EntityRoutingChecks
         counts[ProcessType.Router] = 1;
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
+        using var configuration = ServerConfiguration.Initialize(group);
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
-        using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
+        using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1));
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(profile));
         var running = router.RunLinkAsync(profile, NewId(), stream, stream, stop);
@@ -294,6 +296,7 @@ internal static class EntityRoutingChecks
         private readonly List<Connection> connections = [];
         private readonly CancellationToken stop;
         private readonly ProcessType entryType;
+        private ServerConfiguration? configuration;
 
         private Network(ProcessType entryType, CancellationToken stop)
         {
@@ -330,10 +333,11 @@ internal static class EntityRoutingChecks
             counts[ProcessType.Router] = 1;
             counts[ProcessType.Profile] = 2;
             var group = new ServerGroup(counts);
+            configuration = ServerConfiguration.Initialize(group);
 
             foreach (var process in group.Processes)
             {
-                var node = new ServerNode(process.Name, group);
+                var node = new ServerNode(process.Name);
                 nodes.Add(process.Name, node);
                 handlers.Add(process.Name, async (context, payload, token) =>
                 {
@@ -366,7 +370,7 @@ internal static class EntityRoutingChecks
 
             foreach (var caller in nodes.Values)
             {
-                foreach (var peer in Topology.DialTargets(group, caller.Name))
+                foreach (var peer in Topology.DialTargets(caller.Name))
                 {
                     var connection = new Connection(stop);
                     connections.Add(connection);
@@ -439,6 +443,8 @@ internal static class EntityRoutingChecks
             {
                 node.Dispose();
             }
+
+            configuration?.Dispose();
         }
     }
 

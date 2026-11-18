@@ -11,7 +11,6 @@ public partial class ServerNode : IDisposable
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
 
-    private readonly ServerGroup group;
     private readonly HashSet<string> expectedPeers;
     private volatile bool linksReady;
     private volatile ServerSinglePoint? singlePoint;
@@ -21,12 +20,11 @@ public partial class ServerNode : IDisposable
     private readonly ConcurrentDictionary<string, string> owners = new();
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
 
-    public ServerNode(string name, ServerGroup group)
+    public ServerNode(string name)
     {
         Name = name;
-        this.group = group;
-        Role = group.GetProcess(name).Role;
-        expectedPeers = Topology.Peers(group, name);
+        Role = ServerConfiguration.GetProcess(name).Role;
+        expectedPeers = Topology.Peers(name);
         UpdateLinkReadiness();
     }
 
@@ -36,8 +34,6 @@ public partial class ServerNode : IDisposable
     public string Role { get; }
     public bool Ready => singlePoint?.Initialized == true && linksReady && RegistrationsComplete;
     public ServerSinglePoint? SinglePoint => singlePoint;
-
-    public ProcessType GetProcessType(string process) => group.GetProcess(process).Type;
 
     public bool IsEntityOwner(string process, string entityId)
     {
@@ -102,14 +98,12 @@ public partial class ServerNode : IDisposable
             return false;
         }
 
-        return Topology.Dials[group.GetProcess(peer).Role].Contains(Role);
+        return Topology.Dials[ServerConfiguration.GetProcess(peer).Role].Contains(Role);
     }
-
-    private string PeerRole(string peer) => group.GetProcess(peer).Role;
 
     public async Task MaintainLinkAsync(string peer, CancellationToken stop)
     {
-        var peerProcess = group.GetProcess(peer);
+        var peerProcess = ServerConfiguration.GetProcess(peer);
         while (true)
         {
             var address = await ZooKeeperProxy.ResolveProcessAsync(peerProcess, stop);

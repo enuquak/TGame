@@ -18,9 +18,10 @@ internal static class ProfileRpcChecks
         counts[ProcessType.GM] = 1;
         counts[ProcessType.Profile] = 2;
         var group = new ServerGroup(counts);
-        using var node = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
+        using var configuration = ServerConfiguration.Initialize(group);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1));
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        var peers = Topology.Peers(group, node.Name).ToDictionary(name => name, _ => new FrameStream());
+        var peers = Topology.Peers(node.Name).ToDictionary(name => name, _ => new FrameStream());
         var entities = peers.Keys.ToDictionary(name => name, _ => NewId());
         var running = new List<Task>();
         foreach (var (peer, stream) in peers)

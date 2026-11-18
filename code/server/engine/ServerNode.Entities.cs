@@ -128,7 +128,7 @@ public partial class ServerNode
     {
         var peer = link.Peer;
         var entities = request.EntityIds.ToArray();
-        if (PeerRole(peer) == nameof(ProcessType.Gate) ||
+        if (ServerConfiguration.GetProcessType(peer) == ProcessType.Gate ||
             !IdText.IsValid(request.SinglePointId) ||
             !entities.Contains(request.SinglePointId) ||
             entities.Any(entity => !IdText.IsValid(entity)) ||

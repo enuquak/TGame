@@ -6,8 +6,8 @@ internal static class SinglePointChecks
 {
     internal static void CheckBeforeIdInitialization()
     {
-        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1),
-            TestNodes.DefaultGroup);
+        using var configuration = ServerConfiguration.Initialize(TestNodes.DefaultGroup);
+        using var node = TestNodes.Create(nameof(ProcessType.Router));
         if (node.SinglePoint is not null || node.Ready)
         {
             throw new Exception("Engine construction must not create a SinglePoint or become ready.");
@@ -30,7 +30,8 @@ internal static class SinglePointChecks
                 throw new Exception("A new SinglePoint must own its identity without registering it yet.");
             }
 
-            using var node = TestNodes.CreateIsolated(role);
+            using var configuration = TestNodes.InitializeIsolated(role);
+            using var node = TestNodes.Create(role.ToString());
             await node.InitializeSinglePointAsync(registry, CancellationToken.None);
             singlePoint = node.SinglePoint!;
             if (!node.Ready ||

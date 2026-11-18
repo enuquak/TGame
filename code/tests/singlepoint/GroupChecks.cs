@@ -12,12 +12,14 @@ internal static class GroupChecks
     {
         CheckInstanceNames();
         await CheckBaseRoutersAsync(stop);
+        await CheckIsolatedAsync(stop);
 
         var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1);
         counts[ProcessType.Login] = 2;
         counts[ProcessType.Base] = 3;
         var group = new ServerGroup(counts);
-        using var gate = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
+        using var configuration = ServerConfiguration.Initialize(group);
+        using var gate = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1));
         var streams = new Dictionary<string, FrameStream>();
         var tasks = new List<Task>();
 
@@ -109,7 +111,7 @@ internal static class GroupChecks
         await Task.WhenAll(tasks).WaitAsync(stop);
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        using var cancelledNode = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
+        using var cancelledNode = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1));
         var cancelledInit = cancelledNode.FirstLinks.WaitAsync(cancellation.Token);
         cancellation.Cancel();
         try
@@ -126,17 +128,8 @@ internal static class GroupChecks
             throw new Exception("Cancellation completed the first-links signal.");
         }
 
-        var isolatedCounts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
-        isolatedCounts[ProcessType.Router] = 1;
-        using var isolated = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Router), 1), new ServerGroup(isolatedCounts));
-        await isolated.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
-        if (!isolated.Ready)
-        {
-            throw new Exception("A node with zero configured neighbors waited forever.");
-        }
-
         Console.WriteLine("PASS Gate waits for all configured Login and Base instances.");
-        await CheckRoutingAsync(group, stop);
+        await CheckRoutingAsync(stop);
 
         async Task Rejected(string peer, StatusCode expected)
         {
@@ -154,6 +147,17 @@ internal static class GroupChecks
         {
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
             return gate.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, stop);
+        }
+    }
+
+    private static async Task CheckIsolatedAsync(CancellationToken stop)
+    {
+        using var configuration = TestNodes.InitializeIsolated(ProcessType.Router);
+        using var isolated = TestNodes.Create(nameof(ProcessType.Router));
+        await isolated.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+        if (!isolated.Ready)
+        {
+            throw new Exception("A node with zero configured neighbors waited forever.");
         }
     }
 
@@ -183,15 +187,16 @@ internal static class GroupChecks
         counts[ProcessType.DBMgr] = 2;
 
         var group = new ServerGroup(counts);
+        using var configuration = ServerConfiguration.Initialize(group);
         var name = ServerProcess.FormatName(nameof(ProcessType.Base), 2);
         var missing = ServerProcess.FormatName(nameof(ProcessType.Router), 2);
-        using var node = TestNodes.Create(name, group);
-        var peers = Topology.Peers(group, name);
+        using var node = new ServerNode(name);
+        var peers = Topology.Peers(name);
         var streams = new Dictionary<string, FrameStream>();
         var tasks = new Dictionary<string, Task>();
 
         if (peers.Count != 6 ||
-            Topology.DialTargets(group, name).Length != 4 ||
+            Topology.DialTargets(name).Length != 4 ||
             !node.AcceptsIncoming(ServerProcess.FormatName(nameof(ProcessType.Gate), 2)) ||
             node.AcceptsIncoming(missing))
         {
@@ -257,13 +262,13 @@ internal static class GroupChecks
         }
     }
 
-    private static async Task CheckRoutingAsync(ServerGroup group, CancellationToken stop)
+    private static async Task CheckRoutingAsync(CancellationToken stop)
     {
-        using var router = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
+        using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1));
         var streams = new Dictionary<string, FrameStream>();
         var ids = new Dictionary<string, string>();
         var tasks = new List<Task>();
-        foreach (var peer in Topology.Peers(group, router.Name))
+        foreach (var peer in Topology.Peers(router.Name))
         {
             var stream = new FrameStream();
             var entity = IdGenerator.GenId();

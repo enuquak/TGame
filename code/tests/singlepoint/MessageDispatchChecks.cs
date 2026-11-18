@@ -18,7 +18,8 @@ internal static class MessageDispatchChecks
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stream = new FrameStream { BeforeWrite = release.Task };
 
-        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), TestNodes.DefaultGroup);
+        using var configuration = ServerConfiguration.Initialize(TestNodes.DefaultGroup);
+        using var node = TestNodes.Create(nameof(ProcessType.Gate));
         stream.Input.Writer.TryWrite(TestNodes.Hello(ServerProcess.FormatName(nameof(ProcessType.Login), 1)));
         var running = node.RunLinkAsync(ServerProcess.FormatName(nameof(ProcessType.Login), 1), IdGenerator.GenId(), stream, stream, stop);
         var request = new RegisterEntitiesRequest { SinglePointId = IdGenerator.GenId() };

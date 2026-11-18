@@ -154,7 +154,7 @@ public partial class ServerNode
 
     private void ValidateSource(string source, string? peer)
     {
-        if (!group.Contains(source))
+        if (!ServerConfiguration.Contains(source))
         {
             throw new InvalidDataException("Unknown RPC source process.");
         }
@@ -169,15 +169,15 @@ public partial class ServerNode
             return;
         }
 
-        if (source == peer || PeerRole(peer) == nameof(ProcessType.Router))
+        if (source == peer || ServerConfiguration.GetProcessType(peer) == ProcessType.Router)
         {
             return;
         }
 
         bool gateRelay = Role == nameof(ProcessType.Router) &&
-            PeerRole(source) == nameof(ProcessType.Gate) &&
-            PeerRole(peer) is nameof(ProcessType.Login) or nameof(ProcessType.Base) &&
-            Topology.Peers(group, peer).Contains(source);
+            ServerConfiguration.GetProcessType(source) == ProcessType.Gate &&
+            ServerConfiguration.GetProcessType(peer) is ProcessType.Login or ProcessType.Base &&
+            Topology.Peers(peer).Contains(source);
         if (!gateRelay)
         {
             throw new InvalidDataException("Invalid forwarded RPC source.");
@@ -226,7 +226,7 @@ public partial class ServerNode
             }
 
             // A Router already chose the destination; never bounce a missing entity back to it.
-            if (peer is not null && PeerRole(peer) == nameof(ProcessType.Router))
+            if (peer is not null && ServerConfiguration.GetProcessType(peer) == ProcessType.Router)
             {
                 throw new RpcException(new Status(StatusCode.NotFound, "Target entity is not hosted here."));
             }
@@ -234,7 +234,7 @@ public partial class ServerNode
             var candidates = new List<PeerLink>();
             foreach (var entry in links)
             {
-                var type = group.GetProcess(entry.Key).Type;
+                var type = ServerConfiguration.GetProcessType(entry.Key);
                 bool usable = Role == nameof(ProcessType.Gate)
                     ? type is ProcessType.Login or ProcessType.Base
                     : type == ProcessType.Router;
@@ -261,7 +261,7 @@ public partial class ServerNode
         peerSinglePoints.Add(peer, entityId);
         if (Role == nameof(ProcessType.Router))
         {
-            var type = group.GetProcess(peer).Type;
+            var type = ServerConfiguration.GetProcessType(peer);
             if (!singlePointIds.TryGetValue(type, out var candidates))
             {
                 candidates = [];
@@ -276,7 +276,7 @@ public partial class ServerNode
     {
         if (peerSinglePoints.Remove(peer, out var entityId) && Role == nameof(ProcessType.Router))
         {
-            var type = group.GetProcess(peer).Type;
+            var type = ServerConfiguration.GetProcessType(peer);
             singlePointIds[type].Remove(entityId);
         }
     }

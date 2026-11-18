@@ -25,13 +25,11 @@ internal static class TestNodes
     public static ServerGroup DefaultGroup { get; } = new(Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1));
 
     public static ServerNode Create(string role) =>
-        Create(ServerProcess.FormatName(role, 1), DefaultGroup);
+        new(ServerProcess.FormatName(role, 1));
 
-    public static ServerNode CreateIsolated(ProcessType type)
+    public static ServerConfiguration InitializeIsolated(ProcessType type)
     {
         var counts = Enum.GetValues<ProcessType>().ToDictionary(current => current, current => current == type ? 1 : 0);
-        return Create(ServerProcess.FormatName(type.ToString(), 1), new ServerGroup(counts));
+        return ServerConfiguration.Initialize(new ServerGroup(counts));
     }
-
-    public static ServerNode Create(string name, ServerGroup group) => new(name, group);
 }

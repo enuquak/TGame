@@ -78,6 +78,7 @@ internal static class ZooKeeperProxyChecks
         var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
         counts[ProcessType.Router] = 1;
         var group = new ServerGroup(counts);
+        using var configuration = ServerConfiguration.Initialize(group);
         await using var proxy = await ZooKeeperProxy.InitializeAsync(options, stop);
         var sessionLost = ZooKeeperProxy.SessionLost;
         Check(!sessionLost.IsCompleted, "Initialization must publish an active shared session.");
@@ -92,7 +93,7 @@ internal static class ZooKeeperProxyChecks
             bool rejected = false;
             try
             {
-                await ZooKeeperProxy.RegisterProcessAsync(group, Process, ReplacementAddress, stop);
+                await ZooKeeperProxy.RegisterProcessAsync(Process, ReplacementAddress, stop);
             }
             catch (InvalidOperationException error) when (error.InnerException is KeeperException.NodeExistsException)
             {
@@ -116,7 +117,7 @@ internal static class ZooKeeperProxyChecks
         }
 
         var discovery = ZooKeeperProxy.ResolveProcessAsync(Process, stop);
-        await ZooKeeperProxy.RegisterProcessAsync(group, Process, ReplacementAddress, stop);
+        await ZooKeeperProxy.RegisterProcessAsync(Process, ReplacementAddress, stop);
         if (await discovery != ReplacementAddress)
         {
             throw new Exception("Registration and discovery must use the same fixed service path.");
@@ -126,7 +127,7 @@ internal static class ZooKeeperProxyChecks
         Check(sessionLost.IsCompletedSuccessfully, "Proxy disposal must invalidate all users of the session.");
         Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.SessionLost);
         await using var next = await ZooKeeperProxy.InitializeAsync(options, stop);
-        await ZooKeeperProxy.RegisterProcessAsync(group, Process, Address, stop);
+        await ZooKeeperProxy.RegisterProcessAsync(Process, Address, stop);
         Check(await ZooKeeperProxy.ResolveProcessAsync(Process, stop) == Address, "The next lifecycle must use its new session.");
 
         Console.WriteLine("PASS singleton lifecycle, fixed service paths, duplicate rejection, node ownership and discovery across registration.");

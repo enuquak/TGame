@@ -17,7 +17,8 @@ internal static class ProfileStorageChecks
         counts[ProcessType.Login] = 1;
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
-        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Profile), 1), group);
+        using var configuration = ServerConfiguration.Initialize(group);
+        using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Profile), 1));
         var stream = new FrameStream();
         var router = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
         var source = ServerProcess.FormatName(nameof(ProcessType.Login), 1);

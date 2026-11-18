@@ -8,7 +8,15 @@ internal static class SinglePointDispatchChecks
 {
     public static async Task RunAsync(CancellationToken stop)
     {
-        using var node = TestNodes.CreateIsolated(ProcessType.Scene);
+        await CheckSelectedAsync(stop);
+        await CheckDefaultAsync(stop);
+        Console.WriteLine("PASS direct SinglePoint dispatch without business registration and default rejection.");
+    }
+
+    private static async Task CheckSelectedAsync(CancellationToken stop)
+    {
+        using var configuration = TestNodes.InitializeIsolated(ProcessType.Scene);
+        using var node = TestNodes.Create(nameof(ProcessType.Scene));
         await node.InitializeSinglePointAsync(new SinglePointRegistry([typeof(EchoSinglePoint)]), stop);
         var point = (EchoSinglePoint)node.SinglePoint!;
         var reply = await node.CallEntityAsync<StringValue>(point.EntityId, new StringValue { Value = "local" }, stop);
@@ -16,8 +24,12 @@ internal static class SinglePointDispatchChecks
         {
             throw new Exception("The selected SinglePoint did not receive the request and routing context.");
         }
+    }
 
-        using var defaultNode = TestNodes.CreateIsolated(ProcessType.Base);
+    private static async Task CheckDefaultAsync(CancellationToken stop)
+    {
+        using var configuration = TestNodes.InitializeIsolated(ProcessType.Base);
+        using var defaultNode = TestNodes.Create(nameof(ProcessType.Base));
         await defaultNode.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
         try
         {
@@ -27,8 +39,6 @@ internal static class SinglePointDispatchChecks
         catch (RpcException error) when (error.StatusCode == StatusCode.Unimplemented)
         {
         }
-
-        Console.WriteLine("PASS direct SinglePoint dispatch without business registration and default rejection.");
     }
 
     [SinglePointFor(ProcessType.Scene)]

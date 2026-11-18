@@ -65,7 +65,8 @@ internal static class MongoStorageChecks
             Environment.SetEnvironmentVariable(ServerEnvironment.MongoPassword, TestPassword);
             Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, null);
             var registry = new SinglePointRegistry([typeof(DBMgrServerSinglePoint)]);
-            using (var missingCredential = TestNodes.CreateIsolated(ProcessType.DBMgr))
+            using var configuration = TestNodes.InitializeIsolated(ProcessType.DBMgr);
+            using (var missingCredential = TestNodes.Create(nameof(ProcessType.DBMgr)))
             {
                 await ExpectAsync<InvalidOperationException>(() => missingCredential.InitializeSinglePointAsync(
                     registry, CancellationToken.None));
@@ -77,7 +78,7 @@ internal static class MongoStorageChecks
 
             Environment.SetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword, TestPassword);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
-            using var unavailable = TestNodes.CreateIsolated(ProcessType.DBMgr);
+            using var unavailable = TestNodes.Create(nameof(ProcessType.DBMgr));
             await ExpectAsync<TimeoutException>(() => unavailable.InitializeSinglePointAsync(registry, deadline.Token));
             if (unavailable.Ready || unavailable.SinglePoint?.Initialized == true)
             {

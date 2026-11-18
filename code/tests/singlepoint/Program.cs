@@ -13,6 +13,12 @@ const int HandshakeObservationMilliseconds = 200;
 const string InvalidEntityId = "body-1";
 const int TestWorkerId = 0;
 
+if (args is ["--configuration"])
+{
+    ServerConfigurationChecks.Run();
+    return 0;
+}
+
 if (args is ["--logging"])
 {
     try
@@ -49,6 +55,7 @@ if (args is ["--zookeeper-session"])
     return 0;
 }
 
+ServerConfigurationChecks.Run();
 SinglePointChecks.CheckBeforeIdInitialization();
 await IdGeneratorLifecycleChecks.RunAsync();
 // 内存检查共用一个进程内生成器，不向真实服务器组发布 ID。
@@ -153,13 +160,15 @@ if (args is not ["--node"])
 
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
 var stop = deadline.Token;
-var group = new ServerGroup(Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1));
 
 await RpcChecks.RunAsync(stop);
 await MessageDispatchChecks.RunAsync(stop);
+await CheckInitializationCancellationAsync();
+await GroupChecks.RunAsync(stop);
 
+using var configuration = ServerConfiguration.Initialize(TestNodes.DefaultGroup);
 var defaults = new SinglePointRegistry([]);
-using var loginNode = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Login), 1), group);
+using var loginNode = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Login), 1));
 var router = new FrameStream();
 var routerLink = Open(loginNode, ServerProcess.FormatName(nameof(ProcessType.Router), 1), router);
 var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -259,7 +268,8 @@ catch (RpcException error) when (error.StatusCode == StatusCode.Unavailable)
 }
 
 var business = new SinglePointRegistry([typeof(WaitingSinglePoint)]);
-using var gate = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group);
+var constructedSinglePoints = WaitingSinglePoint.CreatedCount;
+using var gate = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1));
 try
 {
     await gate.InitializeSinglePointAsync(business, stop);
@@ -269,7 +279,7 @@ catch (InvalidOperationException)
 {
 }
 
-if (WaitingSinglePoint.CreatedCount != 0 || gate.SinglePoint is not null)
+if (WaitingSinglePoint.CreatedCount != constructedSinglePoints || gate.SinglePoint is not null)
 {
     throw new Exception("A business SinglePoint was constructed before the handshakes.");
 }
@@ -306,27 +316,8 @@ if (gate.Ready)
     throw new Exception("Gate remained available after a peer disconnected.");
 }
 
-using var cancellingNode = TestNodes.CreateIsolated(ProcessType.Gate);
-using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
-var pending = cancellingNode.InitializeSinglePointAsync(business, cancel.Token);
-var cancelling = (WaitingSinglePoint)cancellingNode.SinglePoint!;
-await cancelling.Started.Task.WaitAsync(stop);
-cancel.Cancel();
-try
-{
-    await pending.WaitAsync(stop);
-    throw new Exception("Cancelled initialization completed successfully.");
-}
-catch (OperationCanceledException) when (cancel.IsCancellationRequested && !stop.IsCancellationRequested)
-{
-}
-if (cancelling.Initialized || cancellingNode.Ready || cancelling.LocalEntityIds.Any())
-{
-    throw new Exception("Cancelled SinglePoint became ready.");
-}
-
 InitializationFailureSinglePoint failedPoint;
-using (var failedNode = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Gate), 1), group))
+using (var failedNode = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Gate), 1)))
 {
     var failedLogin = new FrameStream();
     var failedBase = new FrameStream();
@@ -361,7 +352,7 @@ if (!failedPoint.Disposed)
     throw new Exception("Failed SinglePoint resources were not disposed with the engine node.");
 }
 
-using var routes = TestNodes.Create(ServerProcess.FormatName(nameof(ProcessType.Router), 1), group);
+using var routes = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1));
 var duplicateEntityId = IdGenerator.GenId();
 string[][] invalidRegistrations = [[], [InvalidEntityId], [duplicateEntityId, duplicateEntityId]];
 foreach (var ids in invalidRegistrations)
@@ -446,9 +437,33 @@ foreach (var stream in neighbors.Values)
 }
 
 await routing.WaitAsync(stop);
-await GroupChecks.RunAsync(stop);
 Console.WriteLine("PASS engine-first initialization, optional business construction, failure disposal, Profile routing, handshake retry, readiness gating, cancellation and disconnect.");
 return 0;
+
+async Task CheckInitializationCancellationAsync()
+{
+    using var isolatedConfiguration = TestNodes.InitializeIsolated(ProcessType.Gate);
+    using var cancellingNode = TestNodes.Create(nameof(ProcessType.Gate));
+    using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
+    var business = new SinglePointRegistry([typeof(WaitingSinglePoint)]);
+    var pending = cancellingNode.InitializeSinglePointAsync(business, cancel.Token);
+    var cancelling = (WaitingSinglePoint)cancellingNode.SinglePoint!;
+    await cancelling.Started.Task.WaitAsync(stop);
+    cancel.Cancel();
+    try
+    {
+        await pending.WaitAsync(stop);
+        throw new Exception("Cancelled initialization completed successfully.");
+    }
+    catch (OperationCanceledException) when (cancel.IsCancellationRequested && !stop.IsCancellationRequested)
+    {
+    }
+
+    if (cancelling.Initialized || cancellingNode.Ready || cancelling.LocalEntityIds.Any())
+    {
+        throw new Exception("Cancelled SinglePoint became ready.");
+    }
+}
 
 Task Open(ServerNode node, string peer, FrameStream stream)
 {

@@ -15,11 +15,11 @@ public static class Topology
         [nameof(ProcessType.Router)] = []
     };
 
-    public static string[] DialTargets(ServerGroup group, string name)
+    public static string[] DialTargets(string name)
     {
-        var role = group.GetProcess(name).Role;
+        var role = ServerConfiguration.GetProcess(name).Role;
         var targets = new List<string>();
-        foreach (var process in group.Processes)
+        foreach (var process in ServerConfiguration.Processes)
         {
             if (Dials[role].Contains(process.Role))
             {
@@ -30,11 +30,11 @@ public static class Topology
         return targets.ToArray();
     }
 
-    public static HashSet<string> Peers(ServerGroup group, string name)
+    public static HashSet<string> Peers(string name)
     {
-        var role = group.GetProcess(name).Role;
-        var peers = new HashSet<string>(DialTargets(group, name), StringComparer.Ordinal);
-        foreach (var process in group.Processes)
+        var role = ServerConfiguration.GetProcess(name).Role;
+        var peers = new HashSet<string>(DialTargets(name), StringComparer.Ordinal);
+        foreach (var process in ServerConfiguration.Processes)
         {
             if (Dials[process.Role].Contains(role))
             {

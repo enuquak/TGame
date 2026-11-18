@@ -26,9 +26,10 @@ internal static class EntityRegistrationChecks
         counts[ProcessType.Router] = 1;
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
+        using var configuration = ServerConfiguration.Initialize(group);
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
         var router = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
-        using var node = new ServerNode(profile, group);
+        using var node = new ServerNode(profile);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var stream = new FrameStream { AcknowledgeRegistration = false };
         stream.Input.Writer.TryWrite(TestNodes.Hello(router));

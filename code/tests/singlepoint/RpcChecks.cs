@@ -19,7 +19,7 @@ internal static class RpcChecks
             throw new Exception("Business Shared must not reference the server engine.");
         }
 
-        System.Type[] engineTypes = [typeof(Frame), typeof(ServerLink), typeof(ProcessType), typeof(ServerGroup),
+        System.Type[] engineTypes = [typeof(Frame), typeof(ServerLink), typeof(ProcessType), typeof(ServerGroup), typeof(ServerConfiguration),
             typeof(ServerProcess), typeof(IdText), typeof(ServerRunFiles), typeof(ServerLogEvents),
             typeof(ServerLogFields), typeof(TGame.Logging.LogEventJson)];
         foreach (var type in engineTypes)
