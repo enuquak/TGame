@@ -14,7 +14,7 @@ internal sealed class StartupReadinessChecks(TestServices services)
 
     private async Task CheckPublicationWaitAsync(CancellationToken stop)
     {
-        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var configuration = TestNodes.LoadConfiguration();
         var node = services.CreateNode(new ServerProcess(ProcessType.Gate, 1), configuration);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var loginStream = new FrameStream();
@@ -57,7 +57,7 @@ internal sealed class StartupReadinessChecks(TestServices services)
 
     internal async Task CheckWithoutDependenciesAsync(CancellationToken stop)
     {
-        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var configuration = TestNodes.LoadConfiguration();
         var node = services.CreateNode(new ServerProcess(ProcessType.Router, 1), configuration);
         Check(node.Ready, "Router without outgoing dependencies must be ready without business initialization.");
         Check(node.FirstLinks.IsCompletedSuccessfully, "Router waited for incoming connections.");
@@ -67,7 +67,7 @@ internal sealed class StartupReadinessChecks(TestServices services)
 
     private async Task CheckDelayedHelloAsync(CancellationToken stop)
     {
-        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var configuration = TestNodes.LoadConfiguration();
         var node = services.CreateNode(new ServerProcess(ProcessType.Login, 1), configuration);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var routerStream = new FrameStream();

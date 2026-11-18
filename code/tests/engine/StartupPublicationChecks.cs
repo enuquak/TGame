@@ -34,7 +34,7 @@ internal sealed class StartupPublicationChecks(TestServices services)
             await owner.createAsync(PathFor(persistent), [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT).WaitAsync(stop);
             Check(!await proxy.IsProcessClaimedAsync(persistent.Name, stop), "A persistent node was accepted as a live process identity.");
 
-            var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+            var configuration = TestNodes.LoadConfiguration();
             var node = new ServerNode(process, configuration, proxy, services.Ids, services.Log);
             await using var app = await StartAsync(node, proxy, stop);
             using var channel = GrpcChannel.ForAddress(app.Urls.Single());

@@ -39,7 +39,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
                 throw new InvalidOperationException("Initialize the process ZooKeeper proxy before use.");
             }
 
-            return zk ?? throw new InvalidOperationException("Initialize the process ZooKeeper proxy before use.");
+            return zk!;
         }
     }
 

@@ -5,7 +5,7 @@ internal sealed class DynamicTopologyChecks(TestServices services)
 {
     public async Task RunAsync(CancellationToken stop)
     {
-        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var configuration = TestNodes.LoadConfiguration();
         var router = services.CreateNode(new ServerProcess(ProcessType.Router, 1), configuration);
         Check(router.FirstLinks.IsCompletedSuccessfully && router.Ready,
             "Router without outgoing dependencies must become ready without incoming processes.");

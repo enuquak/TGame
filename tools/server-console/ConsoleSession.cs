@@ -53,11 +53,9 @@ internal sealed class ConsoleSession : IDisposable
             throw new InvalidDataException("控制台当前会话记录无效。");
         }
 
-        if (HasLegacyRun(saved))
+        if (!File.Exists(Path.Combine(sessions, saved, ServerRunFiles.DynamicDiscoveryMarker)))
         {
-            var configured = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
-            Instances = CreateInstances(configured);
-            return;
+            throw new InvalidDataException($"当前运行组不支持动态身份。请先用旧版控制台停止整组，再删除会话指针 {current} 后重新打开控制台。");
         }
 
         var group = ServerGroup.Load(Path.Combine(sessions, saved, ServerGroup.FileName));
@@ -67,33 +65,6 @@ internal sealed class ConsoleSession : IDisposable
 
     private static ServerInstance[] CreateInstances(ServerGroup group) =>
         group.Processes.Select(process => new ServerInstance(process.Role, process.ChannelId)).ToArray();
-
-    private bool HasLegacyRun(string id)
-    {
-        bool legacy = false;
-        foreach (var type in Enum.GetValues<ProcessType>())
-        {
-            var legacyExecutable = Path.Combine(Snapshot(id), type + "Server.exe");
-            if (!File.Exists(legacyExecutable))
-            {
-                continue;
-            }
-
-            legacy = true;
-            foreach (var candidate in Process.GetProcessesByName(type + "Server"))
-            {
-                using (candidate)
-                {
-                    if (!candidate.HasExited && string.Equals(candidate.MainModule?.FileName, legacyExecutable, StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new InvalidDataException("该运行组使用旧的无编号实例名，请先用旧版控制台停止整组，再创建新的运行组。");
-                    }
-                }
-            }
-        }
-
-        return legacy;
-    }
 
     public void Refresh()
     {
@@ -276,8 +247,7 @@ internal sealed class ConsoleSession : IDisposable
     {
         var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
         var runDir = Path.Combine(sessions, name);
-        bool dynamicIdentity = File.Exists(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker));
-        info.ArgumentList.Add(dynamicIdentity ? instance.Role : instance.SlotName);
+        info.ArgumentList.Add(instance.Role);
         var config = Path.Combine(runDir, RunConfigurationFile);
         if (!File.Exists(config))
         {

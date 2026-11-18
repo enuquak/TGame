@@ -76,7 +76,6 @@ public sealed class ServerGroup
     public const string FileName = ServerRunFiles.GroupConfiguration;
     public static string ConfigurationPath => Path.Combine("code", "server", "config", FileName);
 
-    private readonly Dictionary<string, ServerProcess> byName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> configuredCounts = new(StringComparer.Ordinal);
     public IReadOnlyList<ServerProcess> Processes { get; }
 
@@ -101,7 +100,6 @@ public sealed class ServerGroup
             {
                 var process = new ServerProcess(type, index + 1);
                 processes.Add(process);
-                byName.Add(process.Name, process);
             }
         }
 
@@ -112,18 +110,6 @@ public sealed class ServerGroup
 
         Processes = processes.AsReadOnly();
     }
-
-    public ServerProcess GetProcess(string name)
-    {
-        if (!byName.TryGetValue(name, out var process))
-        {
-            throw new InvalidDataException($"Process {name} is not configured in this server group.");
-        }
-
-        return process;
-    }
-
-    public bool Contains(string name) => byName.ContainsKey(name);
 
     public void Save(string path)
     {

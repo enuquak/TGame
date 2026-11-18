@@ -33,7 +33,6 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
     private string logDir = "";
     private string logRoot = "";
     private bool identityResolved;
-    private bool dynamicIdentity;
     private long startedUtcTicks;
     private RollingLog? log;
     private bool initializing, initialized, connected, failed;
@@ -57,15 +56,11 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
     internal string ExecutableName => SlotName + "Server.exe";
     private string IdentityPath => Path.Combine(runDir, SlotName + ".json");
     private string LaunchMarker => Path.Combine(runDir, "starting-" + SlotName);
-    private string StopMarker => dynamicIdentity
-        ? Path.Combine(runDir, ServerRunFiles.StopProcessPrefix + ServerRunFiles.ProcessKey(Pid ?? 0, startedUtcTicks))
-        : Path.Combine(runDir, ServerRunFiles.StopRolePrefix + SlotName);
 
     internal void Open(string directory, string logRoot, string snapshot)
     {
         Reset();
         runDir = directory;
-        dynamicIdentity = File.Exists(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker));
         this.logRoot = logRoot;
         logDir = Path.Combine(logRoot, Name + "Server");
         var exe = Path.Combine(snapshot, ExecutableName);
@@ -148,7 +143,6 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
 
     internal void Launch(ProcessStartInfo startInfo)
     {
-        File.Delete(StopMarker);
         File.WriteAllText(LaunchMarker, "");
         Reset();
         process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{Name} 启动失败。");
@@ -185,7 +179,6 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
                 }
 
                 Name = assigned.Name;
-                dynamicIdentity = true;
                 logDir = Path.Combine(logRoot, Name + "Server");
                 log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
                 identityResolved = true;
@@ -208,7 +201,8 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
             lines.RemoveRange(0, lines.Count - MaxRetainedLines);
         }
 
-        bool stopping = File.Exists(StopMarker);
+        var stopMarker = Path.Combine(runDir, ServerRunFiles.StopProcessPrefix + ServerRunFiles.ProcessKey(Pid.Value, startedUtcTicks));
+        bool stopping = File.Exists(stopMarker);
         if (failed)
         {
             Status = ServerStatus.Failed;
@@ -305,7 +299,8 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
             return;
         }
 
-        File.WriteAllText(StopMarker, "");
+        var stopMarker = Path.Combine(runDir, ServerRunFiles.StopProcessPrefix + ServerRunFiles.ProcessKey(child.Id, startedUtcTicks));
+        File.WriteAllText(stopMarker, "");
         Status = ServerStatus.Stopping;
         try
         {

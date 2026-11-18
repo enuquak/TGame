@@ -45,16 +45,13 @@ public sealed class IdGenerator : IAsyncDisposable
             }
 
             var initialized = await create(stop).ConfigureAwait(false);
-            try
-            {
-                stop.ThrowIfCancellationRequested();
-                Volatile.Write(ref generator, initialized);
-            }
-            catch
+            if (stop.IsCancellationRequested)
             {
                 await initialized.DisposeAsync().ConfigureAwait(false);
-                throw;
+                stop.ThrowIfCancellationRequested();
             }
+
+            Volatile.Write(ref generator, initialized);
         }
         finally
         {

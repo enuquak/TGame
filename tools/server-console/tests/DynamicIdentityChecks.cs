@@ -7,12 +7,6 @@ internal static class DynamicIdentityChecks
 {
     public static async Task RunAsync()
     {
-        await CheckAsync(dynamicIdentity: true);
-        await CheckAsync(dynamicIdentity: false);
-    }
-
-    private static async Task CheckAsync(bool dynamicIdentity)
-    {
         var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "tgame-identity-" + Guid.NewGuid().ToString("N"))).FullName;
         var executable = Path.Combine(root, "Router1Server.exe");
         File.Copy(Path.Combine(Environment.SystemDirectory, "sort.exe"), executable);
@@ -28,11 +22,8 @@ internal static class DynamicIdentityChecks
             long ticks = child.StartTime.ToUniversalTime().Ticks;
             File.WriteAllText(Path.Combine(root, "Router1.json"), JsonSerializer.Serialize(new { Pid = child.Id, StartedUtcTicks = ticks }));
             var key = ServerRunFiles.ProcessKey(child.Id, ticks);
-            var assignedName = dynamicIdentity ? "Router7" : "Router1";
-            if (dynamicIdentity)
-            {
-                File.WriteAllText(Path.Combine(root, ServerRunFiles.IdentityPrefix + key), assignedName);
-            }
+            var assignedName = ServerProcess.FormatName(nameof(ProcessType.Router), 7);
+            File.WriteAllText(Path.Combine(root, ServerRunFiles.IdentityPrefix + key), assignedName);
 
             var logs = Directory.CreateDirectory(Path.Combine(root, assignedName + "Server")).FullName;
             var rows = new[] { ServerLogEvents.LinksReady, ServerLogEvents.ProcessReady }.Select(ev =>
@@ -46,7 +37,7 @@ internal static class DynamicIdentityChecks
             }
 
             var stopping = instance.StopAsync(Console.WriteLine);
-            var marker = dynamicIdentity ? ServerRunFiles.StopProcessPrefix + key : ServerRunFiles.StopRolePrefix + assignedName;
+            var marker = ServerRunFiles.StopProcessPrefix + key;
             if (!File.Exists(Path.Combine(root, marker)))
             {
                 throw new Exception("Stop must address the exact process lifetime, not a reusable instance number.");
@@ -54,7 +45,7 @@ internal static class DynamicIdentityChecks
 
             child.StandardInput.Close();
             await stopping;
-            Console.WriteLine($"PASS console identity, logs and stop protocol (dynamic={dynamicIdentity}).");
+            Console.WriteLine("PASS console identity, logs and stop protocol.");
         }
         finally
         {

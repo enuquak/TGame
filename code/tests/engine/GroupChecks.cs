@@ -9,10 +9,9 @@ internal static class GroupChecks
         var group = new ServerGroup(counts);
         string[] expected = ["Router1", "Router2"];
         var routers = group.Processes.Where(process => process.Type == ProcessType.Router);
-        var baseName = ServerProcess.FormatName(nameof(ProcessType.Base), 1);
+        var single = group.Processes.Single(process => process.Type == ProcessType.Base);
         if (!routers.Select(process => process.Name).SequenceEqual(expected) ||
-            group.GetProcess(baseName).ChannelId != 1 ||
-            group.Contains(nameof(ProcessType.Router)))
+            single.Name != "Base1" || single.ChannelId != 1)
         {
             throw new Exception("Every instance must include its number, including a single instance and instance 1.");
         }

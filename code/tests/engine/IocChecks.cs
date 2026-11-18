@@ -96,7 +96,7 @@ internal static class IocChecks
     {
         var services = new ServiceCollection();
         var settings = new ServerSettings { ZooKeeper = "127.0.0.1:invalid-port", DiscoveryRoot = "/ioc-checks" };
-        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var configuration = TestNodes.LoadConfiguration();
         var options = TestServices.LocalZooKeeperOptions() with { Endpoint = settings.ZooKeeper, DiscoveryRoot = settings.DiscoveryRoot };
         var idOptions = new IdGeneratorOptions { WorkerRootPath = "/ioc-workers" };
         ServerServices.AddProcessServices(services, settings, configuration, options, idOptions, log);

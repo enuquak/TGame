@@ -16,7 +16,7 @@ internal sealed class NodeCommunicationChecks(TestServices services)
 
     private async Task CheckPeerCallsAsync(CancellationToken stop)
     {
-        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var configuration = TestNodes.LoadConfiguration();
         var node = services.CreateNode(new ServerProcess(ProcessType.Login, 1), configuration);
         var peer = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
         var stream = new FrameStream();
@@ -29,7 +29,7 @@ internal sealed class NodeCommunicationChecks(TestServices services)
             var request = new StringValue { Value = "payload" };
             var call = node.CallPeerAsync<StringValue>(peer, request, stop);
             var frame = await stream.Output.Reader.ReadAsync(stop);
-            Check(IdText.IsValid(frame.Request.RequestId) && frame.ReadRequest<StringValue>().Equals(request),
+            Check(IdText.IsValid(frame.Request.RequestId) && frame.Request.Payload.Unpack<StringValue>().Equals(request),
                 "Direct RPC lost its request ID or changed its payload.");
             stream.Input.Writer.TryWrite(RpcFrames.Reply(new StringValue { Value = "reply" }, frame.Request.RequestId));
             Check((await call).Value == "reply", "The peer reply did not reach its caller.");
@@ -94,7 +94,7 @@ internal sealed class NodeCommunicationChecks(TestServices services)
 
     private async Task CheckIncomingRequestsAsync(CancellationToken stop)
     {
-        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var configuration = TestNodes.LoadConfiguration();
         var node = services.CreateNode(new ServerProcess(ProcessType.Router, 1), configuration);
         var peer = ServerProcess.FormatName(nameof(ProcessType.Scene), 1);
         var stream = new FrameStream();
@@ -133,7 +133,7 @@ internal sealed class NodeCommunicationChecks(TestServices services)
 
     private async Task CheckRejectedHandshakeAsync(CancellationToken stop)
     {
-        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var configuration = TestNodes.LoadConfiguration();
         var node = services.CreateNode(new ServerProcess(ProcessType.Login, 1), configuration);
         var peer = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
         var stream = new FrameStream();

@@ -72,7 +72,6 @@ try
     }
 
     // 内存检查共用一个进程内生成器，不向真实服务器组发布 ID。
-    await IdGeneratorLifecycleChecks.RunAsync();
     await services.Ids.InitializeAsync();
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(
         args is ["--startup-publication"] ? ExternalTimeoutSeconds : TestTimeoutSeconds));
@@ -106,6 +105,7 @@ try
     ServerConfigurationChecks.Run(services);
     SettingsChecks.Run();
     GroupChecks.Run();
+    await IdGeneratorLifecycleChecks.RunAsync();
     await IdGeneratorChecks.RunAsync();
     new RpcChecks(services).CheckTransportBoundary();
     await new RpcChecks(services).RunAsync(stop);

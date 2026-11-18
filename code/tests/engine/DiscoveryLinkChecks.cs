@@ -15,7 +15,7 @@ internal sealed class DiscoveryLinkChecks(TestServices services)
 {
     public async Task RunAsync(CancellationToken stop)
     {
-        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var configuration = TestNodes.LoadConfiguration();
         var first = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 1), services.Ids);
         var second = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 2), services.Ids);
         await using var firstApp = await StartAsync(first, stop);

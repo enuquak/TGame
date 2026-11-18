@@ -14,9 +14,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
     private readonly Dictionary<string, TaskCompletionSource<RpcReply>> waiting = new();
     private readonly SemaphoreSlim writer = new(1);
 
-    public string Role => role;
     public string Peer => peer;
-    public string Id => id;
 
     public async Task WriteAsync(Frame frame, CancellationToken stop)
     {
@@ -32,16 +30,16 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
     }
 
     public async Task<TReply> CallAsync<TReply>(IMessage message, string requestId, CancellationToken stop,
-        Action? sent = null, TimeSpan? timeout = null)
+        TimeSpan? timeout = null)
         where TReply : IMessage<TReply>, new()
     {
         var request = new RpcRequest { RequestId = requestId, Payload = Any.Pack(message) };
-        var response = await CallAsync(request, stop, sent, timeout);
+        var response = await CallAsync(request, stop, timeout);
         return ReadReply<TReply>(response);
     }
 
     internal async Task<RpcReply> CallAsync(RpcRequest request, CancellationToken stop,
-        Action? sent = null, TimeSpan? timeout = null)
+        TimeSpan? timeout = null)
     {
         ValidateEnvelope(request.RequestId, request.Payload);
         stop.ThrowIfCancellationRequested();
@@ -65,7 +63,6 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         try
         {
             await WriteAsync(new Frame { Request = request }, deadline.Token);
-            sent?.Invoke();
 
             return await reply.Task.WaitAsync(deadline.Token);
         }
@@ -103,12 +100,6 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         }
 
         return response.Payload.Unpack<TReply>();
-    }
-
-    public Task ReplyAsync(IMessage message, string requestId, CancellationToken stop)
-    {
-        var reply = new RpcReply { RequestId = requestId, Payload = Any.Pack(message) };
-        return WriteAsync(new Frame { Reply = reply }, stop);
     }
 
     public void Receive(RpcReply reply)
