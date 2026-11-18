@@ -31,12 +31,16 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
     private Process? process;
     private string runDir = "";
     private string logDir = "";
+    private string logRoot = "";
+    private bool identityResolved;
+    private bool dynamicIdentity;
     private long startedUtcTicks;
     private RollingLog? log;
     private bool initializing, initialized, connected, failed;
 
     public string Role { get; } = role;
-    public string Name { get; } = ServerProcess.FormatName(role, channelId);
+    public string Name { get; private set; } = ServerProcess.FormatName(role, channelId);
+    internal string SlotName { get; } = ServerProcess.FormatName(role, channelId);
     public int? Pid
     {
         get; private set;
@@ -50,15 +54,19 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
     }
 
     internal bool Alive => process is { HasExited: false };
-    internal string ExecutableName => Name + "Server.exe";
-    private string IdentityPath => Path.Combine(runDir, Name + ".json");
-    private string LaunchMarker => Path.Combine(runDir, "starting-" + Name);
-    private string StopMarker => Path.Combine(runDir, ServerRunFiles.StopRolePrefix + Name);
+    internal string ExecutableName => SlotName + "Server.exe";
+    private string IdentityPath => Path.Combine(runDir, SlotName + ".json");
+    private string LaunchMarker => Path.Combine(runDir, "starting-" + SlotName);
+    private string StopMarker => dynamicIdentity
+        ? Path.Combine(runDir, ServerRunFiles.StopProcessPrefix + ServerRunFiles.ProcessKey(Pid ?? 0, startedUtcTicks))
+        : Path.Combine(runDir, ServerRunFiles.StopRolePrefix + SlotName);
 
     internal void Open(string directory, string logRoot, string snapshot)
     {
         Reset();
         runDir = directory;
+        dynamicIdentity = File.Exists(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker));
+        this.logRoot = logRoot;
         logDir = Path.Combine(logRoot, Name + "Server");
         var exe = Path.Combine(snapshot, ExecutableName);
         var saved = File.Exists(IdentityPath)
@@ -163,6 +171,25 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
         if (Pid == null)
         {
             return;
+        }
+
+        if (!identityResolved)
+        {
+            var identityPath = Path.Combine(runDir, ServerRunFiles.IdentityPrefix + ServerRunFiles.ProcessKey(Pid.Value, startedUtcTicks));
+            if (File.Exists(identityPath))
+            {
+                var assigned = ServerProcess.Parse(File.ReadAllText(identityPath));
+                if (assigned.Role != Role)
+                {
+                    throw new InvalidDataException("Claimed process type does not match its launch type.");
+                }
+
+                Name = assigned.Name;
+                dynamicIdentity = true;
+                logDir = Path.Combine(logRoot, Name + "Server");
+                log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
+                identityResolved = true;
+            }
         }
 
         bool caughtUp;
@@ -308,6 +335,9 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
         Dispose();
         process = null;
         Pid = null;
+        Name = SlotName;
+        identityResolved = false;
+        logDir = Path.Combine(logRoot, Name + "Server");
         log = null;
         lines.Clear();
         LineCount = 0;

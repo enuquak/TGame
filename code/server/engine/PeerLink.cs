@@ -31,15 +31,17 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         }
     }
 
-    public async Task<TReply> CallAsync<TReply>(IMessage message, string requestId, CancellationToken stop, Action? sent = null)
+    public async Task<TReply> CallAsync<TReply>(IMessage message, string requestId, CancellationToken stop,
+        Action? sent = null, TimeSpan? timeout = null)
         where TReply : IMessage<TReply>, new()
     {
         var request = new RpcRequest { RequestId = requestId, Payload = Any.Pack(message) };
-        var response = await CallAsync(request, stop, sent);
+        var response = await CallAsync(request, stop, sent, timeout);
         return ReadReply<TReply>(response);
     }
 
-    internal async Task<RpcReply> CallAsync(RpcRequest request, CancellationToken stop, Action? sent = null)
+    internal async Task<RpcReply> CallAsync(RpcRequest request, CancellationToken stop,
+        Action? sent = null, TimeSpan? timeout = null)
     {
         ValidateEnvelope(request.RequestId, request.Payload);
         stop.ThrowIfCancellationRequested();
@@ -63,7 +65,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
             await WriteAsync(new Frame { Request = request }, stop);
             sent?.Invoke();
 
-            return await reply.Task.WaitAsync(RequestTimeout, stop);
+            return await reply.Task.WaitAsync(timeout ?? RequestTimeout, stop);
         }
         finally
         {

@@ -125,12 +125,13 @@ internal static class EntityRoutingChecks
         await using var network = await Network.CreateAsync(ProcessType.Login, stop, initializeProfile: false);
         var gate = network.Node(ProcessType.Gate);
         var profile = network.Node(ProcessType.Profile);
+        var router = (RouterServerSinglePoint)network.Node(ProcessType.Router).SinglePoint!;
         Check(profile.SinglePoint is null, "Engine startup created a SinglePoint before initialization.");
         var initialization = profile.InitializeSinglePointAsync(new SinglePointRegistry([typeof(RegistrationWaitingSinglePoint)]), stop);
         var point = (RegistrationWaitingSinglePoint)profile.SinglePoint!;
         await point.Started.Task.WaitAsync(stop);
         Check(!point.LocalEntityIds.Any(), "Entities were registered before business initialization completed.");
-        Check(!network.Node(ProcessType.Router).IsEntityOwner(profile.Name, point.EntityId),
+        Check(!router.IsRemoteEntityOwner(profile.Name, point.EntityId),
             "Router registered an entity from the connection handshake.");
         await ExpectStatus(StatusCode.NotFound, () => gate.CallEntityAsync<StringValue>(point.EntityId, new StringValue(), stop));
         point.Handler = (_, payload, _) => Task.FromResult<IMessage>(new StringValue
@@ -139,7 +140,7 @@ internal static class EntityRoutingChecks
         });
         point.Release.SetResult();
         await initialization.WaitAsync(stop);
-        Check(network.Node(ProcessType.Router).IsEntityOwner(profile.Name, point.EntityId),
+        Check(router.IsRemoteEntityOwner(profile.Name, point.EntityId),
             "SinglePoint initialization completed before Router acknowledged its entity.");
         var response = await gate.CallEntityAsync<StringValue>(point.EntityId, new StringValue { Value = "ready" }, stop);
         Check(response.Value.EndsWith("|ready", StringComparison.Ordinal), "Initialized target did not accept its next request.");
@@ -151,7 +152,7 @@ internal static class EntityRoutingChecks
         counts[ProcessType.Gate] = 1;
         counts[ProcessType.Login] = 1;
         var group = new ServerGroup(counts);
-        using var configuration = ServerConfiguration.Initialize(group);
+        using var configuration = TestNodes.InitializeConfiguration(group);
         var gate = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);
         var login = ServerProcess.FormatName(nameof(ProcessType.Login), 1);
         var expiredHandler = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -245,7 +246,7 @@ internal static class EntityRoutingChecks
         counts[ProcessType.Router] = 1;
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
-        using var configuration = ServerConfiguration.Initialize(group);
+        using var configuration = TestNodes.InitializeConfiguration(group);
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
         using var router = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1));
         var stream = new FrameStream();
@@ -333,7 +334,7 @@ internal static class EntityRoutingChecks
             counts[ProcessType.Router] = 1;
             counts[ProcessType.Profile] = 2;
             var group = new ServerGroup(counts);
-            configuration = ServerConfiguration.Initialize(group);
+            configuration = TestNodes.InitializeConfiguration(group);
 
             foreach (var process in group.Processes)
             {
@@ -370,7 +371,7 @@ internal static class EntityRoutingChecks
 
             foreach (var caller in nodes.Values)
             {
-                foreach (var peer in Topology.DialTargets(caller.Name))
+                foreach (var peer in TestNodes.DialTargets(caller.Name, group))
                 {
                     var connection = new Connection(stop);
                     connections.Add(connection);
@@ -388,7 +389,7 @@ internal static class EntityRoutingChecks
                 }
             }
 
-            foreach (var node in nodes.Values)
+            await Task.WhenAll(nodes.Values.Select(async node =>
             {
                 await node.FirstLinks.WaitAsync(stop);
                 if (initializeProfile || node != Node(ProcessType.Profile))
@@ -401,7 +402,7 @@ internal static class EntityRoutingChecks
                         point.Handler = handlers[node.Name];
                     }
                 }
-            }
+            }));
         }
 
         public void ResetHold()
@@ -429,7 +430,8 @@ internal static class EntityRoutingChecks
                 await Task.Delay(RegistrationPollMilliseconds, stop);
             }
 
-            Check(router.IsEntityOwner(profile.Name, profile.SinglePoint!.EntityId), "Reconnected SinglePoint did not restore its entity route.");
+            var point = (RouterServerSinglePoint)router.SinglePoint!;
+            Check(point.IsRemoteEntityOwner(profile.Name, profile.SinglePoint!.EntityId), "Reconnected SinglePoint did not restore its entity route.");
         }
 
         public async ValueTask DisposeAsync()

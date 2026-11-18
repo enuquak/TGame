@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -16,33 +17,49 @@ const string DevelopmentCertificateOid = "1.3.6.1.4.1.311.84.1.1";
 
 if (args.Length != ProcessArgumentCount)
 {
-    throw new ArgumentException("Usage: TGame.Server <instance-name> <run-directory>");
+    throw new ArgumentException("Usage: TGame.Server <process-type> <run-directory>");
 }
 
 var runDir = Path.GetFullPath(args[1]);
-using var configuration = ServerConfiguration.Initialize(Path.Combine(runDir, ServerGroup.FileName));
-var process = ServerConfiguration.GetProcess(args[0]);
-var role = process.Role;
-using var serverLog = GameLog.OpenServer(process);
+var processType = ServerProcess.ParseType(args[0]);
+var role = processType.ToString();
+IDisposable? serverLog = null;
 try
 {
-    await RunServerAsync(process, runDir);
+    await RunServerAsync(processType, runDir);
 }
 catch (Exception error)
 {
     GameLog.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString(), bothPrintConsole: true);
     Environment.ExitCode = 1;
 }
-
-static async Task RunServerAsync(ServerProcess process, string runDir)
+finally
 {
-    var settings = LoadConfiguration();
-    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(GameLog)} 日志初始化完成");
-    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "进程组配置初始化完成");
-    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(ServerSettings)} 服务端配置加载完成");
+    serverLog?.Dispose();
+}
 
-    await using var zooKeeperLifetime = await InitializeZooKeeperAsync(settings, process.Role);
-    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(ZooKeeperProxy)} 单例初始化完成");
+async Task RunServerAsync(ProcessType processType, string runDir)
+{
+    var role = processType.ToString();
+    var settings = LoadConfiguration();
+    using var configuration = ServerConfiguration.Initialize(
+        Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName));
+
+    await using var zooKeeperLifetime = await InitializeZooKeeperAsync(settings, role);
+    ServerProcess process;
+    using (var claimTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(RegistrationTimeoutSeconds)))
+    {
+        process = await ZooKeeperProxy.ClaimProcessAsync(processType, claimTimeout.Token);
+    }
+
+    serverLog = GameLog.OpenServer(process);
+    Directory.CreateDirectory(runDir);
+    using var currentProcess = Process.GetCurrentProcess();
+    var identityKey = ServerRunFiles.ProcessKey(Environment.ProcessId, currentProcess.StartTime.ToUniversalTime().Ticks);
+    var identityPath = Path.Combine(runDir, ServerRunFiles.IdentityPrefix + identityKey);
+    File.WriteAllText(identityPath + ".tmp", process.Name);
+    File.Move(identityPath + ".tmp", identityPath, true);
+    GameLog.Info(ServerLogEvents.InitStepCompleted, role, detail: $"ZK 实例身份 {process.Name} 已占用，类型连接配置已加载");
 
     await using var idLifetime = await InitializeIdGeneratorAsync(process.Role);
     GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(IdGenerator)} 单例初始化完成");
@@ -57,7 +74,7 @@ static async Task RunServerAsync(ServerProcess process, string runDir)
     var workers = new List<Task>();
     try
     {
-        workers.Add(SuperviseAsync(WatchStopAsync(runDir, process.Name, lifetime), lifetime));
+        workers.Add(SuperviseAsync(WatchStopAsync(runDir, process.Name, identityKey, lifetime), lifetime));
         GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "停止信号监控已启动");
 
         workers.Add(SuperviseAsync(WatchZooKeeperSessionAsync(stop), lifetime));
@@ -65,6 +82,13 @@ static async Task RunServerAsync(ServerProcess process, string runDir)
 
         await InitializeEngineAsync();
         await InitializeSinglePointAsync();
+        await node.WaitUntilReadyAsync(stop);
+        using (var publicationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop))
+        {
+            publicationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
+            await ZooKeeperProxy.RegisterProcessAsync(process, app.Urls.Single(), publicationTimeout.Token);
+        }
+
         GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "进程初始化完成");
 
         await Task.WhenAll(workers);
@@ -87,17 +111,8 @@ static async Task RunServerAsync(ServerProcess process, string runDir)
 
     async Task InitializeEngineAsync()
     {
-        using (var registrationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop))
-        {
-            registrationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
-            await ZooKeeperProxy.RegisterProcessAsync(process, app.Urls.Single(), registrationTimeout.Token);
-        }
-
-        foreach (var peer in Topology.DialTargets(process.Name))
-        {
-            workers.Add(SuperviseAsync(node.MaintainLinkAsync(peer, stop), lifetime));
-            GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, peer, detail: "连接维护任务已启动");
-        }
+        workers.Add(SuperviseAsync(node.MaintainConnectionsAsync(stop), lifetime));
+        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "动态发现与连接维护已启动");
 
         await node.FirstLinks.WaitAsync(stop);
         GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "引擎层初始化完成");
@@ -203,11 +218,12 @@ static async Task WatchZooKeeperSessionAsync(CancellationToken stop)
     throw new InvalidOperationException("The process lost its ZooKeeper session.");
 }
 
-static async Task WatchStopAsync(string runDir, string processName, CancellationTokenSource lifetime)
+static async Task WatchStopAsync(string runDir, string processName, string identityKey, CancellationTokenSource lifetime)
 {
     var stopGroup = Path.Combine(runDir, ServerRunFiles.StopGroup);
     var stopRole = Path.Combine(runDir, ServerRunFiles.StopRolePrefix + processName);
-    while (!File.Exists(stopGroup) && !File.Exists(stopRole))
+    var stopProcess = Path.Combine(runDir, ServerRunFiles.StopProcessPrefix + identityKey);
+    while (!File.Exists(stopGroup) && !File.Exists(stopRole) && !File.Exists(stopProcess))
     {
         await Task.Delay(StopPollIntervalMilliseconds, lifetime.Token);
     }

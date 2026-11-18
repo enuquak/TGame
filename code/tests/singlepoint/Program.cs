@@ -9,7 +9,6 @@ using TGame.Server.Engine;
 using TGame.Server.Logic;
 
 const int TestTimeoutSeconds = 5;
-const int HandshakeObservationMilliseconds = 200;
 const string InvalidEntityId = "body-1";
 const int TestWorkerId = 0;
 
@@ -62,6 +61,32 @@ await IdGeneratorLifecycleChecks.RunAsync();
 await using var idLifetime = await IdGenerator.InitializeAsync(
     _ => Task.FromResult(new SnowflakeIdGenerator(TestWorkerId, TimeProvider.System)));
 
+if (args is ["--dynamic-topology"] or ["--discovery-links"] or ["--startup-publication"])
+{
+    try
+    {
+        using var dynamicDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        if (args[0] == "--startup-publication")
+        {
+            await StartupPublicationChecks.RunAsync(dynamicDeadline.Token);
+        }
+        else if (args[0] == "--discovery-links")
+        {
+            await DiscoveryLinkChecks.RunAsync(dynamicDeadline.Token);
+        }
+        else
+        {
+            await DynamicTopologyChecks.RunAsync(dynamicDeadline.Token);
+        }
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error);
+        return 1;
+    }
+}
+
 if (args is ["--singlepoint-dispatch"])
 {
     using var dispatchDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
@@ -86,7 +111,7 @@ if (args is ["--profile"])
 
 if (args is ["--routing"])
 {
-    using var routingDeadline = new CancellationTokenSource(PeerLink.RequestTimeout + TimeSpan.FromSeconds(TestTimeoutSeconds));
+    using var routingDeadline = new CancellationTokenSource(PeerLink.RequestTimeout * 2 + TimeSpan.FromSeconds(TestTimeoutSeconds));
     try
     {
         await EntityRegistrationChecks.RunAsync(routingDeadline.Token);
@@ -144,7 +169,7 @@ if (engineAssembly == typeof(ProfileServerSinglePoint).Assembly)
 }
 
 Type[] engineTypes = [typeof(LinkService), typeof(ServerNode), typeof(PeerLink), typeof(ZooKeeperProxy),
-    typeof(ServerSinglePoint), typeof(SinglePointRegistry), typeof(SinglePointForAttribute)];
+    typeof(ServerSinglePoint), typeof(RouterServerSinglePoint), typeof(SinglePointRegistry), typeof(SinglePointForAttribute)];
 foreach (var type in engineTypes)
 {
     if (type.Assembly != engineAssembly)
@@ -166,16 +191,16 @@ await MessageDispatchChecks.RunAsync(stop);
 await CheckInitializationCancellationAsync();
 await GroupChecks.RunAsync(stop);
 
-using var configuration = ServerConfiguration.Initialize(TestNodes.DefaultGroup);
+using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
 var defaults = new SinglePointRegistry([]);
 using var loginNode = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Login), 1));
 var router = new FrameStream();
 var routerLink = Open(loginNode, ServerProcess.FormatName(nameof(ProcessType.Router), 1), router);
 var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 var pendingGate = Open(loginNode, ServerProcess.FormatName(nameof(ProcessType.Gate), 1), new FrameStream { BeforeWrite = handshake.Task });
-if (await Task.WhenAny(loginNode.FirstLinks, Task.Delay(HandshakeObservationMilliseconds, stop)) == loginNode.FirstLinks)
+if (!loginNode.FirstLinks.IsCompletedSuccessfully)
 {
-    Console.Error.WriteLine("Login became available before it sent its handshake reply.");
+    Console.Error.WriteLine("Login waited for an incoming Gate despite its outgoing Router handshake being complete.");
     return 1;
 }
 handshake.SetException(new IOException("Disconnected during handshake."));
@@ -377,19 +402,20 @@ foreach (var ids in invalidRegistrations)
 
 var neighbors = new Dictionary<string, FrameStream>();
 var neighborIds = new Dictionary<string, string>();
-foreach (var pair in Topology.Dials)
+foreach (var pair in ServerConfiguration.DialTargets)
 {
-    if (!pair.Value.Contains(nameof(ProcessType.Router)))
+    if (!pair.Value.Contains(ProcessType.Router))
     {
         continue;
     }
 
-    var peer = ServerProcess.FormatName(pair.Key, 1);
+    var peer = ServerProcess.FormatName(pair.Key.ToString(), 1);
     neighbors.Add(peer, new FrameStream());
     neighborIds.Add(peer, IdGenerator.GenId());
 }
 
 var routeTasks = new List<Task>();
+var routeRegistrations = new List<Task>();
 foreach (var pair in neighbors)
 {
     routeTasks.Add(Open(routes, pair.Key, pair.Value));
@@ -399,12 +425,13 @@ foreach (var pair in neighbors)
         throw new Exception("Router did not acknowledge the process handshake.");
     }
 
-    await TestNodes.RegisterAsync(pair.Value, [neighborIds[pair.Key]], stop);
+    routeRegistrations.Add(TestNodes.RegisterAsync(pair.Value, [neighborIds[pair.Key]], stop));
 }
 
 var routing = Task.WhenAll(routeTasks);
 await routes.FirstLinks.WaitAsync(stop);
 await routes.InitializeSinglePointAsync(defaults, stop);
+await Task.WhenAll(routeRegistrations);
 var baseRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Base), 1)];
 var profileRoute = neighbors[ServerProcess.FormatName(nameof(ProcessType.Profile), 1)];
 var query = new ProfileRequest

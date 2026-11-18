@@ -27,9 +27,28 @@ internal static class TestNodes
     public static ServerNode Create(string role) =>
         new(ServerProcess.FormatName(role, 1));
 
+    public static ServerConfiguration InitializeConfiguration(ServerGroup group)
+    {
+        Dictionary<ProcessType, ProcessType[]> targets;
+        using (ServerConfiguration.Initialize(Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName)))
+        {
+            // 数量仅描述内存测试创建的节点；被测运行时只接收类型关系。
+            var present = group.Processes.Select(process => process.Type).ToHashSet();
+            targets = ServerConfiguration.DialTargets.ToDictionary(pair => pair.Key,
+                pair => pair.Value.Where(present.Contains).ToArray());
+        }
+
+        return ServerConfiguration.Initialize(targets);
+    }
+
+    public static string[] DialTargets(string name, ServerGroup group) => group.Processes
+        .Where(peer => Topology.Dials(ServerProcess.Parse(name).Type, peer.Type)).Select(peer => peer.Name).ToArray();
+
+    public static HashSet<string> Peers(string name, ServerGroup group) => group.Processes
+        .Where(peer => Topology.ArePeers(ServerProcess.Parse(name).Type, peer.Type)).Select(peer => peer.Name).ToHashSet();
+
     public static ServerConfiguration InitializeIsolated(ProcessType type)
     {
-        var counts = Enum.GetValues<ProcessType>().ToDictionary(current => current, current => current == type ? 1 : 0);
-        return ServerConfiguration.Initialize(new ServerGroup(counts));
+        return ServerConfiguration.Initialize(Enum.GetValues<ProcessType>().ToDictionary(current => current, _ => Array.Empty<ProcessType>()));
     }
 }

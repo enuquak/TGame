@@ -1,40 +1,110 @@
+using System.Collections.ObjectModel;
+using System.Text.Json;
+
 namespace TGame.Server.Engine;
 
 public sealed class ServerConfiguration : IDisposable
 {
+    public const string FileName = "connections.json";
     private static ServerConfiguration? instance;
-    private readonly ServerGroup group;
+    private readonly IReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>> targets;
 
-    private ServerConfiguration(ServerGroup group)
+    private ServerConfiguration(IReadOnlyDictionary<ProcessType, ProcessType[]> configured)
     {
-        this.group = group;
+        var types = Enum.GetValues<ProcessType>();
+        if (configured.Count != types.Length || types.Any(type => !configured.ContainsKey(type)))
+        {
+            throw new InvalidDataException("Specify outgoing connections for every process type.");
+        }
+
+        var validated = new Dictionary<ProcessType, IReadOnlyList<ProcessType>>();
+        foreach (var (type, peers) in configured)
+        {
+            if (peers.Any(peer => !Enum.IsDefined(peer) || peer == type || peer == ProcessType.Gate) ||
+                peers.Distinct().Count() != peers.Length)
+            {
+                throw new InvalidDataException($"Invalid or repeated connection target for {type}.");
+            }
+
+            validated.Add(type, Array.AsReadOnly(peers.ToArray()));
+        }
+
+        // 地址发布前要等主动依赖就绪，依赖环会使各进程一直互相等待。
+        var visited = new HashSet<ProcessType>();
+        var visiting = new HashSet<ProcessType>();
+        foreach (var type in types)
+        {
+            Visit(type);
+        }
+
+        targets = new ReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>>(validated);
+
+        void Visit(ProcessType type)
+        {
+            if (visited.Contains(type))
+            {
+                return;
+            }
+
+            if (!visiting.Add(type))
+            {
+                throw new InvalidDataException($"Cyclic connection dependency involving {type}.");
+            }
+
+            foreach (var peer in validated[type])
+            {
+                Visit(peer);
+            }
+
+            visiting.Remove(type);
+            visited.Add(type);
+        }
     }
 
-    private static ServerGroup Group => Volatile.Read(ref instance)?.group
+    public static IReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>> DialTargets =>
+        Volatile.Read(ref instance)?.targets
         ?? throw new InvalidOperationException("Initialize the server configuration before use.");
-
-    public static IReadOnlyList<ServerProcess> Processes => Group.Processes;
-
-    public static ServerProcess GetProcess(string name) => Group.GetProcess(name);
-
-    public static ProcessType GetProcessType(string name) => GetProcess(name).Type;
-
-    public static bool Contains(string name) => Group.Contains(name);
 
     public static ServerConfiguration Initialize(string path)
     {
-        if (Volatile.Read(ref instance) is not null)
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
         {
-            throw new InvalidOperationException("The server configuration is already initialized.");
+            throw new InvalidDataException("Connection configuration must map process types to target arrays.");
         }
 
-        return Initialize(ServerGroup.Load(path));
+        var configured = new Dictionary<ProcessType, ProcessType[]>();
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            var type = ServerProcess.ParseType(property.Name);
+            if (property.Value.ValueKind != JsonValueKind.Array)
+            {
+                throw new InvalidDataException($"Invalid connection targets for {type}.");
+            }
+
+            var peers = new List<ProcessType>();
+            foreach (var peer in property.Value.EnumerateArray())
+            {
+                if (peer.ValueKind != JsonValueKind.String)
+                {
+                    throw new InvalidDataException($"Invalid connection target for {type}.");
+                }
+
+                peers.Add(ServerProcess.ParseType(peer.GetString()!));
+            }
+
+            if (!configured.TryAdd(type, peers.ToArray()))
+            {
+                throw new InvalidDataException($"Repeated process type {type}.");
+            }
+        }
+
+        return Initialize(configured);
     }
 
-    // 内存检查复用相同生命周期，配置数据仍由 ServerGroup 校验。
-    internal static ServerConfiguration Initialize(ServerGroup group)
+    internal static ServerConfiguration Initialize(IReadOnlyDictionary<ProcessType, ProcessType[]> targets)
     {
-        var initialized = new ServerConfiguration(group);
+        var initialized = new ServerConfiguration(targets);
         if (Interlocked.CompareExchange(ref instance, initialized, null) is not null)
         {
             throw new InvalidOperationException("The server configuration is already initialized.");

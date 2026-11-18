@@ -18,23 +18,25 @@ internal static class ProfileRpcChecks
         counts[ProcessType.GM] = 1;
         counts[ProcessType.Profile] = 2;
         var group = new ServerGroup(counts);
-        using var configuration = ServerConfiguration.Initialize(group);
+        using var configuration = TestNodes.InitializeConfiguration(group);
         using var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Router), 1));
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        var peers = Topology.Peers(node.Name).ToDictionary(name => name, _ => new FrameStream());
+        var peers = TestNodes.Peers(node.Name, group).ToDictionary(name => name, _ => new FrameStream());
         var entities = peers.Keys.ToDictionary(name => name, _ => NewId());
         var running = new List<Task>();
+        var registrations = new List<Task>();
         foreach (var (peer, stream) in peers)
         {
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
             running.Add(node.RunLinkAsync(peer, NewId(), stream, stream, lifetime.Token));
             await stream.Output.Reader.ReadAsync(stop);
-            await TestNodes.RegisterAsync(stream, [entities[peer]], stop);
+            registrations.Add(TestNodes.RegisterAsync(stream, [entities[peer]], stop));
         }
 
         try
         {
             await node.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+            await Task.WhenAll(registrations);
             var source = ServerProcess.FormatName(nameof(ProcessType.Base), 1);
             var forbidden = ServerProcess.FormatName(nameof(ProcessType.GM), 1);
             var profileProcesses = group.Processes.Where(process => process.Type == ProcessType.Profile);

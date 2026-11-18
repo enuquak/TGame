@@ -1,0 +1,10 @@
+{
+  "Router": [],
+  "DBMgr": ["Router"],
+  "Scene": ["Router"],
+  "Login": ["Router"],
+  "Base": ["Router", "DBMgr"],
+  "Profile": ["Router"],
+  "GM": ["Router"],
+  "Gate": ["Login", "Base"]
+}

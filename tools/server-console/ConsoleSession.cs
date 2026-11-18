@@ -168,7 +168,7 @@ internal sealed class ConsoleSession : IDisposable
     {
         var group = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
         var configuredNames = group.Processes.Select(process => process.Name);
-        bool changed = !Instances.Select(instance => instance.Name).SequenceEqual(configuredNames);
+        bool changed = !Instances.Select(instance => instance.SlotName).SequenceEqual(configuredNames);
         var nextInstances = Instances;
         if (changed)
         {
@@ -179,6 +179,7 @@ internal sealed class ConsoleSession : IDisposable
         var snapshot = Snapshot(name);
         var runDir = Directory.CreateDirectory(Path.Combine(sessions, name)).FullName;
         File.WriteAllText(Path.Combine(runDir, SessionMarker), "");
+        File.WriteAllText(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker), "");
         group.Save(Path.Combine(runDir, ServerGroup.FileName));
         SaveRunConfiguration(runDir);
         // Prepare credentials and a complete copy before asking healthy processes to shut down.
@@ -274,14 +275,15 @@ internal sealed class ConsoleSession : IDisposable
     private void Launch(ServerInstance instance, ProcessStartInfo start)
     {
         instance.Launch(start);
-        Report($"已启动 {instance.Name} · PID {instance.Pid}");
+        Report($"已启动 {instance.Role} 进程 · PID {instance.Pid}，实例身份由服务器注册后显示");
     }
 
     private ProcessStartInfo StartInfo(ServerInstance instance, string name)
     {
         var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
-        info.ArgumentList.Add(instance.Name);
         var runDir = Path.Combine(sessions, name);
+        bool dynamicIdentity = File.Exists(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker));
+        info.ArgumentList.Add(dynamicIdentity ? instance.Role : instance.SlotName);
         var config = Path.Combine(runDir, RunConfigurationFile);
         if (!File.Exists(config))
         {

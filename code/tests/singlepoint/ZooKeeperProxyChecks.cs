@@ -71,66 +71,90 @@ internal static class ZooKeeperProxyChecks
 
     public static async Task RunAsync()
     {
-        var options = LoadOptions();
+        var configured = LoadOptions();
+        var options = configured with { DiscoveryRoot = configured.DiscoveryRoot + "/dynamic-check-" + Guid.NewGuid().ToString("N") };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TimeoutSeconds));
         var stop = deadline.Token;
-        var path = options.DiscoveryRoot + "/server-" + Process.Name;
-        var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
-        counts[ProcessType.Router] = 1;
-        var group = new ServerGroup(counts);
-        using var configuration = ServerConfiguration.Initialize(group);
-        await using var proxy = await ZooKeeperProxy.InitializeAsync(options, stop);
-        var sessionLost = ZooKeeperProxy.SessionLost;
-        Check(!sessionLost.IsCompleted, "Initialization must publish an active shared session.");
-        await ExpectAsync<InvalidOperationException>(() => ZooKeeperProxy.InitializeAsync(options, stop));
         var owner = new ZooKeeper(options.Endpoint, options.SessionTimeoutMilliseconds, new WatcherStub());
+        await using var proxy = await ZooKeeperProxy.InitializeAsync(options, stop);
+        var path = options.DiscoveryRoot + "/server-Router1";
+        var scenePath = options.DiscoveryRoot + "/server-Scene1";
         try
         {
-            // 不覆盖其他会话拥有的节点，也包括本检查的另一个实例。
-            await owner.createAsync(path, Encoding.UTF8.GetBytes(Address), ZooDefs.Ids.OPEN_ACL_UNSAFE,
-                CreateMode.EPHEMERAL).WaitAsync(stop);
-
-            bool rejected = false;
-            try
+            var prefix = "";
+            foreach (var segment in options.DiscoveryRoot[1..].Split('/'))
             {
-                await ZooKeeperProxy.RegisterProcessAsync(Process, ReplacementAddress, stop);
-            }
-            catch (InvalidOperationException error) when (error.InnerException is KeeperException.NodeExistsException)
-            {
-                rejected = error.Message.Contains(path, StringComparison.Ordinal);
-            }
-
-            if (!rejected)
-            {
-                throw new Exception("An existing fixed service path must fail startup immediately with the conflicting path.");
+                prefix += "/" + segment;
+                try
+                {
+                    await owner.createAsync(prefix, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT).WaitAsync(stop);
+                }
+                catch (KeeperException.NodeExistsException)
+                {
+                }
             }
 
-            var data = await owner.getDataAsync(path).WaitAsync(stop);
-            if (Encoding.UTF8.GetString(data.Data) != Address)
+            await owner.createAsync(path, Encoding.UTF8.GetBytes(Address), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL).WaitAsync(stop);
+            var process = await ZooKeeperProxy.ClaimProcessAsync(ProcessType.Router, stop);
+            Check(process.Name == "Router2", "An occupied number must be skipped without overwriting its owner.");
+            var original = await owner.getDataAsync(path).WaitAsync(stop);
+            Check(Encoding.UTF8.GetString(original.Data) == Address, "Claim changed another process's address.");
+            await ExpectAsync<InvalidOperationException>(() => ZooKeeperProxy.ClaimProcessAsync(ProcessType.Router, stop));
+            await ExpectAsync<InvalidOperationException>(() => ZooKeeperProxy.RegisterProcessAsync(Process, Address, stop));
+
+            await using (var discovery = ZooKeeperProxy.WatchProcessesAsync(stop).GetAsyncEnumerator(stop))
             {
-                throw new Exception("A failed registration changed the existing service address.");
+                Check(await discovery.MoveNextAsync(), "Discovery did not produce its initial snapshot.");
+                Check(discovery.Current.Count == 1, "A reserved identity without an endpoint must not be dialed.");
+                await ZooKeeperProxy.RegisterProcessAsync(process, ReplacementAddress, stop);
+                await Until(items => items.Any(peer => peer.Process.Name == "Router2"));
+                await owner.createAsync(options.DiscoveryRoot + "/server-Unknown1", [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL).WaitAsync(stop);
+                await Until(items => items.Count == 2);
+                await owner.createAsync(scenePath, Encoding.UTF8.GetBytes(Address), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL).WaitAsync(stop);
+                await Until(items => items.Any(peer => peer.Process.Name == "Scene1"));
+                long generation = discovery.Current.Single(peer => peer.Process.Name == "Scene1").Generation;
+                await owner.deleteAsync(scenePath).WaitAsync(stop);
+                await owner.createAsync(scenePath, Encoding.UTF8.GetBytes(Address), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL).WaitAsync(stop);
+                await Until(items => items.Any(peer => peer.Process.Name == "Scene1" && peer.Generation != generation));
+                await owner.setDataAsync(scenePath, Encoding.UTF8.GetBytes(ReplacementAddress)).WaitAsync(stop);
+                await Until(items => items.Any(peer => peer.Process.Name == "Scene1" && peer.Address == ReplacementAddress));
+                await owner.deleteAsync(scenePath).WaitAsync(stop);
+                await Until(items => items.All(peer => peer.Process.Name != "Scene1"));
+
+                async Task Until(Func<IReadOnlyList<DiscoveredProcess>, bool> predicate)
+                {
+                    do
+                    {
+                        Check(await discovery.MoveNextAsync(), "Discovery ended before a member change.");
+                    }
+                    while (!predicate(discovery.Current));
+                }
             }
+
+            var lost = ZooKeeperProxy.SessionLost;
+            await proxy.DisposeAsync();
+            Check(lost.IsCompletedSuccessfully, "Disposal must invalidate the session.");
+            await owner.deleteAsync(path).WaitAsync(stop);
+            await using var next = await ZooKeeperProxy.InitializeAsync(options, stop);
+            var reclaimed = await ZooKeeperProxy.ClaimProcessAsync(ProcessType.Router, stop);
+            Check(reclaimed.Name == "Router1", "A released number should be reusable.");
+            await ZooKeeperProxy.RegisterProcessAsync(reclaimed, Address, stop);
+            Check(await ZooKeeperProxy.IsProcessClaimedAsync(reclaimed.Name, stop), "Published identity is not discoverable.");
+            Console.WriteLine("PASS ZK number contention, ownership, publication watches, dynamic joins/leaves, same-name replacement and reuse.");
         }
         finally
         {
+            await proxy.DisposeAsync();
+            // 只清理本检查生成的独立根目录。
+            var children = await owner.getChildrenAsync(options.DiscoveryRoot);
+            foreach (var child in children.Children)
+            {
+                await owner.deleteAsync(options.DiscoveryRoot + "/" + child);
+            }
+
+            await owner.deleteAsync(options.DiscoveryRoot);
             await owner.closeAsync();
         }
-
-        var discovery = ZooKeeperProxy.ResolveProcessAsync(Process, stop);
-        await ZooKeeperProxy.RegisterProcessAsync(Process, ReplacementAddress, stop);
-        if (await discovery != ReplacementAddress)
-        {
-            throw new Exception("Registration and discovery must use the same fixed service path.");
-        }
-
-        await proxy.DisposeAsync();
-        Check(sessionLost.IsCompletedSuccessfully, "Proxy disposal must invalidate all users of the session.");
-        Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.SessionLost);
-        await using var next = await ZooKeeperProxy.InitializeAsync(options, stop);
-        await ZooKeeperProxy.RegisterProcessAsync(Process, Address, stop);
-        Check(await ZooKeeperProxy.ResolveProcessAsync(Process, stop) == Address, "The next lifecycle must use its new session.");
-
-        Console.WriteLine("PASS singleton lifecycle, fixed service paths, duplicate rejection, node ownership and discovery across registration.");
     }
 
     private static void Check(bool condition, string message)

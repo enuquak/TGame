@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Globalization;
 using System.Text.Json;
 
 namespace TGame;
@@ -17,7 +18,56 @@ public sealed record ServerProcess(ProcessType Type, int ChannelId)
             throw new ArgumentOutOfRangeException(nameof(channelId));
         }
 
-        return role + channelId;
+        return role + channelId.ToString(CultureInfo.InvariantCulture);
+    }
+
+    public static ProcessType ParseType(string role)
+    {
+        if (!Enum.TryParse<ProcessType>(role, out var type) || !Enum.IsDefined(type) || type.ToString() != role)
+        {
+            throw new InvalidDataException($"Unknown process type {role}.");
+        }
+
+        return type;
+    }
+
+    public static ServerProcess Parse(string name)
+    {
+        if (!TryParse(name, out var process))
+        {
+            throw new InvalidDataException($"Invalid process instance {name}.");
+        }
+
+        return process;
+    }
+
+    public static bool TryParse(string name, out ServerProcess process)
+    {
+        process = null!;
+        if (string.IsNullOrEmpty(name))
+        {
+            return false;
+        }
+
+        int start = name.Length;
+        while (start > 0 && char.IsAsciiDigit(name[start - 1]))
+        {
+            start--;
+        }
+
+        var role = name[..start];
+        if (!Enum.TryParse<ProcessType>(role, out var type) ||
+            !Enum.IsDefined(type) ||
+            type.ToString() != role ||
+            !int.TryParse(name.AsSpan(start), NumberStyles.None, CultureInfo.InvariantCulture, out int number) ||
+            number < 1 ||
+            FormatName(role, number) != name)
+        {
+            return false;
+        }
+
+        process = new ServerProcess(type, number);
+        return true;
     }
 }
 

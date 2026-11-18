@@ -6,7 +6,7 @@ internal static class SinglePointChecks
 {
     internal static void CheckBeforeIdInitialization()
     {
-        using var configuration = ServerConfiguration.Initialize(TestNodes.DefaultGroup);
+        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
         using var node = TestNodes.Create(nameof(ProcessType.Router));
         if (node.SinglePoint is not null || node.Ready)
         {
@@ -20,7 +20,8 @@ internal static class SinglePointChecks
         foreach (var role in Enum.GetValues<ProcessType>())
         {
             var singlePoint = registry.Create(role);
-            if (singlePoint.GetType() != typeof(ServerSinglePoint))
+            var expectedType = role == ProcessType.Router ? typeof(RouterServerSinglePoint) : typeof(ServerSinglePoint);
+            if (singlePoint.GetType() != expectedType)
             {
                 throw new Exception("A role without a business implementation must use the engine default SinglePoint.");
             }
@@ -48,6 +49,7 @@ internal static class SinglePointChecks
         Expect<InvalidOperationException>(() => new SinglePointRegistry([typeof(NotASinglePoint)]));
         Expect<InvalidOperationException>(() => new SinglePointRegistry([typeof(NoDefaultConstructor)]));
         Expect<InvalidOperationException>(() => new SinglePointRegistry([typeof(WaitingSinglePoint), typeof(DuplicateSinglePoint)]));
+        Expect<InvalidOperationException>(() => new SinglePointRegistry([typeof(DuplicateRouterSinglePoint)]));
 
         var failing = new SinglePointRegistry([typeof(ConstructorFailureSinglePoint)]);
         Expect<TargetInvocationException>(() => failing.Create(ProcessType.Gate));
@@ -83,6 +85,9 @@ sealed class NoDefaultConstructor(int value) : ServerSinglePoint
 
 [SinglePointFor(ProcessType.Gate)]
 sealed class DuplicateSinglePoint : ServerSinglePoint;
+
+[SinglePointFor(ProcessType.Router)]
+sealed class DuplicateRouterSinglePoint : ServerSinglePoint;
 
 [SinglePointFor(ProcessType.Gate)]
 sealed class ConstructorFailureSinglePoint : ServerSinglePoint

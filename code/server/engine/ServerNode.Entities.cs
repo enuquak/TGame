@@ -7,8 +7,8 @@ namespace TGame.Server.Engine;
 public partial class ServerNode
 {
     private readonly HashSet<PeerLink> registeredLinks = [];
-    private readonly Dictionary<PeerLink, Task> registrations = [];
-    private readonly Dictionary<string, string[]> peerEntities = new(StringComparer.Ordinal);
+    private readonly TaskCompletionSource entitiesReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource registrationChanges = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private bool RegistrationsComplete
     {
@@ -21,7 +21,7 @@ public partial class ServerNode
 
             lock (linkChanges)
             {
-                return expectedPeers.All(peer => links.TryGetValue(peer, out var link) && registeredLinks.Contains(link));
+                return HasRequiredLinks(requireRegistration: true);
             }
         }
     }
@@ -33,46 +33,22 @@ public partial class ServerNode
             return;
         }
 
-        var point = singlePoint ?? throw new InvalidOperationException("SinglePoint has not been created.");
-        Task[] pending;
-        lock (linkChanges)
+        entitiesReady.TrySetResult();
+        while (true)
         {
-            if (!expectedPeers.All(links.ContainsKey))
+            stop.ThrowIfCancellationRequested();
+            Task changed;
+            lock (linkChanges)
             {
-                throw new IOException("Cannot register entities while an engine connection is missing.");
+                if (HasRequiredLinks(requireRegistration: true))
+                {
+                    return;
+                }
+
+                changed = registrationChanges.Task;
             }
 
-            pending = links.Values.Select(link => EnsureRegistrationAsync(link, stop)).ToArray();
-        }
-
-        await Task.WhenAll(pending);
-        stop.ThrowIfCancellationRequested();
-        lock (linkChanges)
-        {
-            if (Role == nameof(ProcessType.Router))
-            {
-                singlePointIds[ProcessType.Router] = [point.EntityId];
-            }
-        }
-    }
-
-    private Task EnsureRegistrationAsync(PeerLink link, CancellationToken stop)
-    {
-        lock (linkChanges)
-        {
-            if (!links.TryGetValue(link.Peer, out var current) || current != link)
-            {
-                throw new IOException("Entity registration connection is no longer active.");
-            }
-
-            if (registrations.TryGetValue(link, out var pending))
-            {
-                return pending;
-            }
-
-            var registration = RegisterLinkAsync(link, stop);
-            registrations.Add(link, registration);
-            return registration;
+            await changed.WaitAsync(stop);
         }
     }
 
@@ -81,7 +57,8 @@ public partial class ServerNode
         var point = singlePoint ?? throw new InvalidOperationException("SinglePoint has not been created.");
         var request = new RegisterEntitiesRequest { SinglePointId = point.EntityId };
         request.EntityIds.Add(point.LocalEntityIds);
-        await link.CallAsync<RegisterEntitiesReply>(request, IdGenerator.GenId(), stop);
+        // 注册可等待对端初始化，取消和断线仍会终止等待。
+        await link.CallAsync<RegisterEntitiesReply>(request, IdGenerator.GenId(), stop, timeout: Timeout.InfiniteTimeSpan);
         stop.ThrowIfCancellationRequested();
 
         lock (linkChanges)
@@ -106,7 +83,7 @@ public partial class ServerNode
                 throw new InvalidDataException("Entity registration must come directly from the connected process.");
             }
 
-            RegisterPeerEntities(link, request.Payload.Unpack<RegisterEntitiesRequest>());
+            await RegisterPeerEntitiesAsync(link, request.Payload.Unpack<RegisterEntitiesRequest>(), stop);
         }
         catch (RpcException error)
         {
@@ -124,17 +101,24 @@ public partial class ServerNode
         await link.ReplyAsync(new RegisterEntitiesReply(), request.RequestId, stop);
     }
 
-    private void RegisterPeerEntities(PeerLink link, RegisterEntitiesRequest request)
+    private async Task RegisterPeerEntitiesAsync(PeerLink link, RegisterEntitiesRequest request, CancellationToken stop)
     {
         var peer = link.Peer;
         var entities = request.EntityIds.ToArray();
-        if (ServerConfiguration.GetProcessType(peer) == ProcessType.Gate ||
+        if (ServerProcess.Parse(peer).Type == ProcessType.Gate ||
             !IdText.IsValid(request.SinglePointId) ||
             !entities.Contains(request.SinglePointId) ||
             entities.Any(entity => !IdText.IsValid(entity)) ||
             entities.Distinct().Count() != entities.Length)
         {
             throw new InvalidDataException($"Invalid entity registration from {peer}.");
+        }
+
+        RouterServerSinglePoint? router = null;
+        if (Role == nameof(ProcessType.Router))
+        {
+            // 注册可能先于本地 SinglePoint 创建到达，确认前必须交由实例持有归属。
+            router = (RouterServerSinglePoint)await singlePointCreated.Task.WaitAsync(stop);
         }
 
         lock (linkChanges)
@@ -151,22 +135,13 @@ public partial class ServerNode
 
             var point = singlePoint;
             bool localCollision = point is not null && entities.Contains(point.EntityId);
-            bool remoteCollision = Role == nameof(ProcessType.Router) && entities.Any(owners.ContainsKey);
-            if (localCollision || remoteCollision)
+            if (localCollision)
             {
                 throw new RpcException(new Status(StatusCode.AlreadyExists, $"Duplicate entity from {peer}."));
             }
 
-            RegisterPeerSinglePoint(peer, request.SinglePointId);
-            if (Role == nameof(ProcessType.Router))
-            {
-                peerEntities.Add(peer, entities);
-                foreach (var entity in entities)
-                {
-                    owners[entity] = peer;
-                    GameLog.Debug(ServerLogEvents.EntityRoute, Role, peer, entity: entity, link: link.Id);
-                }
-            }
+            router?.RegisterEntities(peer, request.SinglePointId, entities, link.Id);
+            peerSinglePoints.Add(peer, request.SinglePointId);
         }
     }
 }

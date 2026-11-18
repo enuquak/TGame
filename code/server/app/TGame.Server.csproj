@@ -17,5 +17,6 @@
     <Content Include="../config/dbmgr-storage.yaml" Link="config/dbmgr-storage.yaml" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../config/id-generator.json" Link="config/id-generator.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../config/zookeeper.json" Link="config/zookeeper.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../config/connections.json" Link="config/connections.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

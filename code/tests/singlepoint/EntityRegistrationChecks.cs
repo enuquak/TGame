@@ -14,10 +14,120 @@ internal static class EntityRegistrationChecks
 
     public static async Task RunAsync(CancellationToken stop)
     {
+        await CheckRouterCreationAsync(disconnectBeforeCreation: false, stop);
+        await CheckRouterCreationAsync(disconnectBeforeCreation: true, stop);
+        await CheckRegistrationWaitAsync(stop);
         await CheckInitializationAsync(InitializationOutcome.Success, stop);
         await CheckInitializationAsync(InitializationOutcome.RegistrationRejected, stop);
         await CheckInitializationAsync(InitializationOutcome.BusinessFailed, stop);
         Console.WriteLine("PASS SinglePoint-owned registration: handshake isolation, acknowledgement, rejection, failed initialization and reconnect.");
+    }
+
+    private static async Task CheckRouterCreationAsync(bool disconnectBeforeCreation, CancellationToken stop)
+    {
+        var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
+        counts[ProcessType.Router] = 1;
+        counts[ProcessType.Profile] = 1;
+        using var configuration = TestNodes.InitializeConfiguration(new ServerGroup(counts));
+        using var router = TestNodes.Create(nameof(ProcessType.Router));
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        using var registrationLifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
+        var entityId = NewId();
+        var stream = new FrameStream();
+        stream.Input.Writer.TryWrite(TestNodes.Hello(profile));
+        var running = router.RunLinkAsync(profile, NewId(), stream, stream, lifetime.Token);
+        try
+        {
+            await stream.Output.Reader.ReadAsync(stop);
+            await router.FirstLinks.WaitAsync(stop);
+            var registration = TestNodes.RegisterAsync(stream, [entityId], registrationLifetime.Token);
+            const int RegistrationObservationMilliseconds = 100;
+            var observation = Task.Delay(RegistrationObservationMilliseconds, stop);
+            Check(await Task.WhenAny(registration, observation) != registration,
+                "Router acknowledged entity ownership before its SinglePoint was created.");
+            Check(router.SinglePoint is null, "Entity registration created the Router SinglePoint before initialization.");
+
+            if (disconnectBeforeCreation)
+            {
+                stream.Input.Writer.Complete();
+                await running.WaitAsync(stop);
+                registrationLifetime.Cancel();
+                try
+                {
+                    await registration;
+                    throw new Exception("Disconnected registration was acknowledged before Router creation.");
+                }
+                catch (OperationCanceledException) when (registrationLifetime.IsCancellationRequested)
+                {
+                }
+
+                stream = new FrameStream();
+                stream.Input.Writer.TryWrite(TestNodes.Hello(profile));
+                running = router.RunLinkAsync(profile, NewId(), stream, stream, lifetime.Token);
+                await stream.Output.Reader.ReadAsync(stop);
+            }
+
+            await router.InitializeSinglePointAsync(new SinglePointRegistry([]), stop);
+            var point = (RouterServerSinglePoint)router.SinglePoint!;
+            if (disconnectBeforeCreation)
+            {
+                Check(!point.IsRemoteEntityOwner(profile, entityId), "Disconnected registration left stale entity ownership.");
+                registration = TestNodes.RegisterAsync(stream, [entityId], stop);
+            }
+
+            await registration.WaitAsync(stop);
+            Check(point.IsRemoteEntityOwner(profile, entityId), "Router lost the registration that arrived before its SinglePoint.");
+        }
+        finally
+        {
+            lifetime.Cancel();
+            try
+            {
+                await running;
+            }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+            {
+            }
+        }
+    }
+
+    private static async Task CheckRegistrationWaitAsync(CancellationToken stop)
+    {
+        var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 0);
+        counts[ProcessType.Router] = 1;
+        counts[ProcessType.Profile] = 1;
+        using var configuration = TestNodes.InitializeConfiguration(new ServerGroup(counts));
+        using var node = TestNodes.Create(nameof(ProcessType.Profile));
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        var router = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
+        var stream = new FrameStream { AcknowledgeRegistration = false };
+        stream.Input.Writer.TryWrite(TestNodes.Hello(router));
+        var running = node.RunLinkAsync(router, NewId(), stream, stream, lifetime.Token);
+        try
+        {
+            await node.FirstLinks.WaitAsync(stop);
+            var initialization = node.InitializeSinglePointAsync(new SinglePointRegistry([]), lifetime.Token);
+            var registration = await stream.Output.Reader.ReadAsync(stop);
+            const int TimeoutMarginMilliseconds = 100;
+            await Task.Delay(PeerLink.RequestTimeout + TimeSpan.FromMilliseconds(TimeoutMarginMilliseconds), stop);
+            Check(!initialization.IsCompleted, "Entity registration used the business RPC timeout while Router creation was pending.");
+
+            stream.Input.Writer.TryWrite(RpcFrames.Reply(new RegisterEntitiesReply(), registration.Request.RequestId));
+            await initialization.WaitAsync(stop);
+            Check(node.Ready, "Delayed registration acknowledgement did not complete initialization.");
+        }
+        finally
+        {
+            lifetime.Cancel();
+            try
+            {
+                await running;
+            }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+            {
+            }
+        }
     }
 
     private static async Task CheckInitializationAsync(InitializationOutcome outcome, CancellationToken stop)
@@ -26,7 +136,7 @@ internal static class EntityRegistrationChecks
         counts[ProcessType.Router] = 1;
         counts[ProcessType.Profile] = 1;
         var group = new ServerGroup(counts);
-        using var configuration = ServerConfiguration.Initialize(group);
+        using var configuration = TestNodes.InitializeConfiguration(group);
         var profile = ServerProcess.FormatName(nameof(ProcessType.Profile), 1);
         var router = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
         using var node = new ServerNode(profile);
@@ -83,16 +193,20 @@ internal static class EntityRegistrationChecks
                 });
                 try
                 {
-                    await initialization.WaitAsync(stop);
-                    throw new Exception("Rejected entity registration completed successfully.");
+                    await running.WaitAsync(stop);
+                    throw new Exception("Rejected entity registration kept its connection active.");
                 }
                 catch (RpcException error) when (error.StatusCode == StatusCode.AlreadyExists)
                 {
                 }
 
-                Check(!point.Initialized && !node.Ready && !point.LocalEntityIds.Any(),
-                    "Rejected registration left the SinglePoint ready or locally registered.");
-                return;
+                Check(!point.Initialized && !node.Ready && !initialization.IsCompleted,
+                    "Rejected registration completed initialization without a confirmed target.");
+                stream = new FrameStream { AcknowledgeRegistration = false };
+                stream.Input.Writer.TryWrite(TestNodes.Hello(router));
+                running = node.RunLinkAsync(router, NewId(), stream, stream, lifetime.Token);
+                frame = await stream.Output.Reader.ReadAsync(stop);
+                Check(frame.ReadRequest<RegisterEntitiesRequest>().Equals(request), "Retry changed the pending SinglePoint identity.");
             }
 
             stream.Input.Writer.TryWrite(RpcFrames.Reply(new RegisterEntitiesReply(), frame.Request.RequestId));

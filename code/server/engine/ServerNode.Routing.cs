@@ -9,7 +9,6 @@ namespace TGame.Server.Engine;
 public partial class ServerNode
 {
     private readonly Dictionary<string, string> peerSinglePoints = new(StringComparer.Ordinal);
-    private readonly Dictionary<ProcessType, HashSet<string>> singlePointIds = [];
 
     public Task<TReply> CallEntityAsync<TReply>(string entityId, IMessage request, CancellationToken stop)
         where TReply : IMessage<TReply>, new()
@@ -119,10 +118,10 @@ public partial class ServerNode
                 throw new RpcException(new Status(StatusCode.InvalidArgument, "Invalid SinglePoint target type."));
             }
 
-            if (Role == nameof(ProcessType.Router))
+            if (singlePoint is RouterServerSinglePoint router)
             {
                 request = request.Clone();
-                request.EntityId = SelectSinglePoint(type);
+                request.EntityId = router.SelectSinglePoint(type);
             }
         }
         else if (request.TargetCase != RpcRequest.TargetOneofCase.EntityId || !IdText.IsValid(request.EntityId))
@@ -154,7 +153,7 @@ public partial class ServerNode
 
     private void ValidateSource(string source, string? peer)
     {
-        if (!ServerConfiguration.Contains(source))
+        if (!ServerProcess.TryParse(source, out _))
         {
             throw new InvalidDataException("Unknown RPC source process.");
         }
@@ -169,31 +168,18 @@ public partial class ServerNode
             return;
         }
 
-        if (source == peer || ServerConfiguration.GetProcessType(peer) == ProcessType.Router)
+        if (source == peer || ServerProcess.Parse(peer).Type == ProcessType.Router)
         {
             return;
         }
 
         bool gateRelay = Role == nameof(ProcessType.Router) &&
-            ServerConfiguration.GetProcessType(source) == ProcessType.Gate &&
-            ServerConfiguration.GetProcessType(peer) is ProcessType.Login or ProcessType.Base &&
-            Topology.Peers(peer).Contains(source);
+            ServerProcess.Parse(source).Type == ProcessType.Gate &&
+            ServerProcess.Parse(peer).Type is ProcessType.Login or ProcessType.Base &&
+            Topology.Dials(ServerProcess.Parse(source).Type, ServerProcess.Parse(peer).Type);
         if (!gateRelay)
         {
             throw new InvalidDataException("Invalid forwarded RPC source.");
-        }
-    }
-
-    private string SelectSinglePoint(ProcessType type)
-    {
-        lock (linkChanges)
-        {
-            if (!singlePointIds.TryGetValue(type, out var candidates) || candidates.Count == 0)
-            {
-                throw new RpcException(new Status(StatusCode.Unavailable, $"No connected SinglePoint for {type}."));
-            }
-
-            return candidates.ElementAt(Random.Shared.Next(candidates.Count));
         }
     }
 
@@ -214,9 +200,10 @@ public partial class ServerNode
                     }
                 }
 
-                if (Role == nameof(ProcessType.Router))
+                if (singlePoint is RouterServerSinglePoint router)
                 {
-                    if (owners.TryGetValue(request.EntityId, out var owner) && links.TryGetValue(owner, out var target))
+                    var owner = router.FindRemoteEntityOwner(request.EntityId);
+                    if (owner is not null && links.TryGetValue(owner, out var target))
                     {
                         return target;
                     }
@@ -226,7 +213,7 @@ public partial class ServerNode
             }
 
             // A Router already chose the destination; never bounce a missing entity back to it.
-            if (peer is not null && ServerConfiguration.GetProcessType(peer) == ProcessType.Router)
+            if (peer is not null && ServerProcess.Parse(peer).Type == ProcessType.Router)
             {
                 throw new RpcException(new Status(StatusCode.NotFound, "Target entity is not hosted here."));
             }
@@ -234,11 +221,14 @@ public partial class ServerNode
             var candidates = new List<PeerLink>();
             foreach (var entry in links)
             {
-                var type = ServerConfiguration.GetProcessType(entry.Key);
+                var type = ServerProcess.Parse(entry.Key).Type;
                 bool usable = Role == nameof(ProcessType.Gate)
                     ? type is ProcessType.Login or ProcessType.Base
                     : type == ProcessType.Router;
-                if (usable && entry.Key != peer)
+                bool registered = Role == nameof(ProcessType.Gate)
+                    ? peerSinglePoints.ContainsKey(entry.Key)
+                    : registeredLinks.Contains(entry.Value);
+                if (usable && registered && entry.Key != peer)
                 {
                     candidates.Add(entry.Value);
                 }
@@ -254,32 +244,6 @@ public partial class ServerNode
     }
 
     private Frame CreateHello() => new() { Hello = Name };
-
-    // 与连接及实体归属的更新共用 linkChanges 锁。
-    private void RegisterPeerSinglePoint(string peer, string entityId)
-    {
-        peerSinglePoints.Add(peer, entityId);
-        if (Role == nameof(ProcessType.Router))
-        {
-            var type = ServerConfiguration.GetProcessType(peer);
-            if (!singlePointIds.TryGetValue(type, out var candidates))
-            {
-                candidates = [];
-                singlePointIds.Add(type, candidates);
-            }
-
-            candidates.Add(entityId);
-        }
-    }
-
-    private void RemovePeerSinglePoint(string peer)
-    {
-        if (peerSinglePoints.Remove(peer, out var entityId) && Role == nameof(ProcessType.Router))
-        {
-            var type = ServerConfiguration.GetProcessType(peer);
-            singlePointIds[type].Remove(entityId);
-        }
-    }
 
     private static RpcReply ErrorReply(string requestId, StatusCode status, string detail) => new()
     {

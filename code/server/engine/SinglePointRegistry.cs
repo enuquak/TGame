@@ -8,7 +8,7 @@ public sealed class SinglePointRegistry
 
     public SinglePointRegistry(IEnumerable<Type> loadedTypes)
     {
-        foreach (var type in loadedTypes)
+        foreach (var type in loadedTypes.Prepend(typeof(RouterServerSinglePoint)))
         {
             var label = type.GetCustomAttribute<SinglePointForAttribute>(inherit: false);
             if (label == null)
