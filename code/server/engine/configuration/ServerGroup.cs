@@ -5,19 +5,19 @@ using System.Text.Json;
 
 namespace TGame;
 
-public sealed record ServerProcess(ProcessType Type, int Channel)
+public sealed record ServerProcess(ProcessType Type, int ChannelId)
 {
     public string Role => Type.ToString();
-    public string Name => FormatName(Role, Channel);
+    public string Name => FormatName(Role, ChannelId);
 
-    public static string FormatName(string role, int channel)
+    public static string FormatName(string role, int channelId)
     {
-        if (channel < 1)
+        if (channelId < 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(channel));
+            throw new ArgumentOutOfRangeException(nameof(channelId));
         }
 
-        return role + channel;
+        return role + channelId;
     }
 }
 

@@ -22,7 +22,7 @@ internal static class ServerConfigurationChecks
                 File.WriteAllText(path, "{");
                 if (ServerConfiguration.Processes.Count != 2 ||
                     ServerConfiguration.GetProcessType(router) != ProcessType.Router ||
-                    ServerConfiguration.GetProcess(router).Channel != 1 ||
+                    ServerConfiguration.GetProcess(router).ChannelId != 1 ||
                     ServerConfiguration.Contains(nameof(ProcessType.Router)))
                 {
                     throw new Exception("Configuration must retain its validated startup snapshot and instance identities.");

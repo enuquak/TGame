@@ -308,7 +308,7 @@ internal static class EntityRoutingChecks
         public TaskCompletionSource HoldStarted { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource HoldRelease { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public ServerNode Node(ProcessType type, int channel = 1) => nodes[ServerProcess.FormatName(type.ToString(), channel)];
+        public ServerNode Node(ProcessType type, int channelId = 1) => nodes[ServerProcess.FormatName(type.ToString(), channelId)];
 
         public static async Task<Network> CreateAsync(ProcessType entryType, CancellationToken stop, bool initializeProfile = true)
         {

@@ -67,7 +67,7 @@ internal sealed class ConsoleSession : IDisposable
     }
 
     private static ServerInstance[] CreateInstances(ServerGroup group) =>
-        group.Processes.Select(process => new ServerInstance(process.Role, process.Channel)).ToArray();
+        group.Processes.Select(process => new ServerInstance(process.Role, process.ChannelId)).ToArray();
 
     private bool HasLegacyRun(string id)
     {
