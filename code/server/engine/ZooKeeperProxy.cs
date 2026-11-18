@@ -118,14 +118,8 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
                 session.CheckActive();
                 stop.ThrowIfCancellationRequested();
                 var process = new ServerProcess(type, number);
-                var path = ProcessPath(process);
-                try
-                {
-                    // 空地址只占用编号，引擎和业务初始化完成后再发布给发现者。
-                    await Client.createAsync(path, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
-                        .WaitAsync(stop).ConfigureAwait(false);
-                }
-                catch (KeeperException.NodeExistsException)
+                // 空地址只占用编号，进程初始化完成后再发布给发现者。
+                if (!await TryCreateEphemeralAsync(ProcessPath(process), stop).ConfigureAwait(false))
                 {
                     continue;
                 }
@@ -180,49 +174,61 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
             var processes = new List<DiscoveredProcess>();
             foreach (var child in children.Children)
             {
-                if (!child.StartsWith(NodePrefix, StringComparison.Ordinal))
+                var process = await ReadDiscoveredProcessAsync(child, changed, stop).ConfigureAwait(false);
+                if (process is not null)
                 {
-                    continue;
-                }
-
-                if (!ServerProcess.TryParse(child[NodePrefix.Length..], out var process))
-                {
-                    log.Error(ServerLogEvents.ZkDiscover, claimedProcess?.Role ?? nameof(ZooKeeperProxy),
-                        detail: $"忽略非法进程节点 {child}");
-                    continue;
-                }
-                try
-                {
-                    // 同时监听地址发布/变化；父节点 Watch 只覆盖成员增删。
-                    var data = await Client.getDataAsync(ProcessPath(process), changed).WaitAsync(stop).ConfigureAwait(false);
-                    if (data.Data.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    var address = ValidateAddress(process, Encoding.UTF8.GetString(data.Data));
-                    if (data.Stat.getEphemeralOwner() == 0)
-                    {
-                        throw new InvalidDataException($"Process {process.Name} must use an ephemeral node.");
-                    }
-
-                    processes.Add(new DiscoveredProcess(process, address, data.Stat.getCzxid()));
-                }
-                catch (KeeperException.NoNodeException)
-                {
-                    // 快照读取期间成员离开，父节点 Watch 会触发下一次收敛。
-                }
-                catch (InvalidDataException error)
-                {
-                    // 单条无效记录不能使已有健康连接停止；数据 Watch 保留以等待修正。
-                    log.Error(ServerLogEvents.ZkDiscover, claimedProcess?.Role ?? nameof(ZooKeeperProxy),
-                        peer: process.Name, detail: error.Message);
+                    processes.Add(process);
                 }
             }
 
             session.CheckActive();
             yield return processes;
             await changed.WaitAsync(stop).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<DiscoveredProcess?> ReadDiscoveredProcessAsync(string child, Watcher changed, CancellationToken stop)
+    {
+        if (!child.StartsWith(NodePrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        if (!ServerProcess.TryParse(child[NodePrefix.Length..], out var process))
+        {
+            log.Error(ServerLogEvents.ZkDiscover, claimedProcess?.Role ?? nameof(ZooKeeperProxy),
+                detail: $"忽略非法进程节点 {child}");
+            return null;
+        }
+
+        try
+        {
+            // 同时监听地址发布/变化；父节点 Watch 只覆盖成员增删。
+            var data = await Client.getDataAsync(ProcessPath(process), changed).WaitAsync(stop).ConfigureAwait(false);
+            if (data.Data.Length == 0)
+            {
+                return null;
+            }
+
+            var address = ValidateAddress(process, Encoding.UTF8.GetString(data.Data));
+            if (data.Stat.getEphemeralOwner() == 0)
+            {
+                throw new InvalidDataException($"Process {process.Name} must use an ephemeral node.");
+            }
+
+            return new DiscoveredProcess(process, address, data.Stat.getCzxid());
+        }
+        catch (KeeperException.NoNodeException)
+        {
+            // 快照读取期间成员离开，父节点 Watch 会触发下一次收敛。
+            return null;
+        }
+        catch (InvalidDataException error)
+        {
+            // 单条无效记录不能使已有健康连接停止；数据 Watch 保留以等待修正。
+            log.Error(ServerLogEvents.ZkDiscover, claimedProcess?.Role ?? nameof(ZooKeeperProxy),
+                peer: process.Name, detail: error.Message);
+            return null;
         }
     }
 
@@ -276,6 +282,20 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         }
     }
 
+    private async Task<bool> TryCreateEphemeralAsync(string path, CancellationToken stop)
+    {
+        try
+        {
+            await Client.createAsync(path, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
+                .WaitAsync(stop).ConfigureAwait(false);
+            return true;
+        }
+        catch (KeeperException.NodeExistsException)
+        {
+            return false;
+        }
+    }
+
     internal async Task<WorkerLease> AcquireWorkerAsync(string root, CancellationToken stop)
     {
         ZooKeeperOptions.ValidatePath(root);
@@ -287,31 +307,13 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         var token = timeout.Token;
         try
         {
-            var path = "";
-            foreach (var segment in root[1..].Split('/'))
-            {
-                path += "/" + segment;
-                try
-                {
-                    await Client.createAsync(path, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-                        .WaitAsync(token).ConfigureAwait(false);
-                }
-                catch (KeeperException.NodeExistsException)
-                {
-                }
-            }
-
+            await EnsurePathAsync(root, token).ConfigureAwait(false);
             for (int workerId = 0; workerId <= SnowflakeSequence.MaxWorkerId; workerId++)
             {
                 session.CheckActive();
                 token.ThrowIfCancellationRequested();
                 var workerPath = root + "/" + workerId.ToString(CultureInfo.InvariantCulture);
-                try
-                {
-                    await Client.createAsync(workerPath, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
-                        .WaitAsync(token).ConfigureAwait(false);
-                }
-                catch (KeeperException.NodeExistsException)
+                if (!await TryCreateEphemeralAsync(workerPath, token).ConfigureAwait(false))
                 {
                     continue;
                 }

@@ -28,7 +28,7 @@ public partial class ServerNode
                     throw new IOException("Process discovery ended unexpectedly.");
                 }
 
-                var targets = discovery.Current.Where(peer => configuration.Dials(type, peer.Process.Type))
+                var targets = discovery.Current.Where(peer => configuration.Dials(process.Type, peer.Process.Type))
                     .ToDictionary(peer => peer.Process.Name, StringComparer.Ordinal);
                 foreach (var (name, worker) in workers.ToArray())
                 {

@@ -58,12 +58,7 @@ async Task RunServerAsync(ProcessType processType, string runDir, GameLog log)
     var process = await InitializeZooKeeperAsync(zooKeeper, processType);
 
     log.OpenServer(process);
-    Directory.CreateDirectory(runDir);
-    using var currentProcess = Process.GetCurrentProcess();
-    var identityKey = ServerRunFiles.ProcessKey(Environment.ProcessId, currentProcess.StartTime.ToUniversalTime().Ticks);
-    var identityPath = Path.Combine(runDir, ServerRunFiles.IdentityPrefix + identityKey);
-    File.WriteAllText(identityPath + ".tmp", process.Name);
-    File.Move(identityPath + ".tmp", identityPath, true);
+    var identityKey = WriteProcessIdentity(runDir, process);
     log.Info(ServerLogEvents.InitStepCompleted, role, detail: $"ZK 实例身份 {process.Name} 已占用，类型连接配置已加载");
 
     var ids = app.Services.GetRequiredService<IdGenerator>();
@@ -115,6 +110,17 @@ async Task RunServerAsync(ProcessType processType, string runDir, GameLog log)
             await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
         }
     }
+}
+
+static string WriteProcessIdentity(string runDir, ServerProcess process)
+{
+    Directory.CreateDirectory(runDir);
+    using var currentProcess = Process.GetCurrentProcess();
+    var identityKey = ServerRunFiles.ProcessKey(Environment.ProcessId, currentProcess.StartTime.ToUniversalTime().Ticks);
+    var identityPath = Path.Combine(runDir, ServerRunFiles.IdentityPrefix + identityKey);
+    File.WriteAllText(identityPath + ".tmp", process.Name);
+    File.Move(identityPath + ".tmp", identityPath, true);
+    return identityKey;
 }
 
 static async Task<ServerProcess> InitializeZooKeeperAsync(ZooKeeperProxy zooKeeper, ProcessType processType)

@@ -28,15 +28,19 @@ public sealed class ServerConfiguration
             validated.Add(type, Array.AsReadOnly(peers.ToArray()));
         }
 
+        ValidateAcyclic(validated);
+        targets = new ReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>>(validated);
+    }
+
+    private static void ValidateAcyclic(IReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>> targets)
+    {
         // 地址发布前要等主动依赖就绪，依赖环会使各进程一直互相等待。
         var visited = new HashSet<ProcessType>();
         var visiting = new HashSet<ProcessType>();
-        foreach (var type in types)
+        foreach (var type in Enum.GetValues<ProcessType>())
         {
             Visit(type);
         }
-
-        targets = new ReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>>(validated);
 
         void Visit(ProcessType type)
         {
@@ -50,7 +54,7 @@ public sealed class ServerConfiguration
                 throw new InvalidDataException($"Cyclic connection dependency involving {type}.");
             }
 
-            foreach (var peer in validated[type])
+            foreach (var peer in targets[type])
             {
                 Visit(peer);
             }

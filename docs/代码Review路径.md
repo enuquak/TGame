@@ -29,8 +29,8 @@
 ## 3. 沿启动流程读一遍
 
 - [x] [Program.cs](../code/server/app/Program.cs)：用户已理解此前的宿主组装、并发任务、`Task.WhenAll`、停止文件与会话监控、异常监督、取消和释放。
-- [ ] 核对本次 IoC 组装后的 `Program.cs`：日志创建 → 配置加载 → 构建根容器 → ZooKeeper 会话及空地址临时占号 → ID 初始化 → 解析节点和启动监听 → 依赖连接齐备 → 发布服务地址 → `PROCESS_READY`。跟踪配置、ZK、ID、身份和节点的注册与解析时机。当前不扫描业务类型，也不初始化 DBMgr/Profile 存储；环境配置只要求 ZooKeeper 与发现根路径，存储字段由独立工具使用时校验。
-- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数接收进程身份、连接配置、ZK、ID 和日志；核对 `FirstLinks`、`Ready`。每种主动目标类型至少一条握手连接即可就绪，无主动依赖可直接就绪，不等待入站。
+- [ ] 核对本次 IoC 组装后的 `Program.cs`：日志创建 → 配置加载 → 构建根容器 → ZooKeeper 会话及空地址临时占号 → ID 初始化 → 解析节点和启动监听 → 依赖连接齐备 → 发布服务地址 → `PROCESS_READY`。跟踪配置、ZK、ID、身份和节点的注册与解析时机；`WriteProcessIdentity` 单独负责通过临时文件发布本机身份记录。当前不扫描业务类型，也不初始化 DBMgr/Profile 存储；环境配置只要求 ZooKeeper 与发现根路径，存储字段由独立工具使用时校验。
+- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数接收进程身份、连接配置、ZK、ID 和日志；名称和角色从身份对象派生，所需连接类型直接查询配置。核对 `FirstLinks`、`Ready`。每种主动目标类型至少一条握手连接即可就绪，无主动依赖可直接就绪，不等待入站。
 
 `FirstLinks` 只完成一次，表示首次依赖连接齐备；`Ready` 反映当前连接条件。运行中失去某类最后一条连接会撤销当前就绪，重连握手后恢复。入站或冗余连接的迟到不会阻塞启动。
 
@@ -40,11 +40,11 @@
 
 ## 4. 服务发现、拓扑与连接
 
-- [ ] [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)：通过实例方法 `GetDialTargets`、`Dials` 和 `ArePeers` 按类型连接规则匹配动态成员，区分主动目标与入站邻居。
-- [ ] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs)、[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：跟踪空地址占号、地址发布、成员快照和 Watch、身份校验、`SessionLost` 与释放。空地址节点不参与拨号，但可证明主动方持有实例身份。
+- [ ] [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)：通过实例方法 `GetDialTargets`、`Dials` 和 `ArePeers` 按类型连接规则匹配动态成员，区分主动目标与入站邻居；`ValidateAcyclic` 独立负责启动依赖的无环检查。
+- [ ] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs)、[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：跟踪空地址占号、地址发布、成员快照和 Watch、身份校验、`SessionLost` 与释放。空地址节点不参与拨号，但可证明主动方持有实例身份。`EnsurePathAsync` 负责公共根目录，`TryCreateEphemeralAsync` 复用抢占步骤，`ReadDiscoveredProcessAsync` 处理单条发现记录；进程编号与 worker 编号仍各自管理申请范围和时序。
 - [ ] [DiscoveredProcess.cs](../code/server/engine/DiscoveredProcess.cs)、[ServerNode.Discovery.cs](../code/server/engine/ServerNode.Discovery.cs)：成员新增、离开、地址变化和同名重建如何取消旧连接并按快照收敛。
 - [ ] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[LinkService.cs](../code/server/engine/LinkService.cs)：检查 `peer`、`link` 元数据、来源占号身份、本地就绪与连接交接。
-- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：沿连接维护、拨号、握手和读循环看成功与失败分支；断线时撤销连接状态、结束等待项，重新连接后更新就绪。
+- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：沿连接维护、拨号、握手和读循环看成功与失败分支；`RunLinkAsync` 管理握手与连接登记/注销，`RunTransportAsync` 管理收发与取消协调；断线时撤销连接状态、结束等待项，重新连接后更新就绪。
 
 读完应能回答：为什么依赖关系不能成环？Router 为何可以先发布地址？Base 为何等待 Router 与 DBMgr 而不等 Gate？新增 Router2 尚未连上为何不影响已有 Router1？
 

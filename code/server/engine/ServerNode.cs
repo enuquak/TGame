@@ -12,8 +12,7 @@ public partial class ServerNode
     private const int ReconnectDelayMilliseconds = 500;
     private const int RequestQueueCapacity = 64;
 
-    private readonly ProcessType type;
-    private readonly IReadOnlyList<ProcessType> requiredTypes;
+    private readonly ServerProcess process;
     private volatile bool linksReady;
     private readonly object linkChanges = new();
     private readonly HashSet<string> sessions = [];
@@ -33,16 +32,16 @@ public partial class ServerNode
         this.ids = ids;
         this.zooKeeper = zooKeeper;
         this.configuration = configuration;
-        Name = process.Name;
-        type = process.Type;
-        requiredTypes = configuration.GetDialTargets(type);
+        // 构造时仍校验实例编号，名称只通过身份对象派生。
+        _ = process.Name;
+        this.process = process;
         UpdateLinkReadiness();
     }
 
-    public string Name { get; }
+    public string Name => process.Name;
 
     public Task FirstLinks => firstLinks.Task;
-    public string Role => type.ToString();
+    public string Role => process.Role;
     public bool Ready => linksReady;
 
     public async Task WaitUntilReadyAsync(CancellationToken stop)
@@ -108,7 +107,7 @@ public partial class ServerNode
 
     public bool AcceptsIncoming(string peer)
     {
-        return ServerProcess.TryParse(peer, out var process) && configuration.Dials(process.Type, type);
+        return ServerProcess.TryParse(peer, out var peerProcess) && configuration.Dials(peerProcess.Type, process.Type);
     }
 
     private async Task MaintainLinkAsync(DiscoveredProcess peer, CancellationToken stop)
@@ -147,7 +146,7 @@ public partial class ServerNode
     public async Task RunLinkAsync(string peer, string id, IAsyncStreamReader<Frame> input,
         IAsyncStreamWriter<Frame> output, CancellationToken stop, bool requireReady = false)
     {
-        if (!ServerProcess.TryParse(peer, out var peerProcess) || !configuration.ArePeers(type, peerProcess.Type))
+        if (!ServerProcess.TryParse(peer, out var peerProcess) || !configuration.ArePeers(process.Type, peerProcess.Type))
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"Unexpected peer instance {peer}."));
         }
@@ -185,51 +184,7 @@ public partial class ServerNode
                 UpdateLinkReadiness();
             }
 
-            // 请求输出与接收分开，写入回包时仍可接收当前连接上的响应。
-            using var transport = CancellationTokenSource.CreateLinkedTokenSource(stop);
-            var queue = Channel.CreateBounded<Frame>(new BoundedChannelOptions(RequestQueueCapacity) { SingleReader = true, SingleWriter = true });
-            var read = ReadAsync();
-            var serve = ServeAsync();
-            var finished = await Task.WhenAny(read, serve);
-
-            transport.Cancel();
-            queue.Writer.TryComplete();
-            link.Close();
-            try
-            {
-                await Task.WhenAll(read, serve);
-            }
-            catch (OperationCanceledException) when (!stop.IsCancellationRequested)
-            {
-                await finished;
-            }
-
-            async Task ReadAsync()
-            {
-                await foreach (var frame in input.ReadAllAsync(transport.Token))
-                {
-                    ReceiveFrame(frame, link, queue.Writer);
-                }
-            }
-
-            async Task ServeAsync()
-            {
-                await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
-                {
-                    var request = frame.Request;
-                    PeerLink.ValidateEnvelope(request.RequestId, request.Payload);
-                    var reply = new RpcReply
-                    {
-                        RequestId = request.RequestId,
-                        Error = new RpcError
-                        {
-                            StatusCode = (int)StatusCode.Unimplemented,
-                            Detail = "This process does not handle RPC requests."
-                        }
-                    };
-                    await link.WriteAsync(new Frame { Reply = reply }, transport.Token);
-                }
-            }
+            await RunTransportAsync(link, input, stop);
         }
         finally
         {
@@ -246,10 +201,59 @@ public partial class ServerNode
         }
     }
 
+    private static async Task RunTransportAsync(PeerLink link, IAsyncStreamReader<Frame> input, CancellationToken stop)
+    {
+        // 请求输出与接收分开，写入回包时仍可接收当前连接上的响应。
+        using var transport = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        var queue = Channel.CreateBounded<Frame>(new BoundedChannelOptions(RequestQueueCapacity) { SingleReader = true, SingleWriter = true });
+        var read = ReadAsync();
+        var serve = ServeAsync();
+        var finished = await Task.WhenAny(read, serve);
+
+        transport.Cancel();
+        queue.Writer.TryComplete();
+        link.Close();
+        try
+        {
+            await Task.WhenAll(read, serve);
+        }
+        catch (OperationCanceledException) when (!stop.IsCancellationRequested)
+        {
+            await finished;
+        }
+
+        async Task ReadAsync()
+        {
+            await foreach (var frame in input.ReadAllAsync(transport.Token))
+            {
+                ReceiveFrame(frame, link, queue.Writer);
+            }
+        }
+
+        async Task ServeAsync()
+        {
+            await foreach (var frame in queue.Reader.ReadAllAsync(transport.Token))
+            {
+                var request = frame.Request;
+                PeerLink.ValidateEnvelope(request.RequestId, request.Payload);
+                var reply = new RpcReply
+                {
+                    RequestId = request.RequestId,
+                    Error = new RpcError
+                    {
+                        StatusCode = (int)StatusCode.Unimplemented,
+                        Detail = "This process does not handle RPC requests."
+                    }
+                };
+                await link.WriteAsync(new Frame { Reply = reply }, transport.Token);
+            }
+        }
+    }
+
     // 调用方持有 linkChanges；首次构造尚未发布节点时除外。
     private bool HasRequiredLinks()
     {
-        return requiredTypes.All(target => links.Values.Any(link =>
+        return configuration.GetDialTargets(process.Type).All(target => links.Values.Any(link =>
             ServerProcess.Parse(link.Peer).Type == target));
     }
 
