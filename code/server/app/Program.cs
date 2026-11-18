@@ -45,12 +45,8 @@ async Task RunServerAsync(ProcessType processType, string runDir)
     using var configuration = ServerConfiguration.Initialize(
         Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName));
 
-    await using var zooKeeperLifetime = await InitializeZooKeeperAsync(settings, role);
-    ServerProcess process;
-    using (var claimTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(RegistrationTimeoutSeconds)))
-    {
-        process = await ZooKeeperProxy.ClaimProcessAsync(processType, claimTimeout.Token);
-    }
+    var (zooKeeper, process) = await InitializeZooKeeperAsync(settings, processType);
+    await using var zooKeeperLifetime = zooKeeper;
 
     serverLog = GameLog.OpenServer(process);
     Directory.CreateDirectory(runDir);
@@ -134,13 +130,25 @@ static ServerSettings LoadConfiguration()
     return settings;
 }
 
-static Task<ZooKeeperProxy> InitializeZooKeeperAsync(ServerSettings settings, string role)
+static async Task<(ZooKeeperProxy Lifetime, ServerProcess Process)> InitializeZooKeeperAsync(
+    ServerSettings settings, ProcessType processType)
 {
     var configPath = Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName);
     var options = ZooKeeperOptions.Load(configPath, settings.ZooKeeper, settings.DiscoveryRoot);
-    GameLog.Info(ServerLogEvents.InitStepCompleted, role, detail: $"{nameof(ZooKeeperOptions)} 配置加载完成");
+    GameLog.Info(ServerLogEvents.InitStepCompleted, processType.ToString(), detail: $"{nameof(ZooKeeperOptions)} 配置加载完成");
 
-    return ZooKeeperProxy.InitializeAsync(options);
+    var zooKeeper = await ZooKeeperProxy.InitializeAsync(options);
+    try
+    {
+        using var claimTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
+        var process = await ZooKeeperProxy.ClaimProcessAsync(processType, claimTimeout.Token);
+        return (zooKeeper, process);
+    }
+    catch
+    {
+        await zooKeeper.DisposeAsync();
+        throw;
+    }
 }
 
 static Task<IdGenerator> InitializeIdGeneratorAsync(string role)
