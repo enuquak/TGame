@@ -23,7 +23,7 @@ if (args.Length != ProcessArgumentCount)
 var runDir = Path.GetFullPath(args[1]);
 var processType = ServerProcess.ParseType(args[0]);
 var role = processType.ToString();
-IDisposable? serverLog = null;
+using var logLifetime = GameLog.Initialize();
 try
 {
     await RunServerAsync(processType, runDir);
@@ -32,10 +32,6 @@ catch (Exception error)
 {
     GameLog.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString(), bothPrintConsole: true);
     Environment.ExitCode = 1;
-}
-finally
-{
-    serverLog?.Dispose();
 }
 
 async Task RunServerAsync(ProcessType processType, string runDir)
@@ -48,7 +44,7 @@ async Task RunServerAsync(ProcessType processType, string runDir)
     var (zooKeeper, process) = await InitializeZooKeeperAsync(settings, processType);
     await using var zooKeeperLifetime = zooKeeper;
 
-    serverLog = GameLog.OpenServer(process);
+    GameLog.OpenServer(process);
     Directory.CreateDirectory(runDir);
     using var currentProcess = Process.GetCurrentProcess();
     var identityKey = ServerRunFiles.ProcessKey(Environment.ProcessId, currentProcess.StartTime.ToUniversalTime().Ticks);

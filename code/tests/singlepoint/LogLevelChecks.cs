@@ -8,6 +8,9 @@ internal static class LogLevelChecks
 {
     public static void Run()
     {
+        ExpectInvalidOperation(
+            () => GameLog.Info(ServerLogEvents.Listen, nameof(ProcessType.Login)),
+            "Logging before initialization must fail.");
         var root = Path.Combine(Path.GetTempPath(), $"tgame-log-levels-{Guid.NewGuid():N}");
         var process = new ServerProcess(ProcessType.Login, 1);
         var originalRoot = Environment.GetEnvironmentVariable(EngineEnvironment.LogRoot);
@@ -21,6 +24,7 @@ internal static class LogLevelChecks
             {
                 using var output = new StringWriter();
                 Console.SetOut(output);
+                using var logLifetime = GameLog.Initialize();
                 GameLog.SetMinimumLevel(minimum);
                 WriteSamples(process);
                 CheckRows(output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), minimum, process.Role);
@@ -31,6 +35,7 @@ internal static class LogLevelChecks
                 using var error = new StringWriter();
                 Console.SetOut(output);
                 Console.SetError(error);
+                using var logLifetime = GameLog.Initialize();
                 GameLog.Error(ServerLogEvents.ProcessFailed, process.Role, detail: "进程失败", bothPrintConsole: true);
                 CheckRows(error.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), ServerLogLevel.Error, process.Role);
                 if (output.ToString().Length != 0)
@@ -47,9 +52,11 @@ internal static class LogLevelChecks
                 Console.SetOut(output);
                 Console.SetError(error);
                 Environment.SetEnvironmentVariable(EngineEnvironment.LogRoot, logRoot);
-                GameLog.SetMinimumLevel(minimum);
-                using (GameLog.OpenServer(process))
+                using (GameLog.Initialize())
                 {
+                    GameLog.SetMinimumLevel(minimum);
+                    GameLog.OpenServer(process);
+                    ExpectInvalidOperation(() => GameLog.OpenServer(process), "Opening a second log file must fail.");
                     WriteSamples(process);
                     if (output.ToString().Length != 0 || error.ToString().Length != 0)
                     {
@@ -70,17 +77,71 @@ internal static class LogLevelChecks
                     throw new Exception("Console mirroring must write the same error record exactly once to standard error.");
                 }
             }
+
+            CheckLifecycle(process);
         }
         finally
         {
             Console.SetOut(originalOutput);
             Console.SetError(originalError);
-            GameLog.SetMinimumLevel(ServerLogLevel.Info);
             Environment.SetEnvironmentVariable(EngineEnvironment.LogRoot, originalRoot);
             Directory.Delete(root, recursive: true);
         }
 
-        Console.WriteLine("PASS DEBUG/INFO/ERROR filtering, JSON fields, server log configuration and optional console mirroring.");
+        Console.WriteLine("PASS logger singleton lifecycle, DEBUG/INFO/ERROR filtering, JSON fields, server log configuration and optional console mirroring.");
+    }
+
+    private static void CheckLifecycle(ServerProcess process)
+    {
+        ExpectInvalidOperation(() => GameLog.SetMinimumLevel(ServerLogLevel.Info),
+            "Changing the log level before initialization must fail.");
+        ExpectInvalidOperation(() => GameLog.OpenServer(process),
+            "Opening a log file before initialization must fail.");
+
+        using var output = new StringWriter();
+        var originalOutput = Console.Out;
+        Console.SetOut(output);
+        try
+        {
+            var previous = GameLog.Initialize();
+            using (previous)
+            {
+                ExpectInvalidOperation(() =>
+                {
+                    using var duplicate = GameLog.Initialize();
+                }, "Initializing a second process logger must fail.");
+                GameLog.SetMinimumLevel(ServerLogLevel.Debug);
+            }
+
+            ExpectInvalidOperation(() => GameLog.Info(ServerLogEvents.Listen, process.Role),
+                "Logging after disposal must fail.");
+            using (GameLog.Initialize())
+            {
+                previous.Dispose();
+                WriteSamples(process);
+            }
+
+            CheckRows(output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries),
+                ServerLogLevel.Info, process.Role);
+        }
+        finally
+        {
+            Console.SetOut(originalOutput);
+        }
+    }
+
+    private static void ExpectInvalidOperation(Action action, string message)
+    {
+        try
+        {
+            action();
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+
+        throw new Exception(message);
     }
 
     private static void CheckSettings(string root)

@@ -32,6 +32,8 @@ if (args is ["--logging"])
     }
 }
 
+using var logLifetime = GameLog.Initialize();
+
 if (args is ["--profile-storage", var profileIdConfig])
 {
     using var profileDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
