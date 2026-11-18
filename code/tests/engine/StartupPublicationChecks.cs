@@ -35,7 +35,7 @@ internal sealed class StartupPublicationChecks(TestServices services)
             Check(!await proxy.IsProcessClaimedAsync(persistent.Name, stop), "A persistent node was accepted as a live process identity.");
 
             var configuration = TestNodes.LoadConfiguration();
-            var node = new ServerNode(process, configuration, proxy, services.Ids, services.Log);
+            var node = new ServerNode(process, configuration, services.Startup, proxy, services.Ids, services.Log);
             await using var app = await StartAsync(node, proxy, stop);
             using var channel = GrpcChannel.ForAddress(app.Urls.Single());
             var client = new ServerLink.ServerLinkClient(channel);

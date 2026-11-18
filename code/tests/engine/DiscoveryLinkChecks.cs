@@ -18,22 +18,37 @@ internal sealed class DiscoveryLinkChecks(TestServices services)
         var configuration = TestNodes.LoadConfiguration();
         var first = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 1), services.Ids);
         var second = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 2), services.Ids);
+        var third = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 3), services.Ids);
         await using var firstApp = await StartAsync(first, stop);
         await using var secondApp = await StartAsync(second, stop);
+        await using var thirdApp = await StartAsync(third, stop);
         var router1 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 1), firstApp.Urls.Single(), 1);
         var router2 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 2), secondApp.Urls.Single(), 2);
+        var router3 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 3), thirdApp.Urls.Single(), 3);
         var changes = Channel.CreateUnbounded<IReadOnlyList<DiscoveredProcess>>();
-        var node = services.CreateNode(new ServerProcess(ProcessType.Scene, 1), configuration);
+        var counts = System.Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1);
+        counts[ProcessType.Router] = 2;
+        var node = new ServerNode(new ServerProcess(ProcessType.Scene, 1), configuration, new ServerGroup(counts),
+            services.ZooKeeper, services.Ids, services.Log);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var maintenance = node.MaintainConnectionsAsync(changes.Reader.ReadAllAsync(lifetime.Token), lifetime.Token);
         try
         {
             changes.Writer.TryWrite([router1]);
             var old = await first.Connections.Reader.ReadAsync(stop);
-            await node.FirstLinks.WaitAsync(stop);
+            await old.Handshaken.Task.WaitAsync(stop);
+            if (node.FirstLinks.IsCompleted || node.Ready)
+            {
+                throw new Exception("Discovery completed startup before two Routers were connected.");
+            }
+
             changes.Writer.TryWrite([router1, router2]);
             var extra = await second.Connections.Reader.ReadAsync(stop);
             await extra.Handshaken.Task.WaitAsync(stop);
+            await node.FirstLinks.WaitAsync(stop);
+            changes.Writer.TryWrite([router1, router2, router3]);
+            var late = await third.Connections.Reader.ReadAsync(stop);
+            await late.Handshaken.Task.WaitAsync(stop);
             if (!node.Ready)
             {
                 throw new Exception("Adding an extra Router revoked readiness.");
@@ -41,6 +56,7 @@ internal sealed class DiscoveryLinkChecks(TestServices services)
 
             changes.Writer.TryWrite([router2]);
             await old.Closed.Task.WaitAsync(stop);
+            await late.Closed.Task.WaitAsync(stop);
             if (!node.Ready)
             {
                 throw new Exception("Removing a redundant Router revoked readiness.");
@@ -80,7 +96,7 @@ internal sealed class DiscoveryLinkChecks(TestServices services)
                 throw new Exception("Discovery ended before its active connections were cleaned up.");
             }
 
-            Console.WriteLine("PASS real gRPC dynamic joins, redundant removal, replacement, recovery and failure cleanup.");
+            Console.WriteLine("PASS real gRPC startup minimum=2, late joins, removal below minimum, replacement, recovery and cleanup.");
         }
         finally
         {

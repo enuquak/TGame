@@ -157,17 +157,7 @@ internal sealed class ConsoleSession : IDisposable
         await Task.Run(() =>
         {
             var source = Path.Combine(root, "build", "bin", "TGame.Server", "debug");
-            foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-            {
-                string dest = Path.Combine(snapshot, Path.GetRelativePath(source, file));
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                File.Copy(file, dest);
-            }
-
-            foreach (var start in starts)
-            {
-                File.Copy(Path.Combine(snapshot, "TGame.Server.exe"), start.FileName);
-            }
+            PrepareSnapshot(source, snapshot, group, starts.Select(start => start.FileName));
         });
         await Task.WhenAll(Instances.Select(i => i.StopAsync(Report)));
         if (changed)
@@ -205,6 +195,23 @@ internal sealed class ConsoleSession : IDisposable
             {
                 Report($"旧构建快照待清理：{e.Message}");
             }
+        }
+    }
+
+    internal static void PrepareSnapshot(string source, string snapshot, ServerGroup startup, IEnumerable<string> apphosts)
+    {
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            string dest = Path.Combine(snapshot, Path.GetRelativePath(source, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            File.Copy(file, dest);
+        }
+
+        // 启动计划可能在编译后调整；服务器必须读取本轮计划中的同一份门槛。
+        startup.Save(Path.Combine(snapshot, "config", ServerGroup.FileName));
+        foreach (var apphost in apphosts)
+        {
+            File.Copy(Path.Combine(snapshot, "TGame.Server.exe"), apphost);
         }
     }
 

@@ -7,6 +7,7 @@ internal sealed class TestServices : IAsyncDisposable
     public GameLog Log { get; } = new();
     public IdGenerator Ids { get; } = new(_ => Task.FromResult(new SnowflakeIdGenerator(0, TimeProvider.System)));
     public ZooKeeperProxy ZooKeeper { get; }
+    public ServerGroup Startup { get; } = new(Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1));
 
     public TestServices()
     {
@@ -22,7 +23,7 @@ internal sealed class TestServices : IAsyncDisposable
     };
 
     public ServerNode CreateNode(ServerProcess process, ServerConfiguration configuration) =>
-        new(process, configuration, ZooKeeper, Ids, Log);
+        new(process, configuration, Startup, ZooKeeper, Ids, Log);
 
     public async ValueTask DisposeAsync()
     {

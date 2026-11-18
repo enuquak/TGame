@@ -45,6 +45,7 @@ async Task RunServerAsync(ProcessType processType, string runDir, GameLog log)
     log.SetMinimumLevel(settings.MinimumLogLevel);
     var configuration = ServerConfiguration.Load(
         Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName));
+    var startup = ServerGroup.Load(Path.Combine(AppContext.BaseDirectory, "config", ServerGroup.FileName));
     var zooKeeperOptions = ZooKeeperOptions.Load(
         Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName),
         settings.ZooKeeper, settings.DiscoveryRoot);
@@ -52,7 +53,7 @@ async Task RunServerAsync(ProcessType processType, string runDir, GameLog log)
         Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName));
     log.Info(ServerLogEvents.InitStepCompleted, role, detail: "配置加载完成");
 
-    await using var app = CreateApplication(processType, settings, configuration, zooKeeperOptions, idOptions, log);
+    await using var app = CreateApplication(processType, settings, configuration, startup, zooKeeperOptions, idOptions, log);
     log.Info(ServerLogEvents.InitStepCompleted, role, detail: "app 服务注册及构建完成");
     var zooKeeper = app.Services.GetRequiredService<ZooKeeperProxy>();
     var process = await InitializeZooKeeperAsync(zooKeeper, processType);
@@ -131,7 +132,7 @@ static async Task<ServerProcess> InitializeZooKeeperAsync(ZooKeeperProxy zooKeep
 }
 
 static WebApplication CreateApplication(ProcessType processType, ServerSettings settings,
-    ServerConfiguration configuration, ZooKeeperOptions zooKeeperOptions, IdGeneratorOptions idOptions, GameLog log)
+    ServerConfiguration configuration, ServerGroup startup, ZooKeeperOptions zooKeeperOptions, IdGeneratorOptions idOptions, GameLog log)
 {
     var builder = WebApplication.CreateSlimBuilder();
     builder.Logging.ClearProviders();
@@ -141,7 +142,7 @@ static WebApplication CreateApplication(ProcessType processType, ServerSettings 
     }
 
     builder.Services.AddGrpc();
-    ServerServices.AddProcessServices(builder.Services, settings, configuration, zooKeeperOptions, idOptions, log);
+    ServerServices.AddProcessServices(builder.Services, settings, configuration, startup, zooKeeperOptions, idOptions, log);
     return builder.Build();
 }
 

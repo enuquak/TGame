@@ -45,6 +45,21 @@ internal static class GroupConfigChecks
         }
 
         var valid = JsonSerializer.Serialize(counts);
+        var build = Directory.CreateDirectory(Path.Combine(root, "build-output")).FullName;
+        Directory.CreateDirectory(Path.Combine(build, "config"));
+        File.WriteAllText(Path.Combine(build, "TGame.Server.exe"), "apphost");
+        File.WriteAllText(Path.Combine(build, "config", ServerGroup.FileName), valid);
+        var snapshot = Path.Combine(root, "snapshot");
+        var apphosts = group.Processes.Select(process => Path.Combine(snapshot, process.Name + "Server.exe")).ToArray();
+        ConsoleSession.PrepareSnapshot(build, snapshot, group, apphosts);
+        var runtimeStartup = ServerGroup.Load(Path.Combine(snapshot, "config", ServerGroup.FileName));
+        if (runtimeStartup.GetStartupMinimum(ProcessType.Login) != 2 ||
+            runtimeStartup.GetStartupMinimum(ProcessType.Base) != 3 ||
+            apphosts.Any(path => File.ReadAllText(path) != "apphost"))
+        {
+            throw new Exception("The build snapshot did not use the same startup minimums as the launch plan.");
+        }
+
         string[] invalid =
         [
             "[]", "{}", "{bad", valid.Replace(":1", ":-1"), valid.Replace(":1", ":1.5"),

@@ -6,10 +6,89 @@ internal sealed class StartupReadinessChecks(TestServices services)
 {
     internal async Task RunAsync(CancellationToken stop)
     {
+        await CheckStartupMinimumAsync(stop);
+        await CheckZeroMinimumAsync(stop);
         await CheckPublicationWaitAsync(stop);
         await CheckWithoutDependenciesAsync(stop);
         await CheckDelayedHelloAsync(stop);
-        Console.WriteLine("PASS current readiness wait, cancellation, recovery and delayed incoming handshake rejection.");
+        Console.WriteLine("PASS startup minimums, zero minimum, current readiness, cancellation and delayed handshake rejection.");
+    }
+
+    private async Task CheckStartupMinimumAsync(CancellationToken stop)
+    {
+        var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1);
+        counts[ProcessType.Router] = 2;
+        var startup = new ServerGroup(counts);
+        var node = new ServerNode(new ServerProcess(ProcessType.Base, 1), TestNodes.LoadConfiguration(),
+            startup, services.ZooKeeper, services.Ids, services.Log);
+        var router1Stream = new FrameStream();
+        var router2Stream = new FrameStream();
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        var router1 = Open(node, ProcessType.Router, router1Stream, lifetime.Token);
+        var database = Open(node, ProcessType.DBMgr, new FrameStream(), lifetime.Token);
+        var router2Name = ServerProcess.FormatName(nameof(ProcessType.Router), 2);
+        var router2 = node.RunLinkAsync(router2Name, services.Ids.GenId(), router2Stream, router2Stream, lifetime.Token);
+        Task recovered = Task.CompletedTask;
+        try
+        {
+            Check(!node.Ready && !node.FirstLinks.IsCompleted,
+                "Router=2 completed startup with only one Router; an unhandshaken connection must not count.");
+            using (var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop))
+            {
+                var pending = node.WaitUntilReadyAsync(cancelled.Token);
+                cancelled.Cancel();
+                try
+                {
+                    await pending;
+                    throw new Exception("Startup minimum wait ignored cancellation.");
+                }
+                catch (OperationCanceledException) when (cancelled.IsCancellationRequested)
+                {
+                }
+            }
+
+            router2Stream.Input.Writer.TryWrite(TestNodes.Hello(router2Name));
+            await node.FirstLinks.WaitAsync(stop);
+            await node.WaitUntilReadyAsync(stop);
+            Check(node.Ready, "Two Routers and one DBMgr did not satisfy startup.");
+            router1Stream.Input.Writer.Complete();
+            await router1.WaitAsync(stop);
+            Check(node.Ready, "The startup minimum was reapplied after one Router disconnected.");
+            router2Stream.Input.Writer.Complete();
+            await router2.WaitAsync(stop);
+            Check(!node.Ready && node.FirstLinks.IsCompletedSuccessfully,
+                "Losing all Routers must report disconnection without erasing completed startup.");
+            recovered = Open(node, ProcessType.Router, new FrameStream(), lifetime.Token);
+            await node.WaitUntilReadyAsync(stop);
+            Check(node.Ready, "Recovery incorrectly required two Routers again.");
+        }
+        finally
+        {
+            lifetime.Cancel();
+            await StopAsync(router1, database, router2, recovered);
+        }
+    }
+
+    private async Task CheckZeroMinimumAsync(CancellationToken stop)
+    {
+        var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1);
+        counts[ProcessType.Router] = 0;
+        var node = new ServerNode(new ServerProcess(ProcessType.Login, 1), TestNodes.LoadConfiguration(),
+            new ServerGroup(counts), services.ZooKeeper, services.Ids, services.Log);
+        Check(node.Ready && node.FirstLinks.IsCompletedSuccessfully, "A zero minimum blocked startup.");
+        var stream = new FrameStream();
+        var connection = Open(node, ProcessType.Router, stream, stop);
+        try
+        {
+            Check(node.Ready, "A late peer with a zero startup minimum revoked readiness.");
+        }
+        finally
+        {
+            stream.Input.Writer.Complete();
+            await connection.WaitAsync(stop);
+        }
+
+        Check(node.Ready, "Losing an optional startup type revoked readiness.");
     }
 
     private async Task CheckPublicationWaitAsync(CancellationToken stop)

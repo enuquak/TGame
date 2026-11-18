@@ -65,17 +65,17 @@ try
         return 1;
     }
 
-    if (args is ["--connection-readiness"])
-    {
-        await new StartupReadinessChecks(services).CheckWithoutDependenciesAsync(CancellationToken.None);
-        return 0;
-    }
-
     // 内存检查共用一个进程内生成器，不向真实服务器组发布 ID。
     await services.Ids.InitializeAsync();
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(
         args is ["--startup-publication"] ? ExternalTimeoutSeconds : TestTimeoutSeconds));
     var stop = deadline.Token;
+
+    if (args is ["--connection-readiness"])
+    {
+        await new StartupReadinessChecks(services).RunAsync(stop);
+        return 0;
+    }
 
     if (args is ["--rpc"])
     {

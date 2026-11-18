@@ -79,6 +79,8 @@ public sealed class ServerGroup
     private readonly Dictionary<string, int> configuredCounts = new(StringComparer.Ordinal);
     public IReadOnlyList<ServerProcess> Processes { get; }
 
+    public int GetStartupMinimum(ProcessType type) => configuredCounts[type.ToString()];
+
     public ServerGroup(IReadOnlyDictionary<ProcessType, int> counts)
     {
         var processes = new List<ServerProcess>();

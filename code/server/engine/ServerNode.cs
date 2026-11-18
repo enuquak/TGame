@@ -22,16 +22,18 @@ public partial class ServerNode
 
     private readonly GameLog log;
     private readonly IdGenerator ids;
+    private readonly ServerGroup startup;
     private readonly ZooKeeperProxy zooKeeper;
     private readonly ServerConfiguration configuration;
 
-    public ServerNode(ServerProcess process, ServerConfiguration configuration, ZooKeeperProxy zooKeeper,
+    public ServerNode(ServerProcess process, ServerConfiguration configuration, ServerGroup startup, ZooKeeperProxy zooKeeper,
         IdGenerator ids, GameLog log)
     {
         this.log = log;
         this.ids = ids;
         this.zooKeeper = zooKeeper;
         this.configuration = configuration;
+        this.startup = startup;
         // 构造时仍校验实例编号，名称只通过身份对象派生。
         _ = process.Name;
         this.process = process;
@@ -253,8 +255,24 @@ public partial class ServerNode
     // 调用方持有 linkChanges；首次构造尚未发布节点时除外。
     private bool HasRequiredLinks()
     {
-        return configuration.GetDialTargets(process.Type).All(target => links.Values.Any(link =>
-            ServerProcess.Parse(link.Peer).Type == target));
+        bool starting = !firstLinks.Task.IsCompletedSuccessfully;
+        foreach (var target in configuration.GetDialTargets(process.Type))
+        {
+            int minimum = startup.GetStartupMinimum(target);
+            if (!starting)
+            {
+                // 启动数量只检查一次；运行中仅跟踪必需类型是否仍有可用连接。
+                minimum = Math.Min(minimum, 1);
+            }
+
+            int connected = links.Values.Count(link => ServerProcess.Parse(link.Peer).Type == target);
+            if (connected < minimum)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void UpdateLinkReadiness()
