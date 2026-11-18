@@ -1,0 +1,2 @@
+# 相对于启动工作目录的运行目录；启动工具为每轮运行生成实际目录快照。
+runDirectory: "${meta.paths.runDirectory}"
