@@ -4,37 +4,36 @@ using TGame.Server.Engine;
 
 internal static class ServerConfigurationChecks
 {
-    public static void Run()
+    public static void Run(TestServices services)
     {
         var path = Path.GetTempFileName();
         var defaults = Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName);
         try
         {
-            Expect<InvalidOperationException>(() => _ = ServerConfiguration.DialTargets);
             File.WriteAllText(path, "{}");
-            Expect<InvalidDataException>(() => ServerConfiguration.Initialize(path));
+            Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
             File.Copy(defaults, path, true);
-            using (ServerConfiguration.Initialize(path))
-            {
-                File.WriteAllText(path, "{}");
-                Check(Topology.DialTargets(ProcessType.Base).SequenceEqual(new[] { ProcessType.Router, ProcessType.DBMgr }),
-                    "Base must retain Router and DBMgr type dependencies after its file changes.");
-                Check(Topology.DialTargets(ProcessType.Router).Count == 0, "Router must not wait for incoming types.");
-                var node = new ServerNode("Router999");
-                Check(node.FirstLinks.IsCompletedSuccessfully, "Valid identities must not be bounded by configured counts.");
-                Expect<InvalidOperationException>(() => ServerConfiguration.Initialize(defaults));
-            }
+            var configuration = ServerConfiguration.Load(path);
+
+            File.WriteAllText(path, "{}");
+            Check(configuration.GetDialTargets(ProcessType.Base).SequenceEqual(new[] { ProcessType.Router, ProcessType.DBMgr }),
+                "Base must retain Router and DBMgr type dependencies after its file changes.");
+            Check(configuration.GetDialTargets(ProcessType.Router).Count == 0, "Router must not wait for incoming types.");
+            var node = services.CreateNode(new ServerProcess(ProcessType.Router, 999), configuration);
+            Check(node.FirstLinks.IsCompletedSuccessfully, "Valid identities must not be bounded by configured counts.");
+            var independent = ServerConfiguration.Load(defaults);
+            Check(!ReferenceEquals(configuration, independent), "Independent configurations share an instance.");
 
             var invalid = JsonSerializer.Deserialize<Dictionary<string, string[]>>(File.ReadAllText(defaults))!;
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Base)];
             File.WriteAllText(path, JsonSerializer.Serialize(invalid));
-            Expect<InvalidDataException>(() => ServerConfiguration.Initialize(path));
+            Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Router)];
             File.WriteAllText(path, JsonSerializer.Serialize(invalid));
-            Expect<InvalidDataException>(() => ServerConfiguration.Initialize(path));
+            Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Gate)];
             File.WriteAllText(path, JsonSerializer.Serialize(invalid));
-            Expect<InvalidDataException>(() => ServerConfiguration.Initialize(path));
+            Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
 
             var cycle = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => Array.Empty<ProcessType>());
             cycle[ProcessType.Login] = [ProcessType.Base];
@@ -42,7 +41,7 @@ internal static class ServerConfigurationChecks
             cycle[ProcessType.Scene] = [ProcessType.Login];
             Expect<InvalidDataException>(() =>
             {
-                using var rejected = ServerConfiguration.Initialize(cycle);
+                _ = new ServerConfiguration(cycle);
             });
 
             foreach (var name in new[] { "Router", "Router0", "Router01", "router1", "Unknown1", "1", "Router2147483648", "Router-1" })
@@ -53,18 +52,18 @@ internal static class ServerConfigurationChecks
             Check(ServerProcess.Parse("Router123").ChannelId == 123, "Number parsing failed.");
             Expect<InvalidDataException>(() => ServerProcess.ParseType("Router1"));
             Expect<InvalidDataException>(() => ServerProcess.ParseType("0"));
-            var previous = ServerConfiguration.Initialize(defaults);
-            previous.Dispose();
-            using var next = ServerConfiguration.Initialize(defaults);
-            previous.Dispose();
-            Check(Topology.Dials(ProcessType.Scene, ProcessType.Router), "Old disposal cleared the current configuration.");
+            var isolatedTargets = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => Array.Empty<ProcessType>());
+            var isolated = new ServerConfiguration(isolatedTargets);
+            var next = ServerConfiguration.Load(defaults);
+            Check(!isolated.Dials(ProcessType.Scene, ProcessType.Router) && next.Dials(ProcessType.Scene, ProcessType.Router),
+                "Loading another configuration changed an existing snapshot.");
         }
         finally
         {
             File.Delete(path);
         }
 
-        Console.WriteLine("PASS type topology validation, canonical identities, immutable configuration and singleton lifecycle.");
+        Console.WriteLine("PASS type topology validation, canonical identities, immutable configuration and independent snapshots.");
     }
 
     private static void Check(bool condition, string message)

@@ -22,43 +22,57 @@ if (args.Length != ProcessArgumentCount)
 var runDir = Path.GetFullPath(args[1]);
 var processType = ServerProcess.ParseType(args[0]);
 var role = processType.ToString();
-using var logLifetime = GameLog.Initialize();
+using var log = new GameLog();
+Serilog.Debugging.SelfLog.Enable(TextWriter.Synchronized(Console.Error));
 try
 {
-    await RunServerAsync(processType, runDir);
+    await RunServerAsync(processType, runDir, log);
 }
 catch (Exception error)
 {
-    GameLog.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString(), bothPrintConsole: true);
+    log.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString(), bothPrintConsole: true);
     Environment.ExitCode = 1;
 }
+finally
+{
+    Serilog.Debugging.SelfLog.Disable();
+}
 
-async Task RunServerAsync(ProcessType processType, string runDir)
+async Task RunServerAsync(ProcessType processType, string runDir, GameLog log)
 {
     var role = processType.ToString();
-    var settings = LoadConfiguration();
-    using var configuration = ServerConfiguration.Initialize(
+    var settings = ServerSettings.LoadSelected();
+    log.SetMinimumLevel(settings.MinimumLogLevel);
+    var configuration = ServerConfiguration.Load(
         Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName));
+    var zooKeeperOptions = ZooKeeperOptions.Load(
+        Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName),
+        settings.ZooKeeper, settings.DiscoveryRoot);
+    var idOptions = IdGeneratorOptions.Load(
+        Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName));
+    log.Info(ServerLogEvents.InitStepCompleted, role, detail: "配置加载完成");
 
-    var (zooKeeper, process) = await InitializeZooKeeperAsync(settings, processType);
-    await using var zooKeeperLifetime = zooKeeper;
+    await using var app = CreateApplication(processType, settings, configuration, zooKeeperOptions, idOptions, log);
+    log.Info(ServerLogEvents.InitStepCompleted, role, detail: "app 服务注册及构建完成");
+    var zooKeeper = app.Services.GetRequiredService<ZooKeeperProxy>();
+    var process = await InitializeZooKeeperAsync(zooKeeper, processType);
 
-    GameLog.OpenServer(process);
+    log.OpenServer(process);
     Directory.CreateDirectory(runDir);
     using var currentProcess = Process.GetCurrentProcess();
     var identityKey = ServerRunFiles.ProcessKey(Environment.ProcessId, currentProcess.StartTime.ToUniversalTime().Ticks);
     var identityPath = Path.Combine(runDir, ServerRunFiles.IdentityPrefix + identityKey);
     File.WriteAllText(identityPath + ".tmp", process.Name);
     File.Move(identityPath + ".tmp", identityPath, true);
-    GameLog.Info(ServerLogEvents.InitStepCompleted, role, detail: $"ZK 实例身份 {process.Name} 已占用，类型连接配置已加载");
+    log.Info(ServerLogEvents.InitStepCompleted, role, detail: $"ZK 实例身份 {process.Name} 已占用，类型连接配置已加载");
 
-    await using var idLifetime = await InitializeIdGeneratorAsync(process.Role);
-    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(IdGenerator)} 单例初始化完成");
+    var ids = app.Services.GetRequiredService<IdGenerator>();
+    await ids.InitializeAsync();
+    log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(IdGenerator)} 单例初始化完成");
 
-    var node = new ServerNode(process.Name);
-    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(ServerNode)} 节点创建完成");
-
-    await using var app = await InitializeApplicationAsync(process, node);
+    var node = app.Services.GetRequiredService<ServerNode>();
+    log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: $"{nameof(ServerNode)} 节点创建完成");
+    await InitializeApplicationAsync(app, process, log);
 
     using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(app.Lifetime.ApplicationStopping);
     var stop = lifetime.Token;
@@ -66,21 +80,24 @@ async Task RunServerAsync(ProcessType processType, string runDir)
     try
     {
         workers.Add(SuperviseAsync(WatchStopAsync(runDir, process.Name, identityKey, lifetime), lifetime));
-        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "停止信号监控已启动");
+        log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "停止信号监控已启动");
 
-        workers.Add(SuperviseAsync(WatchZooKeeperSessionAsync(stop), lifetime));
-        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "ZooKeeper 会话监控已启动");
+        workers.Add(SuperviseAsync(WatchZooKeeperSessionAsync(zooKeeper, stop), lifetime));
+        log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "ZooKeeper 会话监控已启动");
 
-        await InitializeEngineAsync();
+        workers.Add(SuperviseAsync(node.MaintainConnectionsAsync(stop), lifetime));
+        log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "动态发现与连接维护已启动");
+        await node.FirstLinks.WaitAsync(stop);
+        log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "引擎层初始化完成");
+
         await node.WaitUntilReadyAsync(stop);
         using (var publicationTimeout = CancellationTokenSource.CreateLinkedTokenSource(stop))
         {
             publicationTimeout.CancelAfter(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
-            await ZooKeeperProxy.RegisterProcessAsync(process, app.Urls.Single(), publicationTimeout.Token);
+            await zooKeeper.RegisterProcessAsync(process, app.Urls.Single(), publicationTimeout.Token);
         }
 
-        GameLog.Info(ServerLogEvents.ProcessReady, process.Role, detail: "进程初始化完成");
-
+        log.Info(ServerLogEvents.ProcessReady, process.Role, detail: "进程初始化完成");
         await Task.WhenAll(workers);
     }
     catch (OperationCanceledException) when (stop.IsCancellationRequested)
@@ -98,117 +115,69 @@ async Task RunServerAsync(ProcessType processType, string runDir)
             await app.StopAsync(TimeSpan.FromSeconds(ShutdownTimeoutSeconds));
         }
     }
-
-    async Task InitializeEngineAsync()
-    {
-        workers.Add(SuperviseAsync(node.MaintainConnectionsAsync(stop), lifetime));
-        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "动态发现与连接维护已启动");
-
-        await node.FirstLinks.WaitAsync(stop);
-        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "引擎层初始化完成");
-    }
 }
 
-static ServerSettings LoadConfiguration()
+static async Task<ServerProcess> InitializeZooKeeperAsync(ZooKeeperProxy zooKeeper, ProcessType processType)
 {
-    var settings = ServerSettings.Current.Value;
-    GameLog.SetMinimumLevel(settings.MinimumLogLevel);
-    return settings;
+    await zooKeeper.InitializeAsync();
+    using var claimTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
+    return await zooKeeper.ClaimProcessAsync(processType, claimTimeout.Token);
 }
 
-static async Task<(ZooKeeperProxy Lifetime, ServerProcess Process)> InitializeZooKeeperAsync(
-    ServerSettings settings, ProcessType processType)
-{
-    var configPath = Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName);
-    var options = ZooKeeperOptions.Load(configPath, settings.ZooKeeper, settings.DiscoveryRoot);
-    GameLog.Info(ServerLogEvents.InitStepCompleted, processType.ToString(), detail: $"{nameof(ZooKeeperOptions)} 配置加载完成");
-
-    var zooKeeper = await ZooKeeperProxy.InitializeAsync(options);
-    try
-    {
-        using var claimTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(RegistrationTimeoutSeconds));
-        var process = await ZooKeeperProxy.ClaimProcessAsync(processType, claimTimeout.Token);
-        return (zooKeeper, process);
-    }
-    catch
-    {
-        await zooKeeper.DisposeAsync();
-        throw;
-    }
-}
-
-static Task<IdGenerator> InitializeIdGeneratorAsync(string role)
-{
-    var idConfigPath = Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName);
-    var idOptions = IdGeneratorOptions.Load(idConfigPath);
-    GameLog.Info(ServerLogEvents.InitStepCompleted, role, detail: $"{nameof(IdGeneratorOptions)} 配置加载完成");
-
-    return IdGenerator.InitializeAsync(idOptions);
-}
-
-static async Task<WebApplication> InitializeApplicationAsync(ServerProcess process, ServerNode node)
+static WebApplication CreateApplication(ProcessType processType, ServerSettings settings,
+    ServerConfiguration configuration, ZooKeeperOptions zooKeeperOptions, IdGeneratorOptions idOptions, GameLog log)
 {
     var builder = WebApplication.CreateSlimBuilder();
     builder.Logging.ClearProviders();
-    if (process.Type == ProcessType.Gate)
+    if (processType == ProcessType.Gate)
     {
         builder.Services.AddSingleton<X509Certificate2>(_ => FindDevelopmentCertificate());
     }
 
     builder.Services.AddGrpc();
-    builder.Services.AddSingleton<ServerNode>(node);
-    GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 服务注册完成");
-
-    var app = builder.Build();
-    try
-    {
-        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 构建完成");
-
-        // 构建应用后再创建证书，初始化失败也由 app 统一释放。
-        var certificate = process.Type == ProcessType.Gate ? app.Services.GetRequiredService<X509Certificate2>() : null;
-        if (certificate is not null)
-        {
-            GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "HTTPS 证书加载完成");
-        }
-
-        var serverOptions = app.Services.GetRequiredService<IOptions<KestrelServerOptions>>().Value;
-        serverOptions.Listen(IPAddress.Loopback, 0, listen =>
-        {
-            if (certificate is not null)
-            {
-                listen.Protocols = HttpProtocols.Http1;
-                listen.UseHttps(certificate);
-            }
-            else
-            {
-                listen.Protocols = HttpProtocols.Http2;
-            }
-        });
-
-        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 监听配置完成");
-
-        if (process.Type != ProcessType.Gate)
-        {
-            app.MapGrpcService<LinkService>();
-            GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "gRPC 服务映射完成");
-        }
-
-        await app.StartAsync();
-        var address = app.Urls.Single();
-        GameLog.Info(ServerLogEvents.Listen, process.Role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
-        GameLog.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 初始化完成");
-        return app;
-    }
-    catch
-    {
-        await app.DisposeAsync();
-        throw;
-    }
+    ServerServices.AddProcessServices(builder.Services, settings, configuration, zooKeeperOptions, idOptions, log);
+    return builder.Build();
 }
 
-static async Task WatchZooKeeperSessionAsync(CancellationToken stop)
+static async Task InitializeApplicationAsync(WebApplication app, ServerProcess process, GameLog log)
 {
-    await ZooKeeperProxy.SessionLost.WaitAsync(stop);
+    // 证书由容器创建，监听启动失败也随 app 释放。
+    var certificate = process.Type == ProcessType.Gate ? app.Services.GetRequiredService<X509Certificate2>() : null;
+    if (certificate is not null)
+    {
+        log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "HTTPS 证书加载完成");
+    }
+
+    var serverOptions = app.Services.GetRequiredService<IOptions<KestrelServerOptions>>().Value;
+    serverOptions.Listen(IPAddress.Loopback, 0, listen =>
+    {
+        if (certificate is not null)
+        {
+            listen.Protocols = HttpProtocols.Http1;
+            listen.UseHttps(certificate);
+        }
+        else
+        {
+            listen.Protocols = HttpProtocols.Http2;
+        }
+    });
+
+    log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 监听配置完成");
+    if (process.Type != ProcessType.Gate)
+    {
+        app.MapGrpcService<LinkService>();
+        log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "gRPC 服务映射完成");
+    }
+
+    await app.StartAsync();
+    var address = app.Urls.Single();
+    log.Info(ServerLogEvents.Listen, process.Role, detail: address, link: certificate?.GetCertHashString(HashAlgorithmName.SHA256));
+    log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "app 初始化完成");
+}
+
+static async Task WatchZooKeeperSessionAsync(ZooKeeperProxy zooKeeper, CancellationToken stop)
+{
+    await zooKeeper.SessionLost.WaitAsync(stop);
     throw new InvalidOperationException("The process lost its ZooKeeper session.");
 }
 

@@ -3,9 +3,9 @@ using TGame;
 using TGame.Server.Engine;
 using TGame.Transport;
 
-internal static class RpcChecks
+internal sealed class RpcChecks(TestServices services)
 {
-    public static void CheckTransportBoundary()
+    public void CheckTransportBoundary()
     {
         var engine = typeof(ServerNode).Assembly;
         var business = typeof(TGame.Profile.ProfileRequest).Assembly;
@@ -39,7 +39,7 @@ internal static class RpcChecks
         }
     }
 
-    public static async Task RunAsync(CancellationToken stop)
+    public async Task RunAsync(CancellationToken stop)
     {
         await CheckReplyCorrelationAsync(stop);
         await CheckInvalidMessagesAsync(stop);
@@ -49,12 +49,12 @@ internal static class RpcChecks
         Console.WriteLine("PASS RPC correlation, invalid envelopes, cancellation, timeout and disconnect.");
     }
 
-    private static async Task CheckReplyCorrelationAsync(CancellationToken stop)
+    private async Task CheckReplyCorrelationAsync(CancellationToken stop)
     {
         var stream = new FrameStream();
         var link = CreateLink(stream);
-        var firstId = IdGenerator.GenId();
-        var secondId = IdGenerator.GenId();
+        var firstId = services.Ids.GenId();
+        var secondId = services.Ids.GenId();
         var first = link.CallAsync<StringValue>(new Empty(), firstId, stop);
         var second = link.CallAsync<Int32Value>(new Empty(), secondId, stop);
         await stream.Output.Reader.ReadAsync(stop);
@@ -62,7 +62,7 @@ internal static class RpcChecks
 
         await ThrowsAsync<InvalidDataException>(() => link.CallAsync<StringValue>(new Empty(), firstId, stop));
 
-        link.Receive(RpcFrames.Reply(new Empty(), IdGenerator.GenId()).Reply);
+        link.Receive(RpcFrames.Reply(new Empty(), services.Ids.GenId()).Reply);
         if (first.IsCompleted || second.IsCompleted)
         {
             throw new Exception("An unmatched reply completed another request.");
@@ -86,11 +86,11 @@ internal static class RpcChecks
         await ThrowsAsync<InvalidDataException>(() => wrongType);
     }
 
-    private static async Task CheckInvalidMessagesAsync(CancellationToken stop)
+    private async Task CheckInvalidMessagesAsync(CancellationToken stop)
     {
         var stream = new FrameStream();
         var link = CreateLink(stream);
-        var requestId = IdGenerator.GenId();
+        var requestId = services.Ids.GenId();
         RpcRequest[] invalidRequests =
         [
             new() { RequestId = requestId },
@@ -113,11 +113,11 @@ internal static class RpcChecks
         }
     }
 
-    private static async Task CheckCancellationAndCloseAsync(CancellationToken stop)
+    private async Task CheckCancellationAndCloseAsync(CancellationToken stop)
     {
         var stream = new FrameStream();
         var link = CreateLink(stream);
-        var requestId = IdGenerator.GenId();
+        var requestId = services.Ids.GenId();
         using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var pending = link.CallAsync<Empty>(new Empty(), requestId, cancelled.Token);
         await stream.Output.Reader.ReadAsync(stop);
@@ -130,14 +130,14 @@ internal static class RpcChecks
         await stream.Output.Reader.ReadAsync(stop);
         link.Close();
         await ThrowsAsync<IOException>(() => next);
-        await ThrowsAsync<IOException>(() => link.CallAsync<Empty>(new Empty(), IdGenerator.GenId(), stop));
+        await ThrowsAsync<IOException>(() => link.CallAsync<Empty>(new Empty(), services.Ids.GenId(), stop));
     }
 
-    private static async Task CheckTimeoutAsync(CancellationToken stop)
+    private async Task CheckTimeoutAsync(CancellationToken stop)
     {
         var stream = new FrameStream();
         var link = CreateLink(stream);
-        var requestId = IdGenerator.GenId();
+        var requestId = services.Ids.GenId();
         var pending = link.CallAsync<Empty>(new Empty(), requestId, stop, timeout: TimeSpan.FromMilliseconds(25));
         await stream.Output.Reader.ReadAsync(stop);
         await ThrowsAsync<TimeoutException>(() => pending);
@@ -149,12 +149,12 @@ internal static class RpcChecks
         await retry;
     }
 
-    private static async Task CheckBlockedWriteTimeoutAsync(CancellationToken stop)
+    private async Task CheckBlockedWriteTimeoutAsync(CancellationToken stop)
     {
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stream = new FrameStream { BeforeWrite = release.Task };
         var link = CreateLink(stream);
-        var requestId = IdGenerator.GenId();
+        var requestId = services.Ids.GenId();
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var pending = link.CallAsync<Empty>(new Empty(), requestId, lifetime.Token, timeout: TimeSpan.FromMilliseconds(75));
         try
@@ -199,8 +199,8 @@ internal static class RpcChecks
         await retry;
     }
 
-    private static PeerLink CreateLink(FrameStream stream) =>
-        new(nameof(ProcessType.Login), ServerProcess.FormatName(nameof(ProcessType.Router), 1), IdGenerator.GenId(), stream);
+    private PeerLink CreateLink(FrameStream stream) =>
+        new(nameof(ProcessType.Login), ServerProcess.FormatName(nameof(ProcessType.Router), 1), services.Ids.GenId(), stream, services.Log);
 
     private static async Task ThrowsAsync<TException>(Func<Task> action) where TException : Exception
     {

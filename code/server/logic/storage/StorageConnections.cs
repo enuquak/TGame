@@ -8,9 +8,8 @@ internal static class StorageConnections
 {
     private const int ServerSelectionTimeoutSeconds = 5;
 
-    public static MongoClient Mongo(string endpoint)
+    public static MongoClient Mongo(string endpoint, ServerSettings settings)
     {
-        var settings = ServerSettings.Current.Value;
         var options = new MongoStorageSettings
         {
             Endpoint = endpoint,

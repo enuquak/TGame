@@ -13,53 +13,65 @@ internal static class IdGeneratorLifecycleChecks
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TestTimeoutSeconds));
         var stop = deadline.Token;
-        Expect<InvalidOperationException>(() => IdGenerator.GenId());
-        Expect<InvalidOperationException>(() => _ = IdGenerator.LeaseLost);
-
-        await ExpectAsync<IOException>(() => IdGenerator.InitializeAsync(
-            _ => Task.FromException<SnowflakeIdGenerator>(new IOException("Allocation failed.")), stop));
-        Expect<InvalidOperationException>(() => IdGenerator.GenId());
+        await using var failed = new IdGenerator(_ => Task.FromException<SnowflakeIdGenerator>(new IOException("Allocation failed.")));
+        Expect<InvalidOperationException>(() => failed.GenId());
+        Expect<InvalidOperationException>(() => _ = failed.LeaseLost);
+        await ExpectAsync<IOException>(() => failed.InitializeAsync(stop));
+        Expect<InvalidOperationException>(() => failed.GenId());
 
         using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var abandoned = new SnowflakeIdGenerator(WorkerId, TimeProvider.System);
-        await ExpectAsync<OperationCanceledException>(() => IdGenerator.InitializeAsync(_ =>
+        await using var interrupted = new IdGenerator(_ =>
         {
             cancelled.Cancel();
             return Task.FromResult(abandoned);
-        }, cancelled.Token));
+        });
+        await ExpectAsync<OperationCanceledException>(() => interrupted.InitializeAsync(cancelled.Token));
         Expect<ObjectDisposedException>(() => abandoned.GenId());
-        Expect<InvalidOperationException>(() => IdGenerator.GenId());
+        Expect<InvalidOperationException>(() => interrupted.GenId());
+
+        var invoked = false;
+        await using var preCancelled = new IdGenerator(_ =>
+        {
+            invoked = true;
+            return Task.FromResult(new SnowflakeIdGenerator(WorkerId, TimeProvider.System));
+        });
+        await ExpectAsync<OperationCanceledException>(() => preCancelled.InitializeAsync(cancelled.Token));
+        Check(!invoked, "Pre-cancellation allocated a generator.");
 
         var generator = new SnowflakeIdGenerator(WorkerId, TimeProvider.System);
-        await using (var lifetime = await IdGenerator.InitializeAsync(_ => Task.FromResult(generator), stop))
+        var ids = new IdGenerator(_ => Task.FromResult(generator));
+        await using (ids)
         {
-            await ExpectAsync<InvalidOperationException>(() => IdGenerator.InitializeAsync(_ => Task.FromResult(generator), stop));
-
+            await ids.InitializeAsync(stop);
+            await ExpectAsync<InvalidOperationException>(() => ids.InitializeAsync(stop));
             var generated = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
-            Parallel.For(0, ConcurrentIds, _ => Check(generated.TryAdd(IdGenerator.GenId(), 0), "Static entry produced duplicate IDs."));
+            Parallel.For(0, ConcurrentIds, _ => Check(generated.TryAdd(ids.GenId(), 0), "Shared generator produced duplicate IDs."));
         }
 
         Expect<ObjectDisposedException>(() => generator.GenId());
-        Expect<InvalidOperationException>(() => IdGenerator.GenId());
+        Expect<ObjectDisposedException>(() => ids.GenId());
+        await ids.DisposeAsync();
 
         var session = new ZooKeeperSession();
         session.StateChanged(Watcher.Event.KeeperState.SyncConnected);
         var next = new SnowflakeIdGenerator(WorkerId, TimeProvider.System, session: session);
-        await using (var nextLifetime = await IdGenerator.InitializeAsync(_ => Task.FromResult(next), stop))
-        {
-            Check(IdText.IsValid(IdGenerator.GenId()), "The next lifecycle did not initialize its generator.");
-            Check(ReferenceEquals(IdGenerator.LeaseLost, next.LeaseLost), "Singleton hid the active generator's lease supervision.");
-            session.StateChanged(Watcher.Event.KeeperState.Disconnected);
-            await IdGenerator.LeaseLost.WaitAsync(stop);
-            Expect<InvalidOperationException>(() => IdGenerator.GenId());
-            session.StateChanged(Watcher.Event.KeeperState.SyncConnected);
-            Expect<InvalidOperationException>(() => IdGenerator.GenId());
-        }
-
+        await using var nextIds = new IdGenerator(_ => Task.FromResult(next));
+        await nextIds.InitializeAsync(stop);
+        Check(IdText.IsValid(nextIds.GenId()), "The next instance did not initialize its generator.");
+        Check(ReferenceEquals(nextIds.LeaseLost, next.LeaseLost), "The service hid the active generator's lease supervision.");
+        await ids.DisposeAsync();
+        Check(IdText.IsValid(nextIds.GenId()), "Disposing another instance invalidated the active generator.");
+        session.StateChanged(Watcher.Event.KeeperState.Disconnected);
+        await nextIds.LeaseLost.WaitAsync(stop);
+        Expect<InvalidOperationException>(() => nextIds.GenId());
+        session.StateChanged(Watcher.Event.KeeperState.SyncConnected);
+        Expect<InvalidOperationException>(() => nextIds.GenId());
+        await nextIds.DisposeAsync();
         Expect<ObjectDisposedException>(() => next.GenId());
-        Expect<InvalidOperationException>(() => IdGenerator.GenId());
+        Expect<ObjectDisposedException>(() => nextIds.GenId());
 
-        Console.WriteLine("PASS process ID singleton: initialization failure, cancellation cleanup, sequential initialization, 5000 IDs, lease supervision and disposal.");
+        Console.WriteLine("PASS process ID instances: initialization failure, cancellation cleanup, isolation, 5000 IDs, lease supervision and disposal.");
     }
 
     private static void Check(bool condition, string message)

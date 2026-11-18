@@ -1,17 +1,20 @@
 using TGame.Profile;
+using TGame.Server;
 using TGame.Server.Engine;
 using TGame.Server.Logic;
 using Result = TGame.Profile.ProfileReply.Types.Result;
 
 internal static class ProfileStorageChecks
 {
-    public static async Task RunAsync(string idConfig, CancellationToken stop)
+    public static async Task RunAsync(string idConfig, GameLog log, CancellationToken stop)
     {
         var options = IdGeneratorOptions.Load(idConfig);
-        await using var zooKeeperLifetime = await ZooKeeperProxy.InitializeAsync(ZooKeeperProxyChecks.LoadOptions(), stop);
-        await using var idLifetime = await IdGenerator.InitializeAsync(options, stop);
-        using var store = await ProfileStore.OpenAsync(stop);
-        var subject = IdGenerator.GenId();
+        await using var zooKeeper = new ZooKeeperProxy(ZooKeeperProxyChecks.LoadOptions(), log);
+        await zooKeeper.InitializeAsync(stop);
+        await using var ids = new IdGenerator(options, zooKeeper);
+        await ids.InitializeAsync(stop);
+        using var store = await ProfileStore.OpenAsync(ServerSettings.LoadSelected(), ids, log, stop);
+        var subject = ids.GenId();
         try
         {
             await CheckAsync(new ProfileRequest { Fetch = subject }, Result.Missing);
@@ -34,7 +37,7 @@ internal static class ProfileStorageChecks
         {
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(12));
             var removed = await store.HandleAsync(
-                new ProfileRequest { RequestId = IdGenerator.GenId(), Withdraw = subject }, cleanup.Token);
+                new ProfileRequest { RequestId = ids.GenId(), Withdraw = subject }, cleanup.Token);
             if (removed.Result != Result.Removed)
             {
                 throw new Exception($"Could not clean up Profile test entity {subject}.");
@@ -43,7 +46,7 @@ internal static class ProfileStorageChecks
 
         async Task CheckAsync(ProfileRequest request, Result expected, string? title = null)
         {
-            request.RequestId = IdGenerator.GenId();
+            request.RequestId = ids.GenId();
             var reply = await store.HandleAsync(request, stop);
             if (reply.RequestId != request.RequestId ||
                 reply.EntityId != subject ||

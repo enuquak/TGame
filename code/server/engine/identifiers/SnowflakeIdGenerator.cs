@@ -30,11 +30,11 @@ internal sealed class SnowflakeIdGenerator : IAsyncDisposable
     public int WorkerId { get; }
     public Task LeaseLost { get; }
 
-    public static async Task<SnowflakeIdGenerator> CreateAsync(IdGeneratorOptions options, CancellationToken stop = default)
+    public static async Task<SnowflakeIdGenerator> CreateAsync(IdGeneratorOptions options, ZooKeeperProxy zooKeeper, CancellationToken stop = default)
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
-        var worker = await ZooKeeperProxy.AcquireWorkerAsync(options.WorkerRootPath, stop).ConfigureAwait(false);
+        var worker = await zooKeeper.AcquireWorkerAsync(options.WorkerRootPath, stop).ConfigureAwait(false);
         return new SnowflakeIdGenerator(worker);
     }
 

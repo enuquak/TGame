@@ -48,7 +48,7 @@ internal sealed class ServerSettings
         get; init;
     }
 
-    public static readonly Lazy<ServerSettings> Current = new(() =>
+    public static ServerSettings LoadSelected()
     {
         var path = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
         if (string.IsNullOrWhiteSpace(path))
@@ -57,7 +57,7 @@ internal sealed class ServerSettings
         }
 
         return Load(path);
-    });
+    }
 
     public void ValidateProfileStorage()
     {

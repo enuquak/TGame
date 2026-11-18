@@ -2,9 +2,9 @@ using Grpc.Core;
 using TGame;
 using TGame.Server.Engine;
 
-internal static class StartupReadinessChecks
+internal sealed class StartupReadinessChecks(TestServices services)
 {
-    internal static async Task RunAsync(CancellationToken stop)
+    internal async Task RunAsync(CancellationToken stop)
     {
         await CheckPublicationWaitAsync(stop);
         await CheckWithoutDependenciesAsync(stop);
@@ -12,10 +12,10 @@ internal static class StartupReadinessChecks
         Console.WriteLine("PASS current readiness wait, cancellation, recovery and delayed incoming handshake rejection.");
     }
 
-    private static async Task CheckPublicationWaitAsync(CancellationToken stop)
+    private async Task CheckPublicationWaitAsync(CancellationToken stop)
     {
-        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        var node = TestNodes.Create(nameof(ProcessType.Gate));
+        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var node = services.CreateNode(new ServerProcess(ProcessType.Gate, 1), configuration);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var loginStream = new FrameStream();
         var baseStream = new FrameStream();
@@ -55,20 +55,20 @@ internal static class StartupReadinessChecks
         }
     }
 
-    internal static async Task CheckWithoutDependenciesAsync(CancellationToken stop)
+    internal async Task CheckWithoutDependenciesAsync(CancellationToken stop)
     {
-        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        var node = TestNodes.Create(nameof(ProcessType.Router));
+        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var node = services.CreateNode(new ServerProcess(ProcessType.Router, 1), configuration);
         Check(node.Ready, "Router without outgoing dependencies must be ready without business initialization.");
         Check(node.FirstLinks.IsCompletedSuccessfully, "Router waited for incoming connections.");
         await node.WaitUntilReadyAsync(stop);
         Console.WriteLine("PASS Router readiness requires no business initialization.");
     }
 
-    private static async Task CheckDelayedHelloAsync(CancellationToken stop)
+    private async Task CheckDelayedHelloAsync(CancellationToken stop)
     {
-        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        var node = TestNodes.Create(nameof(ProcessType.Login));
+        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var node = services.CreateNode(new ServerProcess(ProcessType.Login, 1), configuration);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var routerStream = new FrameStream();
         var router = Open(node, ProcessType.Router, routerStream, lifetime.Token);
@@ -80,7 +80,7 @@ internal static class StartupReadinessChecks
 
             var peer = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);
             var stream = new FrameStream();
-            incoming = node.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, lifetime.Token, requireReady: true);
+            incoming = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, lifetime.Token, requireReady: true);
             routerStream.Input.Writer.Complete();
             await router.WaitAsync(stop);
             Check(!node.Ready, "Losing Router did not revoke Login readiness.");
@@ -105,11 +105,11 @@ internal static class StartupReadinessChecks
         }
     }
 
-    private static Task Open(ServerNode node, ProcessType type, FrameStream stream, CancellationToken stop)
+    private Task Open(ServerNode node, ProcessType type, FrameStream stream, CancellationToken stop)
     {
         var peer = ServerProcess.FormatName(type.ToString(), 1);
         stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-        return node.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, stop);
+        return node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, stop);
     }
 
     private static async Task StopAsync(params Task[] connections)

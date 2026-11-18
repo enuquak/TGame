@@ -67,7 +67,7 @@ dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- --
 
 测试无参数时也只运行 `--engine`，`--node` 是同义入口。动态连接、日志、配置、ID 和独立存储检查见[服务器启动与动态发现](docs/服务器组配置.md)、[代码 Review 路径](docs/代码Review路径.md)及[统一 ID 生成](docs/雪花ID.md)。外部服务联调或完整控制台验收须先说明范围与预计耗时，获得明确同意后执行。历史测试记录不代表当前版本已完成联调。
 
-宿主启动依次完成日志 → 配置 → ZooKeeper 会话与空地址临时占号 → ID → 监听及主动依赖连接 → 地址发布 → `PROCESS_READY`。每种主动目标类型至少有一条完成握手的连接时，`ServerNode.Ready` 为真；无主动依赖的 Router 可直接就绪，不等入站。`FirstLinks` 只记录首次连接齐备，当前就绪随依赖断线与重连变化。连接握手只交换进程身份。
+宿主启动依次完成日志 → 配置 → 构建 IoC 根容器 → ZooKeeper 会话与空地址临时占号 → ID → 监听及主动依赖连接 → 地址发布 → `PROCESS_READY`。每种主动目标类型至少有一条完成握手的连接时，`ServerNode.Ready` 为真；无主动依赖的 Router 可直接就绪，不等入站。`FirstLinks` 只记录首次连接齐备，当前就绪随依赖断线与重连变化。连接握手只交换进程身份。
 
 服务端入口 [Program.cs](code/server/app/Program.cs) 接受 `<进程类型> <运行目录>`，例如 `Scene <运行目录>`；类型启动后通过 ZooKeeper 自动抢占从 1 开始的空闲实例编号，统一生成为 `Scene1`、`Scene2` 等名称。空地址节点不参与服务发现，但可证明尚未发布地址的主动连接方持有合法身份。强制终止后，旧节点在会话过期时删除；期间新进程可抢占其他空闲编号。
 
@@ -82,11 +82,11 @@ dotnet build/bin/TGame.Server/debug/TGame.Server.dll Router $runDirectory
 
 服务进程直接写入 `logs/server/<实例名称>Server/`，例如 `logs/server/Base1Server/`。每行是一条 JSON 事件，可按 PID、角色、实例、时间和请求 ID 查询。同一实例使用 `<PID>-<进程启动UTC ticks>-yyyyMMddHH.log`，按小时滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。`TGAME_SERVER_LOG_ROOT` 可指定服务日志根目录。控制台依据 `PROCESS_READY`、`LINKS_READY` 和 `LINKS_LOST` 更新就绪状态；前两项为 INFO 日志，最低级别设为 `ERROR` 时无法准确显示就绪。
 
-独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现、基础 RPC、日志与 ID；可以单独构建，不引用宿主或业务 Shared。宿主 [TGame.Server.csproj](code/server/app/TGame.Server.csproj) 显式引用 Engine 与 Shared，创建 `ServerNode` 并管理生命周期。
+独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现、基础 RPC、日志与 ID；可以单独构建，不引用宿主或业务 Shared。宿主 [TGame.Server.csproj](code/server/app/TGame.Server.csproj) 显式引用 Engine 与 Shared，使用 .NET 内置 IoC 容器组装进程服务；ZK、ID 和节点使用共享实例，使用方通过构造函数接收依赖。配置显式加载并注入；日志在配置加载前创建，注册到容器共享，由宿主最后释放以记录启动与清理失败。
 
 基础 RPC 通过 `ServerNode.CallPeerAsync<TReply>` 直接向已连接的进程实例发送请求，支持请求关联、错误、超时、取消和断线。当前没有业务处理入口，收到请求返回 `Unimplemented`；Router 不转发请求到第三个进程。连接服务和信封定义见 [transport.proto](code/server/engine/protocols/transport.proto)，通过 `Any` 承载负载；旧实体和转发字段已保留字段号与名称。引擎协议生成到 `code/server/engine/generated/protocols/`，业务 [profile.proto](code/shared/protocols/profile.proto) 生成到 `code/shared/generated/protocols/`；控制台导出命令同时处理两者。
 
-唯一 ID 通过 `IdGenerator.GenId()` 生成，宿主初始化进程内唯一实例并通过 ZooKeeper 申请雪花 worker 编号；worker 编号与进程实例编号独立。基础框架用于请求和连接 ID，保留的存储工具用于缓存占用标记，详见[统一 ID 生成](docs/雪花ID.md)。各进程需统一重新构建并重启，不能混用旧实体协议与当前基础协议。
+唯一 ID 通过注入的 `IdGenerator` 实例调用 `ids.GenId()` 生成，宿主显式初始化容器中的共享实例，通过同一 ZooKeeper 代理申请雪花 worker 编号；worker 编号与进程实例编号独立。基础框架用于请求和连接 ID，保留的存储工具用于缓存占用标记，详见[统一 ID 生成](docs/雪花ID.md)。各进程需统一重新构建并重启，不能混用旧实体协议与当前基础协议。
 
 ### 独立存储工具
 

@@ -3,7 +3,7 @@ namespace TGame.Server.Engine;
 public partial class ServerNode
 {
     public Task MaintainConnectionsAsync(CancellationToken stop) =>
-        MaintainConnectionsAsync(ZooKeeperProxy.WatchProcessesAsync(stop), stop);
+        MaintainConnectionsAsync(zooKeeper.WatchProcessesAsync(stop), stop);
 
     internal async Task MaintainConnectionsAsync(IAsyncEnumerable<IReadOnlyList<DiscoveredProcess>> snapshots,
         CancellationToken stop)
@@ -28,7 +28,7 @@ public partial class ServerNode
                     throw new IOException("Process discovery ended unexpectedly.");
                 }
 
-                var targets = discovery.Current.Where(peer => Topology.Dials(type, peer.Process.Type))
+                var targets = discovery.Current.Where(peer => configuration.Dials(type, peer.Process.Type))
                     .ToDictionary(peer => peer.Process.Name, StringComparer.Ordinal);
                 foreach (var (name, worker) in workers.ToArray())
                 {
@@ -55,7 +55,7 @@ public partial class ServerNode
                     workers.Add(name, new ConnectionWorker(peer, cancellation, task));
                 }
 
-                GameLog.Debug(ServerLogEvents.ZkDiscover, Role, detail: string.Join(",", targets.Keys));
+                log.Debug(ServerLogEvents.ZkDiscover, Role, detail: string.Join(",", targets.Keys));
             }
         }
         finally

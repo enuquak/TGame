@@ -12,7 +12,7 @@
 
 进程类型等业务标识必须引用已有常量或枚举，禁止在使用处硬编码；可变参数统一从配置读取。
 
-进程级服务单例统一通过“类型名 + 静态方法或属性”调用，例如 `ZooKeeperProxy.RegisterProcessAsync(...)`、`IdGenerator.GenId()`；唯一实例封装在类型内部，遵循[单例调用](agents/项目协作规范.md#单例调用)约定。
+进程级服务由 App 的单个 IoC 根容器组装，通过构造函数接收依赖并调用实例方法，例如 `zooKeeper.RegisterProcessAsync(...)`、`ids.GenId()`；不保留静态服务入口或全局服务定位器，遵循[单例调用](agents/项目协作规范.md#单例调用)约定。日志在配置加载前创建并注册为共享实例，由 App 最后释放。
 
 进程拓扑、连接管理、服务发现、基础通信、日志和 ID 放在 `server/engine/`；独立存储与业务逻辑放在 `server/logic/`。当前服务器只运行进程基础框架，不创建实体、不注册实体归属、不执行实体路由，也不在启动时初始化 DBMgr/Profile 业务。`shared/` 仅承载业务共享协议、类型与数据；引擎协议和基础类型归属 Engine，引擎不得引用业务 Shared、宿主或业务实现。`app` 显式引用 Engine 与 Shared，负责启动与组装。
 

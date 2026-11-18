@@ -18,28 +18,55 @@ internal static class ZooKeeperProxyChecks
 
     internal static ZooKeeperOptions LoadOptions()
     {
-        var settings = ServerSettings.Current.Value;
+        var settings = ServerSettings.LoadSelected();
         var path = Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName);
         return ZooKeeperOptions.Load(path, settings.ZooKeeper, settings.DiscoveryRoot);
     }
 
-    internal static async Task CheckSessionAsync()
+    internal static async Task CheckSessionAsync(GameLog log)
     {
-        Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.SessionLost);
-        var options = new ZooKeeperOptions
+        var options = TestServices.LocalZooKeeperOptions() with { Endpoint = "127.0.0.1:invalid-port" };
+        await using var proxy = new ZooKeeperProxy(options, log);
+        Expect<InvalidOperationException>(() => _ = proxy.Process);
+        Expect<InvalidOperationException>(() => _ = proxy.SessionLost);
+        await ExpectAsync<InvalidOperationException>(() => proxy.IsProcessClaimedAsync("Router1", CancellationToken.None));
+        await using var earlyClaim = new ZooKeeperProxy(options, log);
+        await ExpectAsync<InvalidOperationException>(() => earlyClaim.ClaimProcessAsync(ProcessType.Router, CancellationToken.None));
+        // 过早认领应只拒绝调用；之后初始化仍应进入地址解析，而非实例已被释放。
+        await ExpectAsync<FormatException>(() => earlyClaim.InitializeAsync());
+
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var writeZkLog = ZooKeeper.LogToFile;
+        ZooKeeper.LogToFile = false;
+        using var pendingStop = new CancellationTokenSource();
+        await using var pending = new ZooKeeperProxy(options with { Endpoint = listener.LocalEndpoint.ToString()! }, log);
+        var initializing = pending.InitializeAsync(pendingStop.Token);
+        try
         {
-            Endpoint = "127.0.0.1:2181",
-            DiscoveryRoot = "/checks",
-            SessionTimeoutMilliseconds = TimeoutSeconds * 1000,
-            ConnectTimeoutMilliseconds = TimeoutSeconds * 1000
-        };
+            // 本地端口只接收连接，不完成 ZK 握手；初始化期间不能公开会话。
+            Expect<InvalidOperationException>(() => _ = pending.SessionLost);
+        }
+        finally
+        {
+            pendingStop.Cancel();
+            try
+            {
+                await ExpectAsync<OperationCanceledException>(() => initializing);
+            }
+            finally
+            {
+                listener.Stop();
+                ZooKeeper.LogToFile = writeZkLog;
+            }
+        }
 
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
-        await ExpectAsync<OperationCanceledException>(() => ZooKeeperProxy.InitializeAsync(options, cancelled.Token));
-        await ExpectAsync<ArgumentException>(() => ZooKeeperProxy.InitializeAsync(options with { DiscoveryRoot = "/bad//root" }));
-        await ExpectAsync<ArgumentOutOfRangeException>(() => ZooKeeperProxy.InitializeAsync(options with { SessionTimeoutMilliseconds = 0 }));
-        Expect<InvalidOperationException>(() => _ = ZooKeeperProxy.SessionLost);
+        await ExpectAsync<OperationCanceledException>(() => proxy.InitializeAsync(cancelled.Token));
+        Expect<ArgumentException>(() => new ZooKeeperProxy(options with { DiscoveryRoot = "/bad//root" }, log));
+        Expect<ArgumentOutOfRangeException>(() => new ZooKeeperProxy(options with { SessionTimeoutMilliseconds = 0 }, log));
+        Expect<InvalidOperationException>(() => _ = proxy.Process);
 
         var initial = new ZooKeeperSession();
         initial.StateChanged(Watcher.Event.KeeperState.Disconnected);
@@ -69,14 +96,15 @@ internal static class ZooKeeperProxyChecks
         Console.WriteLine("PASS ZooKeeper initialization guards and terminal session loss after disconnect, expiry, auth failure and disposal.");
     }
 
-    public static async Task RunAsync()
+    public static async Task RunAsync(GameLog log)
     {
         var configured = LoadOptions();
         var options = configured with { DiscoveryRoot = configured.DiscoveryRoot + "/dynamic-check-" + Guid.NewGuid().ToString("N") };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(TimeoutSeconds));
         var stop = deadline.Token;
         var owner = new ZooKeeper(options.Endpoint, options.SessionTimeoutMilliseconds, new WatcherStub());
-        await using var proxy = await ZooKeeperProxy.InitializeAsync(options, stop);
+        await using var proxy = new ZooKeeperProxy(options, log);
+        await proxy.InitializeAsync(stop);
         var path = options.DiscoveryRoot + "/server-Router1";
         var scenePath = options.DiscoveryRoot + "/server-Scene1";
         try
@@ -95,18 +123,18 @@ internal static class ZooKeeperProxyChecks
             }
 
             await owner.createAsync(path, Encoding.UTF8.GetBytes(Address), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL).WaitAsync(stop);
-            var process = await ZooKeeperProxy.ClaimProcessAsync(ProcessType.Router, stop);
+            var process = await proxy.ClaimProcessAsync(ProcessType.Router, stop);
             Check(process.Name == "Router2", "An occupied number must be skipped without overwriting its owner.");
             var original = await owner.getDataAsync(path).WaitAsync(stop);
             Check(Encoding.UTF8.GetString(original.Data) == Address, "Claim changed another process's address.");
-            await ExpectAsync<InvalidOperationException>(() => ZooKeeperProxy.ClaimProcessAsync(ProcessType.Router, stop));
-            await ExpectAsync<InvalidOperationException>(() => ZooKeeperProxy.RegisterProcessAsync(Process, Address, stop));
+            await ExpectAsync<InvalidOperationException>(() => proxy.ClaimProcessAsync(ProcessType.Router, stop));
+            await ExpectAsync<InvalidOperationException>(() => proxy.RegisterProcessAsync(Process, Address, stop));
 
-            await using (var discovery = ZooKeeperProxy.WatchProcessesAsync(stop).GetAsyncEnumerator(stop))
+            await using (var discovery = proxy.WatchProcessesAsync(stop).GetAsyncEnumerator(stop))
             {
                 Check(await discovery.MoveNextAsync(), "Discovery did not produce its initial snapshot.");
                 Check(discovery.Current.Count == 1, "A reserved identity without an endpoint must not be dialed.");
-                await ZooKeeperProxy.RegisterProcessAsync(process, ReplacementAddress, stop);
+                await proxy.RegisterProcessAsync(process, ReplacementAddress, stop);
                 await Until(items => items.Any(peer => peer.Process.Name == "Router2"));
                 await owner.createAsync(options.DiscoveryRoot + "/server-Unknown1", [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL).WaitAsync(stop);
                 await Until(items => items.Count == 2);
@@ -131,15 +159,16 @@ internal static class ZooKeeperProxyChecks
                 }
             }
 
-            var lost = ZooKeeperProxy.SessionLost;
+            var lost = proxy.SessionLost;
             await proxy.DisposeAsync();
             Check(lost.IsCompletedSuccessfully, "Disposal must invalidate the session.");
             await owner.deleteAsync(path).WaitAsync(stop);
-            await using var next = await ZooKeeperProxy.InitializeAsync(options, stop);
-            var reclaimed = await ZooKeeperProxy.ClaimProcessAsync(ProcessType.Router, stop);
+            await using var next = new ZooKeeperProxy(options, log);
+            await next.InitializeAsync(stop);
+            var reclaimed = await next.ClaimProcessAsync(ProcessType.Router, stop);
             Check(reclaimed.Name == "Router1", "A released number should be reusable.");
-            await ZooKeeperProxy.RegisterProcessAsync(reclaimed, Address, stop);
-            Check(await ZooKeeperProxy.IsProcessClaimedAsync(reclaimed.Name, stop), "Published identity is not discoverable.");
+            await next.RegisterProcessAsync(reclaimed, Address, stop);
+            Check(await next.IsProcessClaimedAsync(reclaimed.Name, stop), "Published identity is not discoverable.");
             Console.WriteLine("PASS ZK number contention, ownership, publication watches, dynamic joins/leaves, same-name replacement and reuse.");
         }
         finally

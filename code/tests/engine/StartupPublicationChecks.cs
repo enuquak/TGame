@@ -11,42 +11,43 @@ using TGame;
 using TGame.Server.Engine;
 using TGame.Transport;
 
-internal static class StartupPublicationChecks
+internal sealed class StartupPublicationChecks(TestServices services)
 {
-    public static async Task RunAsync(CancellationToken stop)
+    public async Task RunAsync(CancellationToken stop)
     {
-        await StartupReadinessChecks.RunAsync(stop);
+        await new StartupReadinessChecks(services).RunAsync(stop);
         var configured = ZooKeeperProxyChecks.LoadOptions();
         var options = configured with { DiscoveryRoot = configured.DiscoveryRoot + "/startup-check-" + Guid.NewGuid().ToString("N") };
-        await using var proxy = await ZooKeeperProxy.InitializeAsync(options, stop);
+        await using var proxy = new ZooKeeperProxy(options, services.Log);
+        await proxy.InitializeAsync(stop);
         var owner = new ZooKeeper(options.Endpoint, options.SessionTimeoutMilliseconds, new WatcherStub());
         var scene = new ServerProcess(ProcessType.Scene, 1);
         var absent = new ServerProcess(ProcessType.Scene, 2);
         var persistent = new ServerProcess(ProcessType.Scene, 3);
         try
         {
-            var process = await ZooKeeperProxy.ClaimProcessAsync(ProcessType.Router, stop);
-            Check(await ZooKeeperProxy.IsProcessClaimedAsync(process.Name, stop),
+            var process = await proxy.ClaimProcessAsync(ProcessType.Router, stop);
+            Check(await proxy.IsProcessClaimedAsync(process.Name, stop),
                 "A reserved ephemeral identity must be valid before its address is published.");
-            Check(!await ZooKeeperProxy.IsProcessClaimedAsync(absent.Name, stop), "An absent identity was accepted.");
-            Check(!await ZooKeeperProxy.IsProcessClaimedAsync(nameof(ProcessType.Scene), stop), "A type without an instance number was accepted.");
+            Check(!await proxy.IsProcessClaimedAsync(absent.Name, stop), "An absent identity was accepted.");
+            Check(!await proxy.IsProcessClaimedAsync(nameof(ProcessType.Scene), stop), "A type without an instance number was accepted.");
             await owner.createAsync(PathFor(persistent), [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT).WaitAsync(stop);
-            Check(!await ZooKeeperProxy.IsProcessClaimedAsync(persistent.Name, stop), "A persistent node was accepted as a live process identity.");
+            Check(!await proxy.IsProcessClaimedAsync(persistent.Name, stop), "A persistent node was accepted as a live process identity.");
 
-            using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-            var node = new ServerNode(process.Name);
-            await using var app = await StartAsync(node, stop);
+            var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+            var node = new ServerNode(process, configuration, proxy, services.Ids, services.Log);
+            await using var app = await StartAsync(node, proxy, stop);
             using var channel = GrpcChannel.ForAddress(app.Urls.Single());
             var client = new ServerLink.ServerLinkClient(channel);
 
             await owner.createAsync(PathFor(scene), [],
                 ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL).WaitAsync(stop);
-            await using var discovery = ZooKeeperProxy.WatchProcessesAsync(stop).GetAsyncEnumerator(stop);
+            await using var discovery = proxy.WatchProcessesAsync(stop).GetAsyncEnumerator(stop);
             Check(await discovery.MoveNextAsync() && discovery.Current.Count == 0,
                 "An initializing process was discoverable before publishing its address.");
 
             Check(node.Ready, "Router was not ready after its initialization completed.");
-            await ZooKeeperProxy.RegisterProcessAsync(process, app.Urls.Single(), stop);
+            await proxy.RegisterProcessAsync(process, app.Urls.Single(), stop);
             do
             {
                 Check(await discovery.MoveNextAsync(), "Discovery ended before address publication.");
@@ -89,7 +90,7 @@ internal static class StartupPublicationChecks
         string PathFor(ServerProcess process) => options.DiscoveryRoot + "/server-" + process.Name;
     }
 
-    private static async Task<WebApplication> StartAsync(ServerNode node, CancellationToken stop)
+    private static async Task<WebApplication> StartAsync(ServerNode node, ZooKeeperProxy proxy, CancellationToken stop)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
@@ -97,13 +98,14 @@ internal static class StartupPublicationChecks
             listen => listen.Protocols = HttpProtocols.Http2));
         builder.Services.AddGrpc();
         builder.Services.AddSingleton(node);
+        builder.Services.AddSingleton(proxy);
         var app = builder.Build();
         app.MapGrpcService<LinkService>();
         await app.StartAsync(stop);
         return app;
     }
 
-    private static async Task ExpectUnavailableAsync(ServerLink.ServerLinkClient client, string peer, CancellationToken stop)
+    private async Task ExpectUnavailableAsync(ServerLink.ServerLinkClient client, string peer, CancellationToken stop)
     {
         using var connection = client.Connect(Headers(peer), cancellationToken: stop);
         try
@@ -117,10 +119,10 @@ internal static class StartupPublicationChecks
         }
     }
 
-    private static Metadata Headers(string peer) => new()
+    private Metadata Headers(string peer) => new()
     {
         { TransportProtocol.PeerHeader, peer },
-        { TransportProtocol.LinkHeader, IdGenerator.GenId() }
+        { TransportProtocol.LinkHeader, services.Ids.GenId() }
     };
 
     private static void Check(bool condition, string message)

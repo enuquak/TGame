@@ -61,11 +61,11 @@ internal static class IdGeneratorChecks
         Console.WriteLine("PASS Snowflake layout, sequence exhaustion, rollback, 50000 concurrent IDs, session loss, disposal and ID validation.");
     }
 
-    internal static async Task RunZooKeeperAsync(string configPath)
+    internal static async Task RunZooKeeperAsync(string configPath, TestServices services)
     {
         var configured = IdGeneratorOptions.Load(configPath);
         var zooKeeperOptions = ZooKeeperProxyChecks.LoadOptions();
-        var root = configured.WorkerRootPath + "-checks/" + IdGenerator.GenId();
+        var root = configured.WorkerRootPath + "-checks/" + services.Ids.GenId();
         var options = new IdGeneratorOptions
         {
             WorkerRootPath = root
@@ -75,12 +75,13 @@ internal static class IdGeneratorChecks
         var session = new ZooKeeperSession();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var stop = timeout.Token;
-        await using var proxy = await ZooKeeperProxy.InitializeAsync(zooKeeperOptions, stop);
+        await using var proxy = new ZooKeeperProxy(zooKeeperOptions, services.Log);
+        await proxy.InitializeAsync(stop);
         var zk = new ZooKeeper(zooKeeperOptions.Endpoint, zooKeeperOptions.SessionTimeoutMilliseconds, session);
         try
         {
             await session.Connected.Task.WaitAsync(stop);
-            var tasks = Enumerable.Range(0, 4).Select(_ => SnowflakeIdGenerator.CreateAsync(options, stop)).ToArray();
+            var tasks = Enumerable.Range(0, 4).Select(_ => SnowflakeIdGenerator.CreateAsync(options, proxy, stop)).ToArray();
             try
             {
                 await Task.WhenAll(tasks);
@@ -97,17 +98,17 @@ internal static class IdGeneratorChecks
             }
 
             Check(generators.Select(g => g.WorkerId).Distinct().Count() == generators.Count, "ZooKeeper assigned duplicate workers");
-            Check(generators.All(g => ReferenceEquals(g.LeaseLost, ZooKeeperProxy.SessionLost)), "Workers must share the proxy session");
+            Check(generators.All(g => ReferenceEquals(g.LeaseLost, proxy.SessionLost)), "Workers must share the proxy session");
             var ids = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
             Parallel.For(0, 20000, i => Check(ids.TryAdd(generators[i % generators.Count].GenId(), 0), "cross-worker duplicate"));
 
             var first = generators.Single(g => g.WorkerId == 0);
             await first.DisposeAsync();
-            var replacement = await SnowflakeIdGenerator.CreateAsync(options, stop);
+            var replacement = await SnowflakeIdGenerator.CreateAsync(options, proxy, stop);
             generators.Add(replacement);
             Check(replacement.WorkerId == first.WorkerId, "released worker was not reused");
             Check(ids.TryAdd(replacement.GenId(), 0), "reused worker duplicated an earlier ID");
-            Check(!ZooKeeperProxy.SessionLost.IsCompleted, "Releasing a worker must preserve the shared session");
+            Check(!proxy.SessionLost.IsCompleted, "Releasing a worker must preserve the shared session");
             await proxy.DisposeAsync();
             Check(replacement.LeaseLost.IsCompletedSuccessfully, "Proxy disposal must invalidate the worker lease");
             Expect<InvalidOperationException>(() => replacement.GenId());

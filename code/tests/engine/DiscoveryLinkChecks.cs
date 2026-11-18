@@ -11,19 +11,19 @@ using TGame;
 using TGame.Server.Engine;
 using TGame.Transport;
 
-internal static class DiscoveryLinkChecks
+internal sealed class DiscoveryLinkChecks(TestServices services)
 {
-    public static async Task RunAsync(CancellationToken stop)
+    public async Task RunAsync(CancellationToken stop)
     {
-        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        var first = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 1));
-        var second = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 2));
+        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var first = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 1), services.Ids);
+        var second = new DiscoveryPeer(ServerProcess.FormatName(nameof(ProcessType.Router), 2), services.Ids);
         await using var firstApp = await StartAsync(first, stop);
         await using var secondApp = await StartAsync(second, stop);
         var router1 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 1), firstApp.Urls.Single(), 1);
         var router2 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 2), secondApp.Urls.Single(), 2);
         var changes = Channel.CreateUnbounded<IReadOnlyList<DiscoveredProcess>>();
-        var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Scene), 1));
+        var node = services.CreateNode(new ServerProcess(ProcessType.Scene, 1), configuration);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var maintenance = node.MaintainConnectionsAsync(changes.Reader.ReadAllAsync(lifetime.Token), lifetime.Token);
         try
@@ -113,7 +113,7 @@ internal static class DiscoveryLinkChecks
     }
 }
 
-internal sealed class DiscoveryPeer(string name) : ServerLink.ServerLinkBase
+internal sealed class DiscoveryPeer(string name, IdGenerator ids) : ServerLink.ServerLinkBase
 {
     internal sealed class Connection
     {
@@ -134,7 +134,7 @@ internal sealed class DiscoveryPeer(string name) : ServerLink.ServerLinkBase
             }
 
             await output.WriteAsync(new Frame { Hello = name }, context.CancellationToken);
-            var requestId = IdGenerator.GenId();
+            var requestId = ids.GenId();
             await output.WriteAsync(RpcFrames.Request(new Empty(), requestId), context.CancellationToken);
             Connections.Writer.TryWrite(connection);
             await foreach (var frame in input.ReadAllAsync(context.CancellationToken))

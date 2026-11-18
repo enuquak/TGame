@@ -6,7 +6,7 @@ internal static class SettingsChecks
 {
     public static void Run()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"tgame-settings-{IdGenerator.GenId()}.yaml");
+        var path = Path.Combine(Path.GetTempPath(), $"tgame-settings-{Guid.NewGuid().ToString("N")}.yaml");
         try
         {
             const string yaml = """

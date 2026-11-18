@@ -3,7 +3,7 @@ using TGame.Transport;
 
 namespace TGame.Server.Engine;
 
-public sealed class LinkService(ServerNode node) : ServerLink.ServerLinkBase
+public sealed class LinkService(ServerNode node, ZooKeeperProxy zooKeeper) : ServerLink.ServerLinkBase
 {
     public override async Task Connect(IAsyncStreamReader<Frame> input, IServerStreamWriter<Frame> output, ServerCallContext context)
     {
@@ -14,7 +14,7 @@ public sealed class LinkService(ServerNode node) : ServerLink.ServerLinkBase
             throw new RpcException(new Status(StatusCode.InvalidArgument, "Unexpected link."));
         }
 
-        if (!await ZooKeeperProxy.IsProcessClaimedAsync(peer, context.CancellationToken))
+        if (!await zooKeeper.IsProcessClaimedAsync(peer, context.CancellationToken))
         {
             throw new RpcException(new Status(StatusCode.Unavailable, "Peer identity is not claimed."));
         }

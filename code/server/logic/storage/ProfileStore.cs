@@ -13,7 +13,9 @@ namespace TGame.Server.Logic;
 internal sealed class ProfileStore : IDisposable
 {
     private const string CollectionName = "entity_profiles";
-    private readonly string cacheKeyPrefix = ServerSettings.Current.Value.ProfileCachePrefix;
+    private readonly string cacheKeyPrefix;
+    private readonly GameLog log;
+    private readonly IdGenerator ids;
     private const string EntityIdField = "_id";
     private const string DisplayNameField = "display_name";
     private const string TitleField = "title";
@@ -28,17 +30,19 @@ internal sealed class ProfileStore : IDisposable
     private readonly ConnectionMultiplexer redis;
     private readonly IMongoCollection<BsonDocument> summaries;
 
-    private ProfileStore(MongoClient mongo, ConnectionMultiplexer redis)
+    private ProfileStore(MongoClient mongo, ConnectionMultiplexer redis, ServerSettings settings, IdGenerator ids, GameLog log)
     {
+        this.log = log;
+        this.ids = ids;
+        cacheKeyPrefix = settings.ProfileCachePrefix;
         this.mongo = mongo;
         this.redis = redis;
-        summaries = mongo.GetDatabase(ServerSettings.Current.Value.MongoDatabase).GetCollection<BsonDocument>(CollectionName);
+        summaries = mongo.GetDatabase(settings.MongoDatabase).GetCollection<BsonDocument>(CollectionName);
         cache = redis.GetDatabase();
     }
 
-    public static async Task<ProfileStore> OpenAsync(CancellationToken stop)
+    public static async Task<ProfileStore> OpenAsync(ServerSettings settings, IdGenerator ids, GameLog log, CancellationToken stop)
     {
-        var settings = ServerSettings.Current.Value;
         settings.ValidateProfileStorage();
         var options = new ConfigurationOptions
         {
@@ -51,19 +55,19 @@ internal sealed class ProfileStore : IDisposable
             ConnectRetry = RedisConnectRetryCount
         };
 
-        GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "Profile 存储配置加载完成");
+        log.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "Profile 存储配置加载完成");
 
-        var mongo = StorageConnections.Mongo(settings.ProfileMongo);
+        var mongo = StorageConnections.Mongo(settings.ProfileMongo, settings);
         try
         {
-            GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "MongoDB 客户端创建完成");
+            log.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "MongoDB 客户端创建完成");
 
-            await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(ServerSettings.Current.Value.MongoDatabase), stop);
-            GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "MongoDB 连接检查完成");
+            await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(settings.MongoDatabase), stop);
+            log.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "MongoDB 连接检查完成");
 
             var redis = await ConnectionMultiplexer.ConnectAsync(options);
-            GameLog.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "Redis 客户端初始化完成");
-            return new ProfileStore(mongo, redis);
+            log.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "Redis 客户端初始化完成");
+            return new ProfileStore(mongo, redis, settings, ids, log);
         }
         catch
         {
@@ -92,7 +96,7 @@ internal sealed class ProfileStore : IDisposable
             // Reserve a cache miss before reading Mongo. A concurrent writer removes this
             // token, so the older reader cannot repopulate a key after invalidation.
             bool reserved = false;
-            RedisValue token = CacheReservationMarker + IdGenerator.GenId();
+            RedisValue token = CacheReservationMarker + ids.GenId();
 
             try
             {
@@ -107,7 +111,7 @@ internal sealed class ProfileStore : IDisposable
 
                     reply.Summary = value;
                     reply.Result = Result.Found;
-                    GameLog.Debug(ProfileLogEvents.CacheHit, nameof(ProcessType.Profile), id: request.RequestId, entity: id);
+                    log.Debug(ProfileLogEvents.CacheHit, nameof(ProcessType.Profile), id: request.RequestId, entity: id);
                     return reply;
                 }
 
@@ -118,7 +122,7 @@ internal sealed class ProfileStore : IDisposable
             }
             catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
             {
-                GameLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                log.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
                     id: request.RequestId, entity: id, detail: ex.GetType().Name);
             }
 
@@ -144,12 +148,12 @@ internal sealed class ProfileStore : IDisposable
                 }
                 catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
                 {
-                    GameLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+                    log.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
                         id: request.RequestId, entity: id, detail: ex.GetType().Name);
                 }
             }
 
-            GameLog.Debug(doc is null ? ProfileLogEvents.Missing : ProfileLogEvents.MongoRead,
+            log.Debug(doc is null ? ProfileLogEvents.Missing : ProfileLogEvents.MongoRead,
                 nameof(ProcessType.Profile), id: request.RequestId, entity: id);
             return reply;
         }
@@ -176,11 +180,11 @@ internal sealed class ProfileStore : IDisposable
         }
         catch (Exception ex) when (ex is RedisException or RedisTimeoutException)
         {
-            GameLog.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
+            log.Error(ProfileLogEvents.CacheUnavailable, nameof(ProcessType.Profile),
                 id: request.RequestId, entity: id, detail: ex.GetType().Name);
         }
 
-        GameLog.Info(reply.Result == Result.Stored ? ProfileLogEvents.Stored : ProfileLogEvents.Removed,
+        log.Info(reply.Result == Result.Stored ? ProfileLogEvents.Stored : ProfileLogEvents.Removed,
             nameof(ProcessType.Profile), id: request.RequestId, entity: id);
         return reply;
     }

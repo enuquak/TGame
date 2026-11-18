@@ -21,13 +21,22 @@ public partial class ServerNode
     private TaskCompletionSource readinessChanges = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
 
-    public ServerNode(string name)
+    private readonly GameLog log;
+    private readonly IdGenerator ids;
+    private readonly ZooKeeperProxy zooKeeper;
+    private readonly ServerConfiguration configuration;
+
+    public ServerNode(ServerProcess process, ServerConfiguration configuration, ZooKeeperProxy zooKeeper,
+        IdGenerator ids, GameLog log)
     {
-        Name = name;
-        var process = ServerProcess.Parse(name);
+        this.log = log;
+        this.ids = ids;
+        this.zooKeeper = zooKeeper;
+        this.configuration = configuration;
+        Name = process.Name;
         type = process.Type;
         Role = process.Role;
-        requiredTypes = Topology.DialTargets(type);
+        requiredTypes = configuration.GetDialTargets(type);
         UpdateLinkReadiness();
     }
 
@@ -72,7 +81,7 @@ public partial class ServerNode
             throw new RpcException(new Status(StatusCode.Unavailable, $"No connection to {peer}."));
         }
 
-        return link.CallAsync<TReply>(request, IdGenerator.GenId(), stop);
+        return link.CallAsync<TReply>(request, ids.GenId(), stop);
     }
 
     private Frame CreateHello() => new() { Hello = Name };
@@ -100,7 +109,7 @@ public partial class ServerNode
 
     public bool AcceptsIncoming(string peer)
     {
-        return ServerProcess.TryParse(peer, out var process) && Topology.Dials(process.Type, type);
+        return ServerProcess.TryParse(peer, out var process) && configuration.Dials(process.Type, type);
     }
 
     private async Task MaintainLinkAsync(DiscoveredProcess peer, CancellationToken stop)
@@ -128,7 +137,7 @@ public partial class ServerNode
     private async Task ConnectAsync(string peer, string address, CancellationToken stop)
     {
         using var channel = GrpcChannel.ForAddress(address);
-        var id = IdGenerator.GenId();
+        var id = ids.GenId();
         var headers = new Metadata { { TransportProtocol.PeerHeader, Name }, { TransportProtocol.LinkHeader, id } };
 
         using var call = new ServerLink.ServerLinkClient(channel).Connect(headers, cancellationToken: stop);
@@ -139,12 +148,12 @@ public partial class ServerNode
     public async Task RunLinkAsync(string peer, string id, IAsyncStreamReader<Frame> input,
         IAsyncStreamWriter<Frame> output, CancellationToken stop, bool requireReady = false)
     {
-        if (!ServerProcess.TryParse(peer, out var peerProcess) || !Topology.ArePeers(type, peerProcess.Type))
+        if (!ServerProcess.TryParse(peer, out var peerProcess) || !configuration.ArePeers(type, peerProcess.Type))
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"Unexpected peer instance {peer}."));
         }
 
-        var link = new PeerLink(Role, peer, id, output);
+        var link = new PeerLink(Role, peer, id, output, log);
         if (!await input.MoveNext(stop) || input.Current.Hello != peer)
         {
             throw new IOException($"Link to {peer} closed before handshake.");
@@ -173,7 +182,7 @@ public partial class ServerNode
             lock (linkChanges)
             {
                 links[peer] = link;
-                GameLog.Info(ServerLogEvents.LinkUp, Role, peer, link: id);
+                log.Info(ServerLogEvents.LinkUp, Role, peer, link: id);
                 UpdateLinkReadiness();
             }
 
@@ -264,10 +273,10 @@ public partial class ServerNode
         previous.TrySetResult();
         if (connected)
         {
-            GameLog.Info(ServerLogEvents.LinksReady, Role, detail: links.Count.ToString());
+            log.Info(ServerLogEvents.LinksReady, Role, detail: links.Count.ToString());
             return;
         }
 
-        GameLog.Error(ServerLogEvents.LinksLost, Role, detail: links.Count.ToString());
+        log.Error(ServerLogEvents.LinksLost, Role, detail: links.Count.ToString());
     }
 }

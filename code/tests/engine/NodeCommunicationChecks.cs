@@ -4,9 +4,9 @@ using TGame;
 using TGame.Server.Engine;
 using TGame.Transport;
 
-internal static class NodeCommunicationChecks
+internal sealed class NodeCommunicationChecks(TestServices services)
 {
-    internal static async Task RunAsync(CancellationToken stop)
+    internal async Task RunAsync(CancellationToken stop)
     {
         await CheckPeerCallsAsync(stop);
         await CheckIncomingRequestsAsync(stop);
@@ -14,15 +14,15 @@ internal static class NodeCommunicationChecks
         Console.WriteLine("PASS direct peer RPC payloads, errors, cancellation, disconnect and unsupported requests.");
     }
 
-    private static async Task CheckPeerCallsAsync(CancellationToken stop)
+    private async Task CheckPeerCallsAsync(CancellationToken stop)
     {
-        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        var node = TestNodes.Create(nameof(ProcessType.Login));
+        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var node = services.CreateNode(new ServerProcess(ProcessType.Login, 1), configuration);
         var peer = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
         var stream = new FrameStream();
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-        var running = node.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, lifetime.Token);
+        var running = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, lifetime.Token);
         try
         {
             await node.WaitUntilReadyAsync(stop);
@@ -92,14 +92,14 @@ internal static class NodeCommunicationChecks
         }
     }
 
-    private static async Task CheckIncomingRequestsAsync(CancellationToken stop)
+    private async Task CheckIncomingRequestsAsync(CancellationToken stop)
     {
-        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        var node = TestNodes.Create(nameof(ProcessType.Router));
+        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var node = services.CreateNode(new ServerProcess(ProcessType.Router, 1), configuration);
         var peer = ServerProcess.FormatName(nameof(ProcessType.Scene), 1);
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-        var running = node.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, stop, requireReady: true);
+        var running = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, stop, requireReady: true);
         try
         {
             var hello = await stream.Output.Reader.ReadAsync(stop);
@@ -107,7 +107,7 @@ internal static class NodeCommunicationChecks
 
             for (var index = 0; index < 2; index++)
             {
-                var requestId = IdGenerator.GenId();
+                var requestId = services.Ids.GenId();
                 stream.Input.Writer.TryWrite(RpcFrames.Request(new Empty(), requestId));
                 var response = await stream.Output.Reader.ReadAsync(stop);
                 Check(response.Reply?.RequestId == requestId &&
@@ -131,16 +131,16 @@ internal static class NodeCommunicationChecks
         }
     }
 
-    private static async Task CheckRejectedHandshakeAsync(CancellationToken stop)
+    private async Task CheckRejectedHandshakeAsync(CancellationToken stop)
     {
-        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        var node = TestNodes.Create(nameof(ProcessType.Login));
+        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var node = services.CreateNode(new ServerProcess(ProcessType.Login, 1), configuration);
         var peer = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(ServerProcess.FormatName(nameof(ProcessType.Router), 2)));
         try
         {
-            await node.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, stop);
+            await node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, stop);
             throw new Exception("A mismatched process identity completed its handshake.");
         }
         catch (IOException)

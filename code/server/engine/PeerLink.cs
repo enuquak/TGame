@@ -5,7 +5,7 @@ using TGame.Transport;
 
 namespace TGame.Server.Engine;
 
-public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWriter<Frame> output)
+public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWriter<Frame> output, GameLog log)
 {
     internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(12);
 
@@ -137,7 +137,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         if (request is null)
         {
             // A timed-out call has already relinquished its slot on this shared stream.
-            GameLog.Error(ServerLogEvents.UnmatchedReply, role, peer, reply.RequestId, link: id);
+            log.Error(ServerLogEvents.UnmatchedReply, role, peer, reply.RequestId, link: id);
             return;
         }
 

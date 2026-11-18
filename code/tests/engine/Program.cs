@@ -2,27 +2,32 @@ using TGame.Server.Engine;
 
 const int TestTimeoutSeconds = 5;
 const int ExternalTimeoutSeconds = 60;
-const int TestWorkerId = 0;
 
 try
 {
+    if (args is ["--ioc"])
+    {
+        await IocChecks.RunAsync();
+        return 0;
+    }
+
     if (args is ["--logging"])
     {
         LogLevelChecks.Run();
         return 0;
     }
 
-    using var logLifetime = GameLog.Initialize();
+    await using var services = new TestServices();
     if (args is ["--configuration"])
     {
-        ServerConfigurationChecks.Run();
+        ServerConfigurationChecks.Run(services);
         return 0;
     }
 
     if (args is ["--profile-storage", var profileIdConfig])
     {
         using var profileDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(ExternalTimeoutSeconds));
-        await ProfileStorageChecks.RunAsync(profileIdConfig, profileDeadline.Token);
+        await ProfileStorageChecks.RunAsync(profileIdConfig, services.Log, profileDeadline.Token);
         return 0;
     }
 
@@ -34,21 +39,20 @@ try
 
     if (args is ["--id-zookeeper", var idConfig])
     {
-        await using var localIdLifetime = await IdGenerator.InitializeAsync(
-            _ => Task.FromResult(new SnowflakeIdGenerator(TestWorkerId, TimeProvider.System)));
-        await IdGeneratorChecks.RunZooKeeperAsync(idConfig);
+        await services.Ids.InitializeAsync();
+        await IdGeneratorChecks.RunZooKeeperAsync(idConfig, services);
         return 0;
     }
 
     if (args is ["--registry"])
     {
-        await ZooKeeperProxyChecks.RunAsync();
+        await ZooKeeperProxyChecks.RunAsync(services.Log);
         return 0;
     }
 
     if (args is ["--zookeeper-session"])
     {
-        await ZooKeeperProxyChecks.CheckSessionAsync();
+        await ZooKeeperProxyChecks.CheckSessionAsync(services.Log);
         await IdGeneratorLifecycleChecks.RunAsync();
         return 0;
     }
@@ -63,51 +67,50 @@ try
 
     if (args is ["--connection-readiness"])
     {
-        await StartupReadinessChecks.CheckWithoutDependenciesAsync(CancellationToken.None);
+        await new StartupReadinessChecks(services).CheckWithoutDependenciesAsync(CancellationToken.None);
         return 0;
     }
 
     // 内存检查共用一个进程内生成器，不向真实服务器组发布 ID。
     await IdGeneratorLifecycleChecks.RunAsync();
-    await using var idLifetime = await IdGenerator.InitializeAsync(
-        _ => Task.FromResult(new SnowflakeIdGenerator(TestWorkerId, TimeProvider.System)));
+    await services.Ids.InitializeAsync();
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(
         args is ["--startup-publication"] ? ExternalTimeoutSeconds : TestTimeoutSeconds));
     var stop = deadline.Token;
 
     if (args is ["--rpc"])
     {
-        RpcChecks.CheckTransportBoundary();
-        await RpcChecks.RunAsync(stop);
+        new RpcChecks(services).CheckTransportBoundary();
+        await new RpcChecks(services).RunAsync(stop);
         return 0;
     }
 
     if (args is ["--startup-publication"])
     {
-        await StartupPublicationChecks.RunAsync(stop);
+        await new StartupPublicationChecks(services).RunAsync(stop);
         return 0;
     }
 
     if (args is ["--discovery-links"])
     {
-        await DiscoveryLinkChecks.RunAsync(stop);
+        await new DiscoveryLinkChecks(services).RunAsync(stop);
         return 0;
     }
 
     if (args is ["--dynamic-topology"])
     {
-        await DynamicTopologyChecks.RunAsync(stop);
+        await new DynamicTopologyChecks(services).RunAsync(stop);
         return 0;
     }
 
-    ServerConfigurationChecks.Run();
+    ServerConfigurationChecks.Run(services);
     SettingsChecks.Run();
     GroupChecks.Run();
     await IdGeneratorChecks.RunAsync();
-    RpcChecks.CheckTransportBoundary();
-    await RpcChecks.RunAsync(stop);
-    await StartupReadinessChecks.RunAsync(stop);
-    await NodeCommunicationChecks.RunAsync(stop);
+    new RpcChecks(services).CheckTransportBoundary();
+    await new RpcChecks(services).RunAsync(stop);
+    await new StartupReadinessChecks(services).RunAsync(stop);
+    await new NodeCommunicationChecks(services).RunAsync(stop);
     Console.WriteLine("PASS engine process readiness, handshake and direct peer RPC.");
     return 0;
 }

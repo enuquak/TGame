@@ -2,7 +2,6 @@ using System.Diagnostics;
 using TGame.Logging;
 using Serilog;
 using Serilog.Core;
-using Serilog.Debugging;
 using Serilog.Events;
 
 namespace TGame.Server.Engine;
@@ -10,40 +9,18 @@ namespace TGame.Server.Engine;
 public sealed class GameLog : IDisposable
 {
     private const long FileSizeLimit = 10 * 1024 * 1024;
-    private static GameLog? instance;
-    private static readonly object instanceChanges = new();
-
+    private bool disposed;
+    private readonly object changes = new();
     private string? processName;
     private Logger? serverLog;
     private readonly LoggingLevelSwitch minimumLevel = new();
 
-    private GameLog()
+    public void OpenServer(ServerProcess server)
     {
-    }
-
-    private static GameLog Instance => Volatile.Read(ref instance)
-        ?? throw new InvalidOperationException("Initialize the process logger before use.");
-
-    public static GameLog Initialize()
-    {
-        lock (instanceChanges)
+        lock (changes)
         {
-            if (instance is not null)
-            {
-                throw new InvalidOperationException("The process logger is already initialized.");
-            }
-
-            var initialized = new GameLog();
-            Volatile.Write(ref instance, initialized);
-            return initialized;
-        }
-    }
-
-    public static void OpenServer(ServerProcess server)
-    {
-        lock (instanceChanges)
-        {
-            Instance.OpenServerCore(server);
+            ObjectDisposedException.ThrowIf(disposed, this);
+            OpenServerCore(server);
         }
     }
 
@@ -59,7 +36,6 @@ public sealed class GameLog : IDisposable
         var root = Environment.GetEnvironmentVariable(EngineEnvironment.LogRoot) ?? Path.Combine("logs", "server");
         var directory = Directory.CreateDirectory(Path.Combine(root, server.Name + "Server"));
         var path = Path.Combine(directory.FullName, $"{Environment.ProcessId}-{startedUtcTicks}-.log");
-        SelfLog.Enable(TextWriter.Synchronized(Console.Error));
         var logger = new LoggerConfiguration().MinimumLevel.ControlledBy(minimumLevel)
             .WriteTo.File(path, outputTemplate: "{Message:lj}{NewLine}",
             rollingInterval: RollingInterval.Hour, rollOnFileSizeLimit: true, fileSizeLimitBytes: FileSizeLimit,
@@ -70,42 +46,43 @@ public sealed class GameLog : IDisposable
 
     public void Dispose()
     {
-        lock (instanceChanges)
+        lock (changes)
         {
-            if (!ReferenceEquals(instance, this))
+            if (disposed)
             {
                 return;
             }
 
-            try
-            {
-                serverLog?.Dispose();
-            }
-            finally
-            {
-                SelfLog.Disable();
-                Volatile.Write(ref instance, null);
-            }
+            disposed = true;
+            serverLog?.Dispose();
         }
     }
 
-    public static void SetMinimumLevel(ServerLogLevel level) => Instance.minimumLevel.MinimumLevel = ToSerilogLevel(level);
+    public void SetMinimumLevel(ServerLogLevel level)
+    {
+        lock (changes)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            minimumLevel.MinimumLevel = ToSerilogLevel(level);
+        }
+    }
 
-    public static void Debug(string ev, string role, string? peer = null, string? id = null,
+    public void Debug(string ev, string role, string? peer = null, string? id = null,
         string? entity = null, string? link = null, string? detail = null) =>
-        Instance.Write(ServerLogLevel.Debug, ev, role, peer, id, entity, link, detail);
+        Write(ServerLogLevel.Debug, ev, role, peer, id, entity, link, detail);
 
-    public static void Info(string ev, string role, string? peer = null, string? id = null,
+    public void Info(string ev, string role, string? peer = null, string? id = null,
         string? entity = null, string? link = null, string? detail = null) =>
-        Instance.Write(ServerLogLevel.Info, ev, role, peer, id, entity, link, detail);
+        Write(ServerLogLevel.Info, ev, role, peer, id, entity, link, detail);
 
-    public static void Error(string ev, string role, string? peer = null, string? id = null,
+    public void Error(string ev, string role, string? peer = null, string? id = null,
         string? entity = null, string? link = null, string? detail = null, bool bothPrintConsole = false) =>
-        Instance.Write(ServerLogLevel.Error, ev, role, peer, id, entity, link, detail, bothPrintConsole);
+        Write(ServerLogLevel.Error, ev, role, peer, id, entity, link, detail, bothPrintConsole);
 
     private void Write(ServerLogLevel level, string ev, string role, string? peer, string? id,
         string? entity, string? link, string? detail, bool bothPrintConsole = false)
     {
+        ObjectDisposedException.ThrowIf(disposed, this);
         var severity = ToSerilogLevel(level);
         if (severity < minimumLevel.MinimumLevel)
         {

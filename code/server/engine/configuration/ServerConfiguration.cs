@@ -3,13 +3,12 @@ using System.Text.Json;
 
 namespace TGame.Server.Engine;
 
-public sealed class ServerConfiguration : IDisposable
+public sealed class ServerConfiguration
 {
     public const string FileName = "connections.json";
-    private static ServerConfiguration? instance;
     private readonly IReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>> targets;
 
-    private ServerConfiguration(IReadOnlyDictionary<ProcessType, ProcessType[]> configured)
+    internal ServerConfiguration(IReadOnlyDictionary<ProcessType, ProcessType[]> configured)
     {
         var types = Enum.GetValues<ProcessType>();
         if (configured.Count != types.Length || types.Any(type => !configured.ContainsKey(type)))
@@ -61,11 +60,15 @@ public sealed class ServerConfiguration : IDisposable
         }
     }
 
-    public static IReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>> DialTargets =>
-        Volatile.Read(ref instance)?.targets
-        ?? throw new InvalidOperationException("Initialize the server configuration before use.");
+    public IReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>> DialTargets => targets;
 
-    public static ServerConfiguration Initialize(string path)
+    public IReadOnlyList<ProcessType> GetDialTargets(ProcessType type) => targets[type];
+
+    public bool Dials(ProcessType source, ProcessType target) => GetDialTargets(source).Contains(target);
+
+    public bool ArePeers(ProcessType first, ProcessType second) => Dials(first, second) || Dials(second, first);
+
+    public static ServerConfiguration Load(string path)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         if (document.RootElement.ValueKind != JsonValueKind.Object)
@@ -99,22 +102,6 @@ public sealed class ServerConfiguration : IDisposable
             }
         }
 
-        return Initialize(configured);
-    }
-
-    internal static ServerConfiguration Initialize(IReadOnlyDictionary<ProcessType, ProcessType[]> targets)
-    {
-        var initialized = new ServerConfiguration(targets);
-        if (Interlocked.CompareExchange(ref instance, initialized, null) is not null)
-        {
-            throw new InvalidOperationException("The server configuration is already initialized.");
-        }
-
-        return initialized;
-    }
-
-    public void Dispose()
-    {
-        Interlocked.CompareExchange(ref instance, null, this);
+        return new ServerConfiguration(configured);
     }
 }

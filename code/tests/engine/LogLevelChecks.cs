@@ -8,9 +8,6 @@ internal static class LogLevelChecks
 {
     public static void Run()
     {
-        ExpectInvalidOperation(
-            () => GameLog.Info(ServerLogEvents.Listen, nameof(ProcessType.Login)),
-            "Logging before initialization must fail.");
         var root = Path.Combine(Path.GetTempPath(), $"tgame-log-levels-{Guid.NewGuid():N}");
         var process = new ServerProcess(ProcessType.Login, 1);
         var originalRoot = Environment.GetEnvironmentVariable(EngineEnvironment.LogRoot);
@@ -24,9 +21,9 @@ internal static class LogLevelChecks
             {
                 using var output = new StringWriter();
                 Console.SetOut(output);
-                using var logLifetime = GameLog.Initialize();
-                GameLog.SetMinimumLevel(minimum);
-                WriteSamples(process);
+                using var log = new GameLog();
+                log.SetMinimumLevel(minimum);
+                WriteSamples(log, process);
                 CheckRows(output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), minimum, process.Role);
             }
 
@@ -35,8 +32,8 @@ internal static class LogLevelChecks
                 using var error = new StringWriter();
                 Console.SetOut(output);
                 Console.SetError(error);
-                using var logLifetime = GameLog.Initialize();
-                GameLog.Error(ServerLogEvents.ProcessFailed, process.Role, detail: "进程失败", bothPrintConsole: true);
+                using var log = new GameLog();
+                log.Error(ServerLogEvents.ProcessFailed, process.Role, detail: "进程失败", bothPrintConsole: true);
                 CheckRows(error.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), ServerLogLevel.Error, process.Role);
                 if (output.ToString().Length != 0)
                 {
@@ -52,18 +49,18 @@ internal static class LogLevelChecks
                 Console.SetOut(output);
                 Console.SetError(error);
                 Environment.SetEnvironmentVariable(EngineEnvironment.LogRoot, logRoot);
-                using (GameLog.Initialize())
+                using (var log = new GameLog())
                 {
-                    GameLog.SetMinimumLevel(minimum);
-                    GameLog.OpenServer(process);
-                    ExpectInvalidOperation(() => GameLog.OpenServer(process), "Opening a second log file must fail.");
-                    WriteSamples(process);
+                    log.SetMinimumLevel(minimum);
+                    log.OpenServer(process);
+                    ExpectInvalidOperation(() => log.OpenServer(process), "Opening a second log file must fail.");
+                    WriteSamples(log, process);
                     if (output.ToString().Length != 0 || error.ToString().Length != 0)
                     {
                         throw new Exception("File logging printed to the console without an explicit request.");
                     }
 
-                    GameLog.Error(ServerLogEvents.ProcessFailed, process.Role,
+                    log.Error(ServerLogEvents.ProcessFailed, process.Role,
                         detail: "同时写入日志与终端：'错误'\n详细信息", bothPrintConsole: true);
                 }
 
@@ -88,39 +85,26 @@ internal static class LogLevelChecks
             Directory.Delete(root, recursive: true);
         }
 
-        Console.WriteLine("PASS logger singleton lifecycle, DEBUG/INFO/ERROR filtering, JSON fields, server log configuration and optional console mirroring.");
+        Console.WriteLine("PASS logger instance lifecycle and isolation, DEBUG/INFO/ERROR filtering, JSON fields, server log configuration and optional console mirroring.");
     }
 
     private static void CheckLifecycle(ServerProcess process)
     {
-        ExpectInvalidOperation(() => GameLog.SetMinimumLevel(ServerLogLevel.Info),
-            "Changing the log level before initialization must fail.");
-        ExpectInvalidOperation(() => GameLog.OpenServer(process),
-            "Opening a log file before initialization must fail.");
-
         using var output = new StringWriter();
         var originalOutput = Console.Out;
         Console.SetOut(output);
         try
         {
-            var previous = GameLog.Initialize();
-            using (previous)
-            {
-                ExpectInvalidOperation(() =>
-                {
-                    using var duplicate = GameLog.Initialize();
-                }, "Initializing a second process logger must fail.");
-                GameLog.SetMinimumLevel(ServerLogLevel.Debug);
-            }
-
-            ExpectInvalidOperation(() => GameLog.Info(ServerLogEvents.Listen, process.Role),
-                "Logging after disposal must fail.");
-            using (GameLog.Initialize())
-            {
-                previous.Dispose();
-                WriteSamples(process);
-            }
-
+            var previous = new GameLog();
+            using var current = new GameLog();
+            previous.SetMinimumLevel(ServerLogLevel.Debug);
+            current.SetMinimumLevel(ServerLogLevel.Info);
+            previous.Dispose();
+            ExpectDisposed(() => previous.Info(ServerLogEvents.Listen, process.Role));
+            ExpectDisposed(() => previous.SetMinimumLevel(ServerLogLevel.Info));
+            ExpectDisposed(() => previous.OpenServer(process));
+            previous.Dispose();
+            WriteSamples(current, process);
             CheckRows(output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries),
                 ServerLogLevel.Info, process.Role);
         }
@@ -128,6 +112,20 @@ internal static class LogLevelChecks
         {
             Console.SetOut(originalOutput);
         }
+    }
+
+    private static void ExpectDisposed(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        throw new Exception("Using a disposed logger must fail.");
     }
 
     private static void ExpectInvalidOperation(Action action, string message)
@@ -186,11 +184,11 @@ internal static class LogLevelChecks
         }
     }
 
-    private static void WriteSamples(ServerProcess process)
+    private static void WriteSamples(GameLog log, ServerProcess process)
     {
-        GameLog.Debug(ServerLogEvents.ZkDiscover, process.Role, detail: "发现细节");
-        GameLog.Info(ServerLogEvents.Listen, process.Role, detail: "开始监听");
-        GameLog.Error(ServerLogEvents.ProcessFailed, process.Role, detail: "进程失败");
+        log.Debug(ServerLogEvents.ZkDiscover, process.Role, detail: "发现细节");
+        log.Info(ServerLogEvents.Listen, process.Role, detail: "开始监听");
+        log.Error(ServerLogEvents.ProcessFailed, process.Role, detail: "进程失败");
     }
 
     private static void CheckRows(string[] lines, ServerLogLevel minimum, string instance)

@@ -11,64 +11,100 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
 {
     private const string NodePrefix = "server-";
     private const int WorkerReuseWaitMilliseconds = 1;
-    private static ZooKeeperProxy? instance;
-    private readonly ZooKeeper zk;
+    private ZooKeeper? zk;
+    private readonly GameLog log;
+    private readonly SemaphoreSlim lifecycle = new(1);
     private readonly ZooKeeperOptions options;
     private readonly ZooKeeperSession session = new();
     private bool disposed;
+    private volatile bool initialized;
     private ServerProcess? claimedProcess;
     private int claiming;
 
-    private ZooKeeperProxy(ZooKeeperOptions options)
-    {
-        this.options = options;
-        zk = new ZooKeeper(options.Endpoint, options.SessionTimeoutMilliseconds, session);
-    }
-
-    private static ZooKeeperProxy Instance => Volatile.Read(ref instance)
-        ?? throw new InvalidOperationException("Initialize the process ZooKeeper proxy before use.");
-
-    public static Task SessionLost => Instance.session.Lost.Task;
-
-    // 宿主顺序初始化和释放，其他模块通过静态入口共用同一会话。
-    public static async Task<ZooKeeperProxy> InitializeAsync(ZooKeeperOptions options, CancellationToken stop = default)
+    public ZooKeeperProxy(ZooKeeperOptions options, GameLog log)
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
-        stop.ThrowIfCancellationRequested();
-        if (instance is not null)
-        {
-            throw new InvalidOperationException("The process ZooKeeper proxy is already initialized.");
-        }
+        this.options = options;
+        this.log = log;
+    }
 
-        var proxy = new ZooKeeperProxy(options);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        timeout.CancelAfter(options.ConnectTimeoutMilliseconds);
-        try
+    private ZooKeeper Client
+    {
+        get
         {
-            await proxy.session.Connected.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
-            timeout.Token.ThrowIfCancellationRequested();
-            proxy.session.CheckActive();
-            Volatile.Write(ref instance, proxy);
-            return proxy;
-        }
-        catch
-        {
-            await proxy.DisposeAsync().ConfigureAwait(false);
-            throw;
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (!initialized)
+            {
+                throw new InvalidOperationException("Initialize the process ZooKeeper proxy before use.");
+            }
+
+            return zk ?? throw new InvalidOperationException("Initialize the process ZooKeeper proxy before use.");
         }
     }
 
-    public static Task<ServerProcess> ClaimProcessAsync(ProcessType type, CancellationToken stop)
-        => Instance.ClaimProcessCoreAsync(type, stop);
+    public Task SessionLost
+    {
+        get
+        {
+            _ = Client;
+            return session.Lost.Task;
+        }
+    }
 
-    private async Task<ServerProcess> ClaimProcessCoreAsync(ProcessType type, CancellationToken stop)
+    public ServerProcess Process
+    {
+        get
+        {
+            session.CheckActive();
+            return claimedProcess ?? throw new InvalidOperationException("Claim the process identity before use.");
+        }
+    }
+
+    // 容器只负责创建对象，连接建立由宿主显式等待。
+    public async Task InitializeAsync(CancellationToken stop = default)
+    {
+        await lifecycle.WaitAsync(stop).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (zk is not null)
+            {
+                throw new InvalidOperationException("The process ZooKeeper proxy is already initialized.");
+            }
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
+            timeout.CancelAfter(options.ConnectTimeoutMilliseconds);
+            try
+            {
+                zk = new ZooKeeper(options.Endpoint, options.SessionTimeoutMilliseconds, session);
+                await session.Connected.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
+                timeout.Token.ThrowIfCancellationRequested();
+                session.CheckActive();
+                initialized = true;
+            }
+            catch
+            {
+                await CloseAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
+        finally
+        {
+            lifecycle.Release();
+        }
+    }
+
+    public async Task<ServerProcess> ClaimProcessAsync(ProcessType type, CancellationToken stop)
     {
         if (!Enum.IsDefined(type))
         {
             throw new ArgumentOutOfRangeException(nameof(type));
         }
 
+        // 尚未建立会话时不进入占号流程，避免误关闭正在初始化的代理。
+        _ = Client;
+        session.CheckActive();
         if (Interlocked.Exchange(ref claiming, 1) != 0)
         {
             throw new InvalidOperationException("This process has already requested an identity.");
@@ -86,7 +122,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
                 try
                 {
                     // 空地址只占用编号，引擎和业务初始化完成后再发布给发现者。
-                    await zk.createAsync(path, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
+                    await Client.createAsync(path, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
                         .WaitAsync(stop).ConfigureAwait(false);
                 }
                 catch (KeeperException.NodeExistsException)
@@ -107,10 +143,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         }
     }
 
-    public static Task RegisterProcessAsync(ServerProcess process, string address, CancellationToken stop)
-        => Instance.RegisterProcessCoreAsync(process, address, stop);
-
-    private async Task RegisterProcessCoreAsync(ServerProcess process, string address, CancellationToken stop)
+    public async Task RegisterProcessAsync(ServerProcess process, string address, CancellationToken stop)
     {
         session.CheckActive();
         if (claimedProcess != process)
@@ -121,7 +154,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         ValidateAddress(process, address);
         try
         {
-            await zk.setDataAsync(ProcessPath(process), Encoding.UTF8.GetBytes(address))
+            await Client.setDataAsync(ProcessPath(process), Encoding.UTF8.GetBytes(address))
                 .WaitAsync(stop).ConfigureAwait(false);
             session.CheckActive();
         }
@@ -131,13 +164,10 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
             throw;
         }
 
-        GameLog.Info(ServerLogEvents.ZkRegister, process.Role, detail: address);
+        log.Info(ServerLogEvents.ZkRegister, process.Role, detail: address);
     }
 
-    public static IAsyncEnumerable<IReadOnlyList<DiscoveredProcess>> WatchProcessesAsync(CancellationToken stop)
-        => Instance.WatchProcessesCoreAsync(stop);
-
-    private async IAsyncEnumerable<IReadOnlyList<DiscoveredProcess>> WatchProcessesCoreAsync(
+    public async IAsyncEnumerable<IReadOnlyList<DiscoveredProcess>> WatchProcessesAsync(
         [EnumeratorCancellation] CancellationToken stop)
     {
         await EnsurePathAsync(options.DiscoveryRoot, stop).ConfigureAwait(false);
@@ -146,7 +176,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         {
             session.CheckActive();
             stop.ThrowIfCancellationRequested();
-            var children = await zk.getChildrenAsync(options.DiscoveryRoot, changed).WaitAsync(stop).ConfigureAwait(false);
+            var children = await Client.getChildrenAsync(options.DiscoveryRoot, changed).WaitAsync(stop).ConfigureAwait(false);
             var processes = new List<DiscoveredProcess>();
             foreach (var child in children.Children)
             {
@@ -157,14 +187,14 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
 
                 if (!ServerProcess.TryParse(child[NodePrefix.Length..], out var process))
                 {
-                    GameLog.Error(ServerLogEvents.ZkDiscover, claimedProcess?.Role ?? nameof(ZooKeeperProxy),
+                    log.Error(ServerLogEvents.ZkDiscover, claimedProcess?.Role ?? nameof(ZooKeeperProxy),
                         detail: $"忽略非法进程节点 {child}");
                     continue;
                 }
                 try
                 {
                     // 同时监听地址发布/变化；父节点 Watch 只覆盖成员增删。
-                    var data = await zk.getDataAsync(ProcessPath(process), changed).WaitAsync(stop).ConfigureAwait(false);
+                    var data = await Client.getDataAsync(ProcessPath(process), changed).WaitAsync(stop).ConfigureAwait(false);
                     if (data.Data.Length == 0)
                     {
                         continue;
@@ -185,7 +215,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
                 catch (InvalidDataException error)
                 {
                     // 单条无效记录不能使已有健康连接停止；数据 Watch 保留以等待修正。
-                    GameLog.Error(ServerLogEvents.ZkDiscover, claimedProcess?.Role ?? nameof(ZooKeeperProxy),
+                    log.Error(ServerLogEvents.ZkDiscover, claimedProcess?.Role ?? nameof(ZooKeeperProxy),
                         peer: process.Name, detail: error.Message);
                 }
             }
@@ -196,10 +226,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         }
     }
 
-    public static Task<bool> IsProcessClaimedAsync(string name, CancellationToken stop)
-        => Instance.IsProcessClaimedCoreAsync(name, stop);
-
-    private async Task<bool> IsProcessClaimedCoreAsync(string name, CancellationToken stop)
+    public async Task<bool> IsProcessClaimedAsync(string name, CancellationToken stop)
     {
         session.CheckActive();
         if (!ServerProcess.TryParse(name, out var process))
@@ -207,7 +234,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
             return false;
         }
 
-        var stat = await zk.existsAsync(ProcessPath(process)).WaitAsync(stop).ConfigureAwait(false);
+        var stat = await Client.existsAsync(ProcessPath(process)).WaitAsync(stop).ConfigureAwait(false);
         session.CheckActive();
         return stat is not null && stat.getEphemeralOwner() != 0;
     }
@@ -240,7 +267,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
             path += "/" + segment;
             try
             {
-                await zk.createAsync(path, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+                await Client.createAsync(path, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
                     .WaitAsync(stop).ConfigureAwait(false);
             }
             catch (KeeperException.NodeExistsException)
@@ -249,12 +276,10 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
         }
     }
 
-    internal static Task<WorkerLease> AcquireWorkerAsync(string root, CancellationToken stop)
-        => Instance.AcquireWorkerCoreAsync(root, stop);
-
-    private async Task<WorkerLease> AcquireWorkerCoreAsync(string root, CancellationToken stop)
+    internal async Task<WorkerLease> AcquireWorkerAsync(string root, CancellationToken stop)
     {
         ZooKeeperOptions.ValidatePath(root);
+        _ = Client;
         session.CheckActive();
         stop.ThrowIfCancellationRequested();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
@@ -268,7 +293,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
                 path += "/" + segment;
                 try
                 {
-                    await zk.createAsync(path, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+                    await Client.createAsync(path, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
                         .WaitAsync(token).ConfigureAwait(false);
                 }
                 catch (KeeperException.NodeExistsException)
@@ -283,7 +308,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
                 var workerPath = root + "/" + workerId.ToString(CultureInfo.InvariantCulture);
                 try
                 {
-                    await zk.createAsync(workerPath, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
+                    await Client.createAsync(workerPath, [], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
                         .WaitAsync(token).ConfigureAwait(false);
                 }
                 catch (KeeperException.NodeExistsException)
@@ -322,7 +347,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
 
         try
         {
-            await zk.deleteAsync(path).WaitAsync(TimeSpan.FromMilliseconds(options.ConnectTimeoutMilliseconds)).ConfigureAwait(false);
+            await Client.deleteAsync(path).WaitAsync(TimeSpan.FromMilliseconds(options.ConnectTimeoutMilliseconds)).ConfigureAwait(false);
         }
         catch
         {
@@ -333,6 +358,19 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        await lifecycle.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await CloseAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            lifecycle.Release();
+        }
+    }
+
+    private async Task CloseAsync()
+    {
         if (disposed)
         {
             return;
@@ -340,12 +378,10 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
 
         disposed = true;
         session.Invalidate();
-        if (ReferenceEquals(Volatile.Read(ref instance), this))
+        if (zk is not null)
         {
-            Volatile.Write(ref instance, null);
+            await zk.closeAsync().ConfigureAwait(false);
         }
-
-        await zk.closeAsync().ConfigureAwait(false);
     }
 
     internal sealed class WorkerLease(ZooKeeperProxy proxy, int workerId, string path) : IAsyncDisposable

@@ -1,16 +1,16 @@
 using TGame;
 using TGame.Server.Engine;
 
-internal static class DynamicTopologyChecks
+internal sealed class DynamicTopologyChecks(TestServices services)
 {
-    public static async Task RunAsync(CancellationToken stop)
+    public async Task RunAsync(CancellationToken stop)
     {
-        using var configuration = TestNodes.InitializeConfiguration(TestNodes.DefaultGroup);
-        var router = TestNodes.Create(nameof(ProcessType.Router));
+        var configuration = TestNodes.LoadConfiguration(TestNodes.DefaultGroup);
+        var router = services.CreateNode(new ServerProcess(ProcessType.Router, 1), configuration);
         Check(router.FirstLinks.IsCompletedSuccessfully && router.Ready,
             "Router without outgoing dependencies must become ready without incoming processes.");
 
-        var node = new ServerNode(ServerProcess.FormatName(nameof(ProcessType.Base), 42));
+        var node = services.CreateNode(new ServerProcess(ProcessType.Base, 42), configuration);
         var streams = new Dictionary<string, FrameStream>();
         var tasks = new Dictionary<string, Task>();
         var router1 = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
@@ -68,7 +68,7 @@ internal static class DynamicTopologyChecks
             var stream = new FrameStream();
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
             streams[peer] = stream;
-            tasks[peer] = node.RunLinkAsync(peer, IdGenerator.GenId(), stream, stream, lifetime.Token);
+            tasks[peer] = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, lifetime.Token);
         }
 
         async Task Close(string peer)
