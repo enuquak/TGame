@@ -6,19 +6,9 @@ namespace TGame.Server.Logic;
 
 internal static class StorageConnections
 {
-    private const int ServerSelectionTimeoutSeconds = 5;
-
-    public static MongoClient Mongo(string endpoint, ServerSettings settings)
+    public static MongoClient Mongo(ServerSettings settings)
     {
-        var options = new MongoStorageSettings
-        {
-            Endpoint = endpoint,
-            DatabaseName = settings.MongoDatabase,
-            AuthenticationDatabase = settings.MongoDatabase,
-            UserName = settings.MongoUser,
-            ServerSelectionTimeoutSeconds = ServerSelectionTimeoutSeconds
-        };
-
+        var options = settings.Mongo ?? throw new InvalidDataException("Missing MongoDB storage configuration.");
         return MongoStorage.CreateClient(options, Password(settings.MongoPasswordVariable));
     }
 

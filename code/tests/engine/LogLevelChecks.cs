@@ -144,14 +144,15 @@ internal static class LogLevelChecks
 
     private static void CheckSettings(string root)
     {
-        var source = Path.Combine(AppContext.BaseDirectory, "config", "server.local.yaml");
+        var source = Path.Combine(AppContext.BaseDirectory, "config", YamlConfiguration.FileName);
         if (ServerSettings.Load(source).MinimumLogLevel != ServerLogLevel.Debug)
         {
             throw new Exception("The test environment must default to DEBUG.");
         }
 
-        var yaml = File.ReadAllText(source).Replace("minimumLogLevel: DEBUG", "");
         var path = Path.Combine(root, "server.yaml");
+        new YamlConfiguration(source).SaveSnapshot(path);
+        var yaml = File.ReadAllText(path).Replace("loggingMinimumLevel: DEBUG", "");
         File.WriteAllText(path, yaml);
         if (ServerSettings.Load(path).MinimumLogLevel != ServerLogLevel.Info)
         {
@@ -160,7 +161,7 @@ internal static class LogLevelChecks
 
         foreach (var minimum in Enum.GetValues<ServerLogLevel>())
         {
-            File.WriteAllText(path, yaml + $"\nminimumLogLevel: {minimum.ToString().ToUpperInvariant()}\n");
+            File.WriteAllText(path, yaml.Replace("...", "") + $"\nloggingMinimumLevel: {minimum.ToString().ToUpperInvariant()}\n");
             if (ServerSettings.Load(path).MinimumLogLevel != minimum)
             {
                 throw new Exception($"Minimum log level {minimum} was not loaded.");
@@ -169,7 +170,7 @@ internal static class LogLevelChecks
 
         foreach (var invalid in new[] { "TRACE", "WARNING", "999" })
         {
-            File.WriteAllText(path, yaml + $"\nminimumLogLevel: {invalid}\n");
+            File.WriteAllText(path, yaml.Replace("...", "") + $"\nloggingMinimumLevel: {invalid}\n");
             try
             {
                 ServerSettings.Load(path);

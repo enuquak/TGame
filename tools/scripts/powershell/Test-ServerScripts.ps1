@@ -49,6 +49,7 @@ foreach ($file in $sourceFiles)
     $null = New-Item -ItemType Directory -Path (Split-Path $destination) -Force
     Copy-Item -LiteralPath $file.FullName -Destination $destination
 }
+Copy-Item -LiteralPath "$root/code/server/engine/TGame.Server.Engine.csproj" -Destination "$checkout/code/server/engine/TGame.Server.Engine.csproj"
 
 $counts = [ordered]@{}
 foreach ($type in [Enum]::GetValues([TGame.ProcessType]))
@@ -58,11 +59,19 @@ foreach ($type in [Enum]::GetValues([TGame.ProcessType]))
 $counts[[TGame.ProcessType]::Router.ToString()] = 2
 $configDir = Join-Path $checkout 'code/server/config'
 $null = New-Item -ItemType Directory -Path $configDir
-$counts | ConvertTo-Json | Set-Content -LiteralPath "$configDir/processes.json"
-Set-Content -LiteralPath "$configDir/server.local.yaml" -Value 'fixture-environment'
-[IO.File]::WriteAllText("$configDir/runtime.json", '{"runDirectory":"logs/custom runs"}')
-Copy-Item -LiteralPath "$configDir/processes.json" -Destination "$output/config/processes.json"
-Copy-Item -LiteralPath "$configDir/runtime.json" -Destination "$output/config/runtime.json"
+function Save-TestCounts
+{
+    $lines = @('processes:')
+    foreach ($pair in $counts.GetEnumerator())
+    {
+        $lines += "  $($pair.Key): $($pair.Value)"
+    }
+    Set-Content -LiteralPath "$configDir/process.yaml" -Value $lines
+}
+Save-TestCounts
+Set-Content -LiteralPath "$configDir/server.yaml" -Value "include: [process, ops]`nenvironment: fixture-environment`nrunDirectory: logs/custom runs"
+Set-Content -LiteralPath "$configDir/ops.yaml" -Value "mongo:`n  databaseName: &db fixture`n  authenticationDatabase: *db"
+[TGame.YamlConfiguration]::new("$configDir/server.yaml").SaveSnapshot("$output/config/server.yaml")
 
 @'
 <Project Sdk="Microsoft.NET.Sdk">
@@ -77,6 +86,11 @@ Copy-Item -LiteralPath "$configDir/runtime.json" -Destination "$output/config/ru
 Copy-Item -LiteralPath "$root/code/server/engine/configuration/ServerRunFiles.cs" -Destination "$fixture/ServerRunFiles.cs"
 Copy-Item -LiteralPath "$root/code/shared/csharp/ServerEnvironment.cs" -Destination "$fixture/ServerEnvironment.cs"
 Copy-Item -LiteralPath "$root/code/server/engine/configuration/ServerRuntime.cs" -Destination "$fixture/ServerRuntime.cs"
+Copy-Item -LiteralPath "$root/code/server/engine/configuration/YamlConfiguration.cs" -Destination "$fixture/YamlConfiguration.cs"
+$engineProject = [xml](Get-Content -LiteralPath "$root/code/server/engine/TGame.Server.Engine.csproj" -Raw)
+$yamlVersion = ($engineProject.Project.ItemGroup.PackageReference | Where-Object Include -eq 'YamlDotNet').Version
+$fixtureProject = Get-Content -LiteralPath "$fixture/TGame.Server.csproj" -Raw
+$fixtureProject.Replace('</Project>', "<ItemGroup><PackageReference Include=`"YamlDotNet`" Version=`"$yamlVersion`" /></ItemGroup></Project>") | Set-Content -LiteralPath "$fixture/TGame.Server.csproj"
 @'
 using System.Diagnostics;
 using System.Text.Json;
@@ -93,8 +107,8 @@ var config = Environment.GetEnvironmentVariable(ServerEnvironment.Config)!;
 File.WriteAllText(Path.Combine(runDir, process.Id + ".started.json"), JsonSerializer.Serialize(new
 {
     Role = args[0],
-    Environment = File.ReadAllText(config),
-    Minimums = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "config", ServerRunFiles.GroupConfiguration))
+    Environment = new YamlConfiguration(config).Read<string>("environment"),
+    Minimums = new YamlConfiguration(Path.Combine(AppContext.BaseDirectory, "config", ServerRunFiles.GroupConfiguration)).Read<Dictionary<string, int>>("processes")
 }));
 while (true)
 {
@@ -152,8 +166,9 @@ try
     $first = @(Get-TestProcesses)
     Assert-True ($first.Count -eq 2) '应启动两个配置实例。'
     $runs = "$checkout/logs/custom runs"
-    $currentFile = "$runs/current"
-    $current = (Get-Content -LiteralPath $currentFile -Raw).Trim()
+    $management = "$checkout/logs/tools/server-scripts"
+    $currentFile = "$management/current"
+    $current = Split-Path ((Get-Content -LiteralPath $currentFile -Raw).Trim()) -Leaf
     $runDir = "$runs/$current"
     $deadline = [DateTime]::UtcNow.AddSeconds(3)
     while (@(Get-ChildItem -LiteralPath $runDir -Filter '*.started.json').Count -ne 2)
@@ -163,24 +178,27 @@ try
     }
     $started = Get-Content -LiteralPath "$runDir/$($first[0].Id).started.json" -Raw | ConvertFrom-Json
     Assert-True ($started.Environment.Trim() -eq 'fixture-environment') '未选择本地环境配置。'
-    Assert-True (($started.Minimums | ConvertFrom-Json).Router -eq 2) '运行时连接门槛应与启动数量相同。'
+    Assert-True ($started.Minimums.Router -eq 2) '运行时连接门槛应与启动数量相同。'
 
     Invoke-Entry 'StartAll' @('-NoBuild')
     $beforeIds = ($first.Id | Sort-Object) -join ','
     $afterIds = (@(Get-TestProcesses).Id | Sort-Object) -join ','
     Assert-True ($afterIds -eq $beforeIds) '重复启动产生了新进程。'
-    Set-Content -LiteralPath "$configDir/server.local.yaml" -Value 'changed-environment'
+    $entry = Get-Content -LiteralPath "$configDir/server.yaml" -Raw
+    Set-Content -LiteralPath "$configDir/server.yaml" -Value $entry.Replace('fixture-environment', 'changed-environment')
+    $ops = Get-Content -LiteralPath "$configDir/ops.yaml" -Raw
+    Remove-Item -LiteralPath "$configDir/ops.yaml"
     $first[0].Kill()
     $first[0].WaitForExit()
     $counts[[TGame.ProcessType]::Router.ToString()] = 1
-    $counts | ConvertTo-Json | Set-Content -LiteralPath "$configDir/processes.json"
+    Save-TestCounts
     Invoke-Entry 'StartAll' @('-NoBuild')
     $restored = @(Get-TestProcesses)
     Assert-True ($restored.Count -eq 2 -and $restored.Id -contains $first[1].Id) '补起不应重启存活进程。'
-    Assert-True ((Get-Content -LiteralPath $currentFile -Raw).Trim() -eq $current) '补起必须复用当前快照。'
-    Assert-True ((Get-Content -LiteralPath "$runDir/server.yaml" -Raw).Trim() -eq 'fixture-environment') '补起改变了环境快照。'
+    Assert-True ((Split-Path ((Get-Content -LiteralPath $currentFile -Raw).Trim()) -Leaf) -eq $current) '补起必须复用当前快照。'
+    Assert-True ([TGame.YamlConfiguration]::new("$runDir/server.yaml").Read[string]('environment') -eq 'fixture-environment') '补起改变了环境快照。'
 
-    $lock = [IO.File]::Open("$runs/manage.lock", 'OpenOrCreate', 'ReadWrite', 'None')
+    $lock = [IO.File]::Open("$management/manage.lock", 'OpenOrCreate', 'ReadWrite', 'None')
     try
     {
         Invoke-Entry 'StartAll' @('-NoBuild') 1
@@ -194,15 +212,16 @@ try
     Assert-True (@(Get-TestProcesses).Count -eq 3) '单类型脚本应额外启动一个实例。'
     Invoke-Entry 'StopAll'
     Assert-True (@(Get-TestProcesses).Count -eq 0) '正常停止后仍有进程。'
+    Set-Content -LiteralPath "$configDir/ops.yaml" -Value $ops
     # 模拟构建目录已清理，只留下运行记录。
     $missingSnapshot = '19990101-000000-0000000'
     $null = New-Item -ItemType Directory -Path "$runs/$missingSnapshot"
-    Copy-Item -LiteralPath "$runDir/processes.json" -Destination "$runs/$missingSnapshot/processes.json"
-    Set-Content -LiteralPath $currentFile -Value $missingSnapshot
+    Copy-Item -LiteralPath "$runDir/server.yaml" -Destination "$runs/$missingSnapshot/server.yaml"
+    Set-Content -LiteralPath $currentFile -Value "logs/custom runs/$missingSnapshot"
     $counts[[TGame.ProcessType]::Router.ToString()] = 2
-    $counts | ConvertTo-Json | Set-Content -LiteralPath "$configDir/processes.json"
+    Save-TestCounts
     Invoke-Entry 'StartAll' @('-NoBuild')
-    $current = (Get-Content -LiteralPath $currentFile -Raw).Trim()
+    $current = Split-Path ((Get-Content -LiteralPath $currentFile -Raw).Trim()) -Leaf
     $runDir = "$runs/$current"
     Set-Content -LiteralPath "$runDir/ignore-stop" -Value ''
     Invoke-Entry 'StopAll' @('-TimeoutSeconds', '1') 1
@@ -216,11 +235,17 @@ try
     $info.CreateNoWindow = $true
     $info.WorkingDirectory = $checkout
     $info.ArgumentList.Add([TGame.ProcessType]::Router.ToString())
-    [TGame.ServerRuntime]::Save("$output/config/runtime.json", $runDir, $checkout)
+    [TGame.ServerRuntime]::Save("$output/config/server.yaml", $runDir, $checkout)
     $info.Environment[[TGame.ServerEnvironment]::Config] = "$runDir/server.yaml"
     $foreign = [Diagnostics.Process]::Start($info)
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    while (!(Test-Path -LiteralPath "$runDir/$($foreign.Id).started.json"))
+    {
+        Assert-True (!$foreign.HasExited -and [DateTime]::UtcNow -lt $deadline) '隔离进程未完成配置读取。'
+        Start-Sleep -Milliseconds 20
+    }
     # 紧急强退不依赖用于启动数量的配置记录。
-    Remove-Item -LiteralPath "$runDir/processes.json"
+    Remove-Item -LiteralPath "$runDir/server.yaml"
     Invoke-Entry 'KillAll'
     Assert-True (!$foreign.HasExited) '误杀了不同路径的同名进程。'
     Assert-True (@(Get-TestProcesses).Count -eq 1) '强退未清理当前运行组。'
@@ -229,13 +254,13 @@ try
 
     Set-Content -LiteralPath $currentFile -Value '../outside'
     Invoke-Entry 'KillAll' @() 1
-    Set-Content -LiteralPath $currentFile -Value $current
+    Set-Content -LiteralPath $currentFile -Value "logs/custom runs/$current"
     Remove-Item -LiteralPath "$output/TGame.Server.exe"
     Invoke-Entry 'StartAll' @('-NoBuild') 1
     foreach ($invalid in @('{}', '{"runDirectory":""}', '{"runDirectory":"C:/absolute"}'))
     {
-        Set-Content -LiteralPath "$configDir/runtime.json" -Value $invalid
-        Invoke-Entry 'StopAll' @() 1
+        Set-Content -LiteralPath "$configDir/server.yaml" -Value $invalid
+        Invoke-Entry 'StartAll' @('-NoBuild') 1
     }
     Write-Output 'PASS：独立 BAT、按类型启动/补起、配置路径、单参数、快照、互斥、正常停止/超时、强退及同名进程隔离。'
 }

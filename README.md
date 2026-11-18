@@ -6,7 +6,7 @@
 
 目录职责见 [项目文件结构](docs/项目文件结构.md)。Codex 日常开发可打开 `code/`；项目工具位于 `tools/`，策划源文件位于 `design/`。
 
-按当前结构阅读代码请从 [代码 Review 路径](docs/代码Review路径.md) 开始；历史阅读确认与准备步骤见 [代码 Review 进度](docs/代码Review进度.md)，历史验证范围见 [2026-11-17 完整测试记录](docs/2026-11-17完整测试记录.md)。
+逐文件说明见 [全项目手写源码详解](docs/代码详解/README.md)。按当前结构阅读代码请从 [代码 Review 路径](docs/代码Review路径.md) 开始；历史阅读确认与准备步骤见 [代码 Review 进度](docs/代码Review进度.md)，历史验证范围见 [2026-11-17 完整测试记录](docs/2026-11-17完整测试记录.md)。
 
 ## VS Code 开发
 
@@ -16,19 +16,19 @@
 
 ## 独立起停脚本
 
-服务器可以完全通过项目脚本运行，无需打开或编译服务器控制台。先运行 `tools/scripts/Start-EnvironmentTunnel.bat`，确保 ZooKeeper 可达；然后双击以下 BAT，或在仓库根目录执行：
+服务器可以完全通过项目脚本运行，无需打开或编译服务器控制台。新工作区先执行 `dotnet restore code/server/engine/TGame.Server.Engine.csproj` 准备 YAML 依赖。运行 `tools/scripts/Start-EnvironmentTunnel.bat`，确保 ZooKeeper 可达；然后双击以下 BAT，或在仓库根目录执行：
 
 ```powershell
-.\tools\scripts\StartAll.bat                 # 按 processes.json 的数量逐个调用对应类型脚本
+.\tools\scripts\StartAll.bat                 # 按 process.yaml 的数量逐个调用对应类型脚本
 .\tools\scripts\StartRouter.bat              # 新增一个 Router 进程
 .\tools\scripts\StartScene.bat               # 新增一个 Scene 进程
 .\tools\scripts\StopAll.bat                  # 正常停止，默认等待 10 秒
 .\tools\scripts\KillAll.bat                  # 强制结束脚本管理的当前进程组
 ```
 
-每种类型都有独立入口：`StartGate`、`StartLogin`、`StartBase`、`StartScene`、`StartRouter`、`StartDBMgr`、`StartProfile`、`StartGM`。各 BAT 调用同名 PowerShell 脚本；`StartAll.ps1` 的共用实现读取 [processes.json](code/server/config/processes.json)，按数量逐个调用这些类型脚本。新运行组默认只编译服务器 App；`-NoBuild` 使用已有产物。已有进程组继续使用本轮快照，重复 `StartAll` 只补齐缺失槽位，单类型入口每次新增一个实例。
+每种类型都有独立入口：`StartGate`、`StartLogin`、`StartBase`、`StartScene`、`StartRouter`、`StartDBMgr`、`StartProfile`、`StartGM`。各 BAT 调用同名 PowerShell 脚本；`StartAll.ps1` 的共用实现读取 [server.yaml](code/server/config/server.yaml) 及 include 的 `processes`，按数量逐个调用这些类型脚本。新运行组默认只编译服务器 App；`-NoBuild` 使用已有产物。已有进程组继续使用本轮快照，重复 `StartAll` 只补齐缺失槽位，单类型入口每次新增一个实例。
 
-[runtime.json](code/server/config/runtime.json) 的 `runDirectory` 配置运行记录根目录，必须是相对仓库根目录的路径，默认 `logs/server-runs`。脚本固定工作目录、创建本轮子目录，并把相对路径写入本轮可执行快照的 `config/runtime.json`。服务器只读取这份配置，不创建运行目录。更改运行目录配置前须先停止原进程组。
+[server.yaml](code/server/config/server.yaml) 的 `runDirectory` 配置运行记录根目录，必须是相对仓库根目录的路径，默认 `logs/server-runs`。脚本固定工作目录、创建本轮子目录，并把相对路径写入本轮可执行快照的 `config/server.yaml`。服务器只读取这份配置，不创建运行目录。固定管理指针及互斥锁保存在 `logs/tools/server-scripts/`，指针记录本轮相对运行目录；补起和停止先定位原组，不依赖源配置继续有效。修改源 runDirectory 在创建新组时生效。
 
 每轮构建快照保存在 `build/server-runs/`，环境 YAML 和启动数量同时留存。服务器在后台运行，真正就绪以 `logs/server/` 中的 `PROCESS_READY` 为准。脚本进程组与控制台进程组分别管理，`StopAll` 和 `KillAll` 仅操作脚本组。正常停止超时返回非零退出码，不自动强退；可用 `-TimeoutSeconds 30` 调整等待时间。自动化建议直接调用 `pwsh -NoProfile -File tools/scripts/powershell/StartAll.ps1`；调用 BAT 时设置 `TGAME_NONINTERACTIVE=1` 可避免失败后等待按键。
 
@@ -38,7 +38,7 @@
 
 Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目录运行它。进程基础框架使用本机游戏进程及下文的 ZooKeeper 隧道。打开窗口和查看已有日志可以离线进行。使用 `-Check` 可验证控制台能否加载。
 
-- **启动服务器** 按 [进程数量配置](code/server/config/processes.json) 拉起各类型的全部实例。再次执行会按本组配置快照补起缺少的进程。配置格式、实例命名与就绪条件见 [服务器组配置](docs/服务器组配置.md)。双击 **关闭服务器** 后勾选本次要关闭的实例。关闭控制台窗口后服务器继续运行，下次打开可继续管理。
+- **启动服务器** 按 [进程数量配置](code/server/config/process.yaml) 拉起各类型的全部实例。再次执行会按本组配置快照补起缺少的进程。配置格式、实例命名与就绪条件见 [服务器组配置](docs/服务器组配置.md)。双击 **关闭服务器** 后勾选本次要关闭的实例。关闭控制台窗口后服务器继续运行，下次打开可继续管理。
 - **导出 Protobuf** 生成协议 C# 源码。**编译服务器 C#** 构建服务端工程。**编译并重启** 在构建成功后切换到新一轮进程，编译失败时可在命令输出中查看原因。
 - 右栏为每个配置实例创建独立页签。可以滚动或搜索进程名、PID 切换实例。绿点表示已收到当前实例的 `PROCESS_READY`，且每种主动依赖类型至少有一条握手连接。失去冗余实例时保持就绪；失去某类最后一条依赖连接时显示连接不全，重连后恢复绿色。
 - 各页签保留最近 1000 行。按 `Ctrl+F` 搜索，`F3` 和 `Shift+F3` 跳到下一条、上一条匹配日志，也可勾选“仅匹配行”来过滤显示。清空显示后继续接收新日志，磁盘上的滚动日志可用于复盘。
@@ -48,7 +48,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 | 范围 | 保存位置 | 内容 |
 | --- | --- | --- |
 | 项目 | [控制台配置](tools/server-console/project.json) | `environmentName` 是左栏显示的环境名称。`commands` 决定可用命令和显示顺序。可选值为 `Start`、`Stop`、`ExportProtobuf`、`Build`、`BuildAndRestart`。 |
-| 项目 | [服务端进程数量](code/server/config/processes.json) | 决定脚本及控制台初始启动数量，并作为服务器首次连接门槛；新运行组保存配置快照。 |
+| 项目 | [服务端进程数量](code/server/config/process.yaml) | 决定脚本及控制台初始启动数量，并作为服务器首次连接门槛；新运行组保存配置快照。 |
 | 用户 | `%LOCALAPPDATA%\TGame\ServerConsole\<工作目录标识>\user.json` | 关闭窗口时保存尺寸、最大化状态、当前页签，以及各进程的搜索词、仅匹配行和跟踪最新选项。每个 Windows 账户和工作目录分别保存。 |
 
 项目配置随 Git 提交，下次打开控制台时生效。个人设置在本机自动生成。实际进程状态由控制台从运行实例和日志重新读取；独立存储联调所需凭据取自环境变量或本机秘密配置，不写入仓库。
@@ -57,19 +57,22 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 ## 服务器环境
 
-服务端通过 `TGAME_SERVER_CONFIG` 显式选择 YAML 文件；未选择或基础配置不完整时拒绝启动。进程基础框架要求 `zooKeeper` 和 `discoveryRoot`，`minimumLogLevel` 可选，默认 `INFO`。启动不要求数据库地址、账号或密码；独立存储工具使用时自行校验所需配置与凭据。
+服务端通过 `TGAME_SERVER_CONFIG` 显式选择 YAML 文件；未选择或基础配置不完整时拒绝启动。进程基础框架要求环境名、相对运行目录、进程数量与拓扑以及完整 `zooKeeper` 配置，`loggingMinimumLevel` 可选，默认 `INFO`。启动不要求数据库地址、账号或密码；独立存储工具使用时自行校验所需配置与凭据。
 
-[server.local.yaml](code/server/config/server.local.yaml) 描述本地开发环境，控制台默认选择这份配置；设置 `TGAME_SERVER_CONFIG` 后使用指定环境。启动新一组进程时，控制台将所选 YAML 保存为运行目录中的 `server.yaml`；重新接管或补起进程时复用快照，不受后续环境变量或源文件变化影响。ZooKeeper 发现根路径须预先创建。
+[server.yaml](code/server/config/server.yaml) 是本地默认入口，脚本与控制台优先使用 `TGAME_SERVER_CONFIG` 指定的入口。它通过 `include: [ops, process]` 引用同目录的两个文件；各文件独立解析后合并顶层字段，重名直接失败，YAML 锚点和别名只在单文件内有效。宿主将加载器 `YamlConfiguration` 和绑定后的配置对象注册为 IoC 单例，不自动热重载。新运行组把展开后的完整配置保存到运行目录和可执行快照中，重新接管或补起继续使用它。
 
-仅运行进程框架时，环境 YAML 可以只包含：
+总入口示例（其引用文件也必须存在）：
 
 ```yaml
-zooKeeper: "127.0.0.1:2181"
-discoveryRoot: "/tgame/test"
-minimumLogLevel: DEBUG
+include: [ops, process]
+environment: test
+loggingMinimumLevel: DEBUG
+runDirectory: logs/server-runs
 ```
 
-主动连接规则由 [connections.json](code/server/config/connections.json) 声明，必须无环。运行时持续发现在线实例；[processes.json](code/server/config/processes.json) 决定初始启动数量和各类型首次连接门槛，数量不构成连接上限。
+[ops.yaml](code/server/config/ops.yaml) 包含 MongoDB、Redis、ZooKeeper 的连接参数及密码变量名。基础框架不建立存储连接。
+
+主动连接规则由 [process.yaml](code/server/config/process.yaml) 的 `connections` 声明，必须无环。运行时持续发现在线实例；同文件的 `processes` 决定初始启动数量和各类型首次连接门槛，数量不构成连接上限。
 
 ## 服务器运行与验证
 
@@ -87,16 +90,16 @@ dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- --
 
 测试无参数时也只运行 `--engine`，`--node` 是同义入口。动态连接、日志、配置、ID 和独立存储检查见[服务器启动与动态发现](docs/服务器组配置.md)、[代码 Review 路径](docs/代码Review路径.md)及[统一 ID 生成](docs/雪花ID.md)。外部服务联调或完整控制台验收须先说明范围与预计耗时，获得明确同意后执行。历史测试记录不代表当前版本已完成联调。
 
-宿主启动依次完成日志 → 配置 → 构建 IoC 根容器 → ZooKeeper 会话与空地址临时占号 → ID → 监听及主动依赖连接 → 地址发布 → `PROCESS_READY`。每种主动目标类型至少有一条完成握手的连接时，`ServerNode.Ready` 为真；无主动依赖的 Router 可直接就绪，不等入站。`FirstLinks` 只记录首次连接齐备，当前就绪随依赖断线与重连变化。连接握手只交换进程身份。
+宿主启动依次完成日志 → 配置 → 构建 IoC 根容器 → ZooKeeper 会话与空地址临时占号 → ID → 监听及主动依赖连接 → 地址发布 → `PROCESS_READY`。首次启动要求每种主动目标类型达到配置数量，首次达标后只要求每种正门槛类型至少保留一条完成握手的连接，`ServerNode.Ready` 才为真；无主动依赖的 Router 可直接就绪，不等入站。`FirstLinks` 只记录首次连接齐备，当前就绪随依赖断线与重连变化。连接握手只交换进程身份。
 
-服务端入口 [Program.cs](code/server/app/Program.cs) 只接受 `<进程类型>`，例如 `Scene`；运行目录从可执行文件旁的 `config/runtime.json` 读取，相对进程工作目录解析。脚本与控制台均把工作目录设为仓库根目录，并通过脚本预先创建运行目录。类型启动后通过 ZooKeeper 自动抢占从 1 开始的空闲实例编号，统一生成为 `Scene1`、`Scene2` 等名称。空地址节点不参与服务发现，但可证明尚未发布地址的主动连接方持有合法身份。强制终止后，旧节点在会话过期时删除；期间新进程可抢占其他空闲编号。
+服务端入口 [Program.cs](code/server/app/Program.cs) 只接受 `<进程类型>`，例如 `Scene`；运行目录从 `TGAME_SERVER_CONFIG` 指向的 `server.yaml` 快照读取，相对进程工作目录解析。脚本与控制台均把工作目录设为仓库根目录，并通过脚本预先创建运行目录。类型启动后通过 ZooKeeper 自动抢占从 1 开始的空闲实例编号，统一生成为 `Scene1`、`Scene2` 等名称。空地址节点不参与服务发现，但可证明尚未发布地址的主动连接方持有合法身份。强制终止后，旧节点在会话过期时删除；期间新进程可抢占其他空闲编号。
 
 手动起服从仓库根目录执行；依赖类型应分别启动，例子和默认连接关系见[服务器启动与动态发现](docs/服务器组配置.md)：
 
 ```powershell
 dotnet build code/server/app/TGame.Server.csproj
-$env:TGAME_SERVER_CONFIG = (Resolve-Path code/server/config/server.local.yaml).Path
-pwsh -NoProfile -File tools/scripts/powershell/New-ServerRunDirectory.ps1 -Configuration build/bin/TGame.Server/debug/config/runtime.json
+$env:TGAME_SERVER_CONFIG = (Resolve-Path code/server/config/server.yaml).Path
+pwsh -NoProfile -File tools/scripts/powershell/New-ServerRunDirectory.ps1 -Configuration $env:TGAME_SERVER_CONFIG
 dotnet build/bin/TGame.Server/debug/TGame.Server.dll Router
 ```
 
@@ -110,7 +113,7 @@ dotnet build/bin/TGame.Server/debug/TGame.Server.dll Router
 
 ### 独立存储工具
 
-[MongoStorageSettings](code/server/logic/storage/MongoStorageSettings.cs) 和 [MongoStorage](code/server/logic/storage/MongoStorage.cs) 保留配置读取、客户端创建与连接检查能力；[dbmgr-storage.yaml](code/server/config/dbmgr-storage.yaml) 提供独立 MongoDB 配置示例。调用方显式提供密码，配置文件不保存密码。DBMgr 进程启动不调用这些工具，也不以数据库检查决定就绪。
+[MongoStorageSettings](code/server/logic/storage/MongoStorageSettings.cs) 和 [MongoStorage](code/server/logic/storage/MongoStorage.cs) 保留配置读取、客户端创建与连接检查能力；[ops.yaml](code/server/config/ops.yaml) 提供独立 MongoDB 配置示例。调用方显式提供密码，配置文件不保存密码。DBMgr 进程启动不调用这些工具，也不以数据库检查决定就绪。
 
 [ProfileStore](code/server/logic/storage/ProfileStore.cs) 与 [StorageConnections](code/server/logic/storage/StorageConnections.cs) 保留 MongoDB/Redis 存储能力，使用时要求完整的存储字段与配置指定的凭据变量。本地示例变量为 `TGAME_MONGO_PASSWORD` 和 `TGAME_REDIS_PASSWORD`。这些工具没有进程 RPC 入口；只有独立存储操作和存储联调需要准备对应数据库及凭据。
 
@@ -153,7 +156,7 @@ pwsh -NoProfile -File .\tools\scripts\powershell\Connect-Server.ps1 -RemoteComma
 
 ## 配置数据的组织与格式约定
 
-以下约定暂定配置的维护方式和产物格式，具体加载、校验与热重载机制在后续设计中确定。
+服务器运行 YAML 已使用统一加载、校验和运行快照机制；其余配置类别的加载与热重载机制按各自后续设计确定。
 
 | 配置类别 | 维护方式 | 产物格式 |
 | --- | --- | --- |

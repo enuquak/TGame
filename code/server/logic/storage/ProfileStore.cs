@@ -57,7 +57,7 @@ internal sealed class ProfileStore : IDisposable
 
         log.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "Profile 存储配置加载完成");
 
-        var mongo = StorageConnections.Mongo(settings.ProfileMongo, settings);
+        var mongo = StorageConnections.Mongo(settings);
         try
         {
             log.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "MongoDB 客户端创建完成");

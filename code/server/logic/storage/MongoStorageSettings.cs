@@ -1,10 +1,9 @@
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
-
 namespace TGame.Server.Storage;
 
 internal sealed class MongoStorageSettings
 {
+    public const string SectionName = "mongo";
+    public MongoPasswordVariables PasswordVariables { get; init; } = new();
     public required string Endpoint
     {
         get;
@@ -37,17 +36,7 @@ internal sealed class MongoStorageSettings
 
     public static MongoStorageSettings Load(string path)
     {
-        var yaml = File.ReadAllText(path);
-        var builder = new DeserializerBuilder();
-        builder.WithNamingConvention(CamelCaseNamingConvention.Instance);
-
-        var deserializer = builder.Build();
-        var settings = deserializer.Deserialize<MongoStorageSettings>(yaml);
-        if (settings is null)
-        {
-            throw new InvalidDataException($"MongoDB configuration is empty: {path}");
-        }
-
+        var settings = new YamlConfiguration(path).Read<MongoStorageSettings>(SectionName);
         settings.Validate();
         return settings;
     }
@@ -60,4 +49,10 @@ internal sealed class MongoStorageSettings
         ArgumentException.ThrowIfNullOrWhiteSpace(UserName);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ServerSelectionTimeoutSeconds);
     }
+}
+
+internal sealed class MongoPasswordVariables
+{
+    public string Profile { get; init; } = "";
+    public string Dbmgr { get; init; } = "";
 }

@@ -11,7 +11,6 @@ internal sealed class ConsoleSession : IDisposable
     private const string Project = "code/server/app/TGame.Server.csproj";
     private const string EngineProject = "code/server/engine/TGame.Server.Engine.csproj";
     private const string ProtocolProject = "code/shared/TGame.Shared.csproj";
-    private const string RunConfigurationFile = "server.yaml";
     private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
     private const string RedisPasswordKey = "REDIS_TEST_PASSWORD";
     private const string SessionDirectoryFormat = "yyyyMMdd-HHmmss-fffffff";
@@ -41,7 +40,7 @@ internal sealed class ConsoleSession : IDisposable
         var current = Path.Combine(sessions, "current");
         if (!File.Exists(current))
         {
-            var configured = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
+            var configured = ServerGroup.Read(LoadSelectedConfiguration());
             Instances = CreateInstances(configured);
             return;
         }
@@ -113,7 +112,7 @@ internal sealed class ConsoleSession : IDisposable
 
     private Task Compile() => Dotnet("编译服务器", "build", Project, "--nologo");
 
-    // The UI dispatches commands, timer ticks and continuations on the same thread.
+    // 界面命令、计时器和异步续体由同一条 UI 线程调度。
     private async Task Command(Func<Task> action)
     {
         if (busy)
@@ -136,7 +135,8 @@ internal sealed class ConsoleSession : IDisposable
 
     private async Task StartNewRun()
     {
-        var group = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
+        var configuration = LoadSelectedConfiguration();
+        var group = ServerGroup.Read(configuration);
         var configuredNames = group.Processes.Select(process => process.Name);
         bool changed = !Instances.Select(instance => instance.SlotName).SequenceEqual(configuredNames);
         var nextInstances = Instances;
@@ -153,15 +153,13 @@ internal sealed class ConsoleSession : IDisposable
         {
             var source = Path.Combine(root, "build", "bin", "TGame.Server", "debug");
             var apphosts = nextInstances.Select(instance => Path.Combine(snapshot, instance.ExecutableName));
-            PrepareSnapshot(source, snapshot, group, apphosts);
+            PrepareSnapshot(source, snapshot, configuration, runDir, root, apphosts);
         });
         var runtimeConfig = Path.Combine(snapshot, "config", ServerRuntime.FileName);
-        ServerRuntime.Save(runtimeConfig, runDir, root);
         await PrepareRunDirectory(runtimeConfig);
         File.WriteAllText(Path.Combine(runDir, SessionMarker), "");
         File.WriteAllText(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker), "");
-        group.Save(Path.Combine(runDir, ServerGroup.FileName));
-        SaveRunConfiguration(runDir);
+        File.Copy(runtimeConfig, Path.Combine(runDir, YamlConfiguration.FileName));
         var starts = nextInstances.Select(i => StartInfo(i, name)).ToArray();
         await Task.WhenAll(Instances.Select(i => i.StopAsync(Report)));
         if (changed)
@@ -202,7 +200,8 @@ internal sealed class ConsoleSession : IDisposable
         }
     }
 
-    internal static void PrepareSnapshot(string source, string snapshot, ServerGroup startup, IEnumerable<string> apphosts)
+    internal static void PrepareSnapshot(string source, string snapshot, YamlConfiguration configuration,
+        string runDirectory, string workingDirectory, IEnumerable<string> apphosts)
     {
         foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
         {
@@ -211,23 +210,25 @@ internal sealed class ConsoleSession : IDisposable
             File.Copy(file, dest);
         }
 
-        // 启动计划可能在编译后调整；服务器必须读取本轮计划中的同一份门槛。
-        startup.Save(Path.Combine(snapshot, "config", ServerGroup.FileName));
+        // 启动数量、连接关系和运行参数使用同一次加载的完整配置，补起时不再依赖源文件。
+        var configDirectory = Directory.CreateDirectory(Path.Combine(snapshot, "config")).FullName;
+        configuration.SaveSnapshot(Path.Combine(configDirectory, YamlConfiguration.FileName),
+            Path.GetRelativePath(workingDirectory, runDirectory));
         foreach (var apphost in apphosts)
         {
             File.Copy(Path.Combine(snapshot, "TGame.Server.exe"), apphost);
         }
     }
 
-    private void SaveRunConfiguration(string runDir)
+    private YamlConfiguration LoadSelectedConfiguration()
     {
-        var source = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
-        if (string.IsNullOrWhiteSpace(source))
+        var selected = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
+        if (string.IsNullOrWhiteSpace(selected))
         {
-            source = Path.Combine(root, "build", "bin", "TGame.Server", "debug", "config", "server.local.yaml");
+            selected = YamlConfiguration.ConfigurationPath;
         }
 
-        File.Copy(Path.GetFullPath(source!, root), Path.Combine(runDir, RunConfigurationFile));
+        return new YamlConfiguration(Path.GetFullPath(selected, root));
     }
 
     private void Open(string name)
@@ -264,7 +265,7 @@ internal sealed class ConsoleSession : IDisposable
         var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
         var runDir = Path.Combine(sessions, name);
         info.ArgumentList.Add(instance.Role);
-        var config = Path.Combine(runDir, RunConfigurationFile);
+        var config = Path.Combine(runDir, YamlConfiguration.FileName);
         if (!File.Exists(config))
         {
             throw new InvalidOperationException("当前运行缺少环境配置快照，请选择环境后编译并重启。");

@@ -20,11 +20,12 @@ internal static class MongoStorageChecks
         {
             var endpoint = unavailableServer.LocalEndpoint.ToString();
             var yaml = $$"""
-                endpoint: "{{endpoint}}"
-                databaseName: "{{DatabaseName}}"
-                authenticationDatabase: "{{AuthenticationDatabase}}"
-                userName: "{{UserName}}"
-                serverSelectionTimeoutSeconds: {{SelectionTimeoutSeconds}}
+                mongo:
+                  endpoint: "{{endpoint}}"
+                  databaseName: "{{DatabaseName}}"
+                  authenticationDatabase: "{{AuthenticationDatabase}}"
+                  userName: "{{UserName}}"
+                  serverSelectionTimeoutSeconds: {{SelectionTimeoutSeconds}}
                 """;
             File.WriteAllText(config, yaml);
             var settings = MongoStorageSettings.Load(config);

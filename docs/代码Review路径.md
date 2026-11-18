@@ -1,6 +1,6 @@
 # 代码 Review 路径
 
-更新时间：2026-11-19（Asia/Shanghai）。当前分支为 `review-1118`，服务器已收敛为进程基础框架：ZooKeeper、进程连接、基础 RPC、日志和 ID。进程服务由 App 的单个 IoC 根容器组装，使用方通过构造函数接收依赖；`processes.json` 同时提供控制台初始启动数量和运行时首次连接门槛。独立存储工具与业务共享协议保留，启动不再创建实体或初始化业务服务。
+更新时间：2026-11-19（Asia/Shanghai）。当前分支为 `review-1118`，服务器已收敛为进程基础框架：ZooKeeper、进程连接、基础 RPC、日志和 ID。进程服务由 App 的单个 IoC 根容器组装，使用方通过构造函数接收依赖；`process.yaml` 的 `processes` 同时提供控制台初始启动数量和运行时首次连接门槛。独立存储工具与业务共享协议保留，启动不再创建实体或初始化业务服务。
 
 用户此前确认第一节已读完（2026-11-17）、第三节的 `Program.cs` 已理解（2026-11-18）。这些记录保留，但本次启动流程和测试入口的变化仍需核对，不自动计为已读；详细记录见[代码 Review 进度](代码Review进度.md)。
 
@@ -11,16 +11,16 @@
 - [x] [TGame.slnx](../TGame.slnx)、[宿主工程](../code/server/app/TGame.Server.csproj)、[引擎工程](../code/server/engine/TGame.Server.Engine.csproj)、[业务共享工程](../code/shared/TGame.Shared.csproj)：用户已确认工程边界。宿主分别引用 Engine 和 Shared；Engine 只引用第三方包，两套协议各自在所属项目生成。
 - [x] [ProcessType.cs](../code/server/engine/configuration/ProcessType.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)：用户已确认角色、实例名称与数量的区别；实例统一使用 `Router1`、`Base1` 等带编号名称。
 - [x] [EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs)、[ServerEnvironment.cs](../code/shared/csharp/ServerEnvironment.cs)：用户已确认引擎运行标记与宿主、存储环境变量的边界。
-- [x] [ServerSettings.cs](../code/server/app/ServerSettings.cs)、[server.local.yaml](../code/server/config/server.local.yaml)：用户已确认环境选择、配置快照、凭据变量名与配置校验。
-- [ ] 核对本次配置注入：`ServerSettings.LoadSelected()` 显式加载宿主配置，`ServerConfiguration.Load(...)` 与 `ServerGroup.Load(...)` 返回独立只读的连接规则和数量配置；不再通过静态 `Current` 或静态配置实例读取。宿主配置不进入 Engine。
-- [ ] 核对当前 [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)、[connections.json](../code/server/config/connections.json) 与 [processes.json](../code/server/config/processes.json)：连接规则必须无环；数量同时决定控制台初始启动次数和运行时首次连接门槛，通过 `GetStartupMinimum(ProcessType)` 查询。实际实例仍由 ZooKeeper 动态发现，数量不是连接上限或合法编号范围。
+- [x] [ServerSettings.cs](../code/server/app/ServerSettings.cs)、[server.yaml](../code/server/config/server.yaml)：用户已确认环境选择、配置快照、凭据变量名与配置校验。
+- [ ] 核对本次配置注入：[YamlConfiguration.cs](../code/server/engine/configuration/YamlConfiguration.cs) 一次加载总入口与 include、展开文件内别名、拒绝顶层重名。App 将加载器及 `ServerSettings.From(yaml)`、拓扑、数量和选项注册为单例；运行期间读取快照，不使用静态全局配置。
+- [ ] 核对当前 [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)、[process.yaml 的 connections](../code/server/config/process.yaml) 与 [process.yaml 的 processes](../code/server/config/process.yaml)：连接规则必须无环；数量同时决定控制台初始启动次数和运行时首次连接门槛，通过 `GetStartupMinimum(ProcessType)` 查询。实际实例仍由 ZooKeeper 动态发现，数量不是连接上限或合法编号范围。
 
 读完应能回答：所有角色为何运行同一个程序？保留的存储代码编译到哪个程序集？Engine 为什么能独立于业务 Shared 编译？DBMgr/Profile 的角色名称为何不代表启动时初始化数据库？
 
 ## 2. 进程身份与 ID
 
 - [ ] [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)：按构造函数 → `InitializeAsync` → `GenId` → `LeaseLost` → `DisposeAsync` 阅读。理解容器内共享实例、注入的 ZK 依赖、使用前初始化、同一对象重复初始化报错和释放后不能继续发号；宿主控制初始化顺序，容器负责其创建的服务释放。
-- [ ] [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)、[id-generator.json](../code/server/config/id-generator.json)、[ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs)、[zookeeper.json](../code/server/config/zookeeper.json)：区分 worker 根路径与 ZooKeeper 连接、会话超时；ZooKeeper 地址及进程发现根路径来自宿主设置。
+- [ ] [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)、[server.yaml](../code/server/config/server.yaml)、[ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs)、[ops.yaml](../code/server/config/ops.yaml)：区分 worker 根路径与 ZooKeeper 连接、会话超时；ZooKeeper 地址及进程发现根路径来自宿主设置。
 - [ ] [IdText.cs](../code/server/engine/identifiers/IdText.cs)：校验无前导零的正 `long` 十进制文本，不负责生成 ID 或判断业务对象是否存在。
 - [ ] [SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)、[SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)：主线读通后再看时间戳、worker、序号组合、同毫秒序列耗尽、时钟回退、租约有效性与释放。
 
@@ -29,7 +29,7 @@
 ## 3. 沿启动流程读一遍
 
 - [x] [Program.cs](../code/server/app/Program.cs)：用户已理解此前的宿主组装、并发任务、`Task.WhenAll`、停止文件与会话监控、异常监督、取消和释放。
-- [ ] 核对本次 IoC 组装后的 `Program.cs`：日志创建 → 配置加载 → 构建根容器 → ZooKeeper 会话及空地址临时占号 → ID 初始化 → 解析节点和启动监听 → 首次连接数量达标 → 发布服务地址 → `PROCESS_READY`。跟踪连接配置、`ServerGroup`、ZK、ID、身份和节点的注册与解析时机，并核对 App 输出中的 `config/processes.json`；`WriteProcessIdentity` 单独负责通过临时文件发布本机身份记录。当前不扫描业务类型，也不初始化 DBMgr/Profile 存储；环境配置只要求 ZooKeeper 与发现根路径，存储字段由独立工具使用时校验。
+- [ ] 核对本次 IoC 组装后的 `Program.cs`：日志创建 → 配置加载 → 构建根容器 → ZooKeeper 会话及空地址临时占号 → ID 初始化 → 解析节点和启动监听 → 首次连接数量达标 → 发布服务地址 → `PROCESS_READY`。跟踪连接配置、`ServerGroup`、ZK、ID、身份和节点的注册与解析时机，并核对 App 输出中的 `config/server.yaml`；`WriteProcessIdentity` 单独负责通过临时文件发布本机身份记录。当前不扫描业务类型，也不初始化 DBMgr/Profile 存储；配置包含环境名、运行目录、进程数量/拓扑与完整 ZooKeeper 参数，存储字段由独立工具使用时校验。
 - [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数接收进程身份、连接配置、`ServerGroup`、ZK、ID 和日志；名称和角色从身份对象派生，所需连接类型直接查询配置。核对 `FirstLinks`、`Ready`：首次按主动目标类型统计已握手的不同实例，达到各自门槛；门槛为 `0` 的类型不阻塞，无主动依赖可直接就绪，不等待入站。
 
 `FirstLinks` 只完成一次；完成后，`Ready` 只要求每种正门槛类型至少一条握手连接。例如 `Router: 2` 首次需两个 Router，之后降到一个仍就绪，全部断开会报告连接不全并撤销当前就绪，恢复一个即可恢复；不撤销 `FirstLinks`，也不重新要求两个。门槛为 `0` 的类型不影响健康状态。入站连接不替代主动依赖，达到首次门槛后的额外实例不阻塞启动。
@@ -72,7 +72,7 @@ sequenceDiagram
 
 - [ ] [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs)、[GameLog.cs](../code/server/engine/GameLog.cs)：从 `ServerSettings.MinimumLogLevel` 追到日志实例创建、注入、级别过滤、文件开启与释放。理解 App 提前创建且最后释放日志的原因。缺省为 `Info`，当前本地配置为 `DEBUG`。
 - [ ] [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs)、[LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)：看事件、实例、连接、请求及等级如何写入 JSON；`ProcessReady` 的事件值为 `PROCESS_READY`。
-- [ ] [控制台工程](../tools/server-console/TGame.ServerConsole.csproj)、[ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)：控制台分别引用 Engine 与业务 Shared，将同一启动计划保存到运行目录与可执行快照的 `config/processes.json`，保证起服数量和首次连接门槛一致；按启动计划起服、获配实例名和 `ProcessReady` 更新状态，再看精确停止、恢复和编译重启。
+- [ ] [控制台工程](../tools/server-console/TGame.ServerConsole.csproj)、[ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)：控制台分别引用 Engine 与业务 Shared，将同一启动计划保存到运行目录与可执行快照的 `config/server.yaml`，保证起服数量和首次连接门槛一致；按启动计划起服、获配实例名和 `ProcessReady` 更新状态，再看精确停止、恢复和编译重启。
 - [ ] [Import-ServerTypes.ps1](../tools/scripts/powershell/Import-ServerTypes.ps1)、[Read-ServerGroup.ps1](../tools/scripts/powershell/Read-ServerGroup.ps1)：脚本从引擎唯一声明加载基础类型，按需加载业务环境变量，不复制常量。
 - [ ] [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs)、[StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs)、[MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs)、[MongoStorageSettings.cs](../code/server/logic/storage/MongoStorageSettings.cs)：作为独立存储工具阅读，不把它们理解为当前启动阶段。它们未通过进程 RPC 暴露。
 - [ ] [profile.proto](../code/shared/protocols/profile.proto)、[ProfileLogEvents.cs](../code/shared/csharp/ProfileLogEvents.cs)：业务协议和事件仍由 Shared 持有，不进入引擎传输层。
@@ -91,9 +91,9 @@ sequenceDiagram
 | IoC 共享、容器隔离与释放 | `--ioc`，不连接外部服务 |
 | 配置、日志和本地会话生命周期守卫 | `--configuration`、`--logging`、`--zookeeper-session`，不连接外部服务 |
 | 真实 ZooKeeper 占号、地址发布与身份校验 | `--registry`、`--startup-publication` |
-| 真实 ZooKeeper worker 租约与发号 | `--id-zookeeper code/server/config/id-generator.json` |
+| 真实 ZooKeeper worker 租约与发号 | `--id-zookeeper code/server/config/server.yaml` |
 | 独立 MongoDB 配置、取消及连接失败 | `--mongo-storage`，使用本地回环测试端点，无需真实数据库 |
-| 真实 MongoDB/Redis 的独立 Profile 存储 | `--profile-storage code/server/config/id-generator.json`，需 ZooKeeper 与存储服务 |
+| 真实 MongoDB/Redis 的独立 Profile 存储 | `--profile-storage code/server/config/server.yaml`，需 ZooKeeper 与存储服务 |
 | 控制台就绪状态、身份、恢复与精确停止 | [控制台检查](../tools/server-console/tests/Program.cs) 的 `--state-only`；`--identity-only` 只检查身份 |
 | 完整控制台进程组联调 | [Test-ServerConsole.ps1](../tools/scripts/powershell/Test-ServerConsole.ps1)，需另行确认执行范围 |
 

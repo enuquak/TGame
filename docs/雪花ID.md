@@ -41,7 +41,7 @@ await ids.InitializeAsync(stop);
 
 ## 配置与调用点
 
-[id-generator.json](../code/server/config/id-generator.json) 仅声明编号根路径。[zookeeper.json](../code/server/config/zookeeper.json) 统一声明连接和会话超时。ZooKeeper 地址与进程发现根路径继续由宿主 ServerSettings 提供，ID 分配和服务发现共用同一个代理会话。宿主将配置显式传给引擎，引擎不读取业务配置。
+[ops.yaml](../code/server/config/ops.yaml) 的 `zooKeeper` 统一声明地址、发现根路径、`workerRootPath`、连接及会话超时，由 [server.yaml](../code/server/config/server.yaml) include 加载。App 从同一次加载结果创建 `ZooKeeperOptions` 与 `IdGeneratorOptions`；ID 和服务发现共用代理会话。独立 ID 检查也传入总入口路径。
 
 进程基础框架使用它生成 RPC 请求 ID 和连接 ID；保留的独立存储工具使用它生成 Redis 缓存占用标记。当前节点不创建实体身份，也没有实体注册或路由流程；存储协议中的业务实体 ID 由调用方提供。
 
@@ -60,8 +60,8 @@ dotnet run --project code/tests/engine/TGame.EngineTests.csproj --no-build -- --
 上述为操作入口，不代表本次文档更新已执行检查。`--zookeeper-session` 只验证本地会话状态及 ID 生命周期守卫，不连接外部服务；按改动选择所需检查。真实 ZooKeeper、数据库或完整控制台联调须先按项目规范说明范围与预计耗时并获得确认，再执行相应检查，例如：
 
 ```powershell
-$env:TGAME_SERVER_CONFIG = (Resolve-Path code/server/config/server.local.yaml).Path
-dotnet run --project code/tests/engine/TGame.EngineTests.csproj -- --id-zookeeper code/server/config/id-generator.json
+$env:TGAME_SERVER_CONFIG = (Resolve-Path code/server/config/server.yaml).Path
+dotnet run --project code/tests/engine/TGame.EngineTests.csproj -- --id-zookeeper code/server/config/server.yaml
 pwsh -NoProfile -File tools/scripts/powershell/Test-ServerConsole.ps1
 ```
 

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using TGame;
 using TGame.ServerConsole;
 
@@ -10,6 +9,8 @@ if (args is ["--identity-only"] or ["--state-only"])
         if (args[0] == "--state-only")
         {
             var root = Directory.CreateTempSubdirectory("tgame-console-state-").FullName;
+            ConfigChecks.Run(root);
+            GroupConfigChecks.Run(root);
             LogChecks.Run(root);
         }
 
@@ -23,7 +24,7 @@ if (args is ["--identity-only"] or ["--state-only"])
     }
 }
 
-// Run against a disposable checkout so a developer's live servers are never stopped.
+// 集成检查只接受临时副本，避免停止开发者正在运行的服务器。
 if (args is not [var checkout, ..] || args.Length > 2 || !File.Exists(Path.Combine(checkout, ".console-check")))
 {
     throw new ArgumentException("Expected a disposable checkout created by Test-ServerConsole.ps1.");
@@ -112,7 +113,7 @@ try
         throw new InvalidOperationException("Restarting the Router instance retained its old PID.");
     }
 
-    // A compiler error must leave the running group and its PID associations intact.
+    // 编译失败不得破坏正在运行的进程组及其 PID 关联。
     var broken = Path.Combine(checkout, "code/server/app/BrokenCheck.cs");
     await File.WriteAllTextAsync(broken, "#error ServerConsole.Check");
     pids = session.Instances.ToDictionary(i => i.SlotName, i => i.Pid);
@@ -138,10 +139,10 @@ try
     }
 
     var configuration = Path.Combine(checkout, ServerGroup.ConfigurationPath);
-    var counts = JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(configuration))!;
+    var counts = new YamlConfiguration(configuration).Read<Dictionary<string, int>>(ServerGroup.SectionName);
     int expectedInstances = session.Instances.Count + 1;
     counts[nameof(ProcessType.Login)]++;
-    File.WriteAllText(configuration, JsonSerializer.Serialize(counts));
+    new ServerGroup(counts).Save(configuration);
     bool instancesChanged = false;
     session.InstancesChanged += () => instancesChanged = true;
 
@@ -221,7 +222,7 @@ async Task CheckDynamicRegistrationAsync()
     };
     info.ArgumentList.Add(nameof(ProcessType.Router));
     info.Environment[EngineEnvironment.LogRoot] = Path.Combine(checkout, "dynamic-registration", "logs");
-    info.Environment[ServerEnvironment.Config] = Path.Combine(Path.GetDirectoryName(original.MainModule!.FileName)!, "config", "server.local.yaml");
+    info.Environment[ServerEnvironment.Config] = runtimeConfig;
     using var extra = Process.Start(info)!;
     try
     {

@@ -9,18 +9,33 @@ internal static class SettingsChecks
         var path = Path.Combine(Path.GetTempPath(), $"tgame-settings-{Guid.NewGuid().ToString("N")}.yaml");
         try
         {
-            const string yaml = """
-                profileMongo: mongo-b:27017
-                profileRedis: redis-a:6379
-                zooKeeper: zk-a:2181
-                mongoDatabase: game_staging
-                mongoUser: game_service
-                mongoPasswordVariable: GAME_DB_SECRET
-                redisUser: cache_service
-                redisPasswordVariable: GAME_CACHE_SECRET
-                profileCachePrefix: "game:staging:profile:"
-                discoveryRoot: /game/staging
+            const string core = """
+                environment: staging
+                runDirectory: logs/server-runs
+                zooKeeper:
+                  endpoint: zk-a:2181
+                  discoveryRoot: /game/staging
+                  workerRootPath: /game/workers
+                  sessionTimeoutMilliseconds: 10000
+                  connectTimeoutMilliseconds: 10000
                 """;
+            const string storage = """
+                mongo:
+                  endpoint: mongo-b:27017
+                  databaseName: game_staging
+                  authenticationDatabase: game_staging
+                  userName: game_service
+                  serverSelectionTimeoutSeconds: 5
+                  passwordVariables:
+                    profile: GAME_DB_SECRET
+                    dbmgr: GAME_DBMGR_SECRET
+                redis:
+                  endpoint: redis-a:6379
+                  userName: cache_service
+                  passwordVariable: GAME_CACHE_SECRET
+                  profileCachePrefix: "game:staging:profile:"
+                """;
+            var yaml = core + "\n" + storage;
             File.WriteAllText(path, yaml);
             var settings = ServerSettings.Load(path);
             settings.ValidateProfileStorage();
@@ -33,7 +48,7 @@ internal static class SettingsChecks
                 throw new Exception("Selected environment settings were replaced by fixed test values.");
             }
 
-            File.WriteAllText(path, "zooKeeper: zk-a:2181\ndiscoveryRoot: /game/staging\n");
+            File.WriteAllText(path, core);
             var coreSettings = ServerSettings.Load(path);
             if (coreSettings.ZooKeeper != "zk-a:2181" || coreSettings.DiscoveryRoot != "/game/staging")
             {

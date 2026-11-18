@@ -4,6 +4,8 @@ param([string]$Configuration)
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
+. "$PSScriptRoot/Import-ServerTypes.ps1"
+$originalConfiguration = [Environment]::GetEnvironmentVariable([TGame.ServerEnvironment]::Config)
 $checkout = [IO.Directory]::CreateTempSubdirectory('tgame-console-check-').FullName
 $null = New-Item -ItemType File -Path "$checkout/.console-check"
 $dotnet = "$env:ProgramFiles/dotnet/dotnet.exe"
@@ -29,10 +31,20 @@ try
         [IO.File]::Copy((Join-Path $root $file), $target)
     }
 
-    if ($Configuration)
+    $selected = $Configuration
+    if ([string]::IsNullOrWhiteSpace($selected))
     {
-        Copy-Item -LiteralPath $Configuration -Destination (Join-Path $checkout 'code/server/config/processes.json') -Force
+        $selected = $originalConfiguration
     }
+    if ([string]::IsNullOrWhiteSpace($selected))
+    {
+        $selected = [TGame.YamlConfiguration]::ConfigurationPath
+    }
+
+    $source = [IO.Path]::GetFullPath($selected, $root)
+    $snapshot = Join-Path $checkout ([TGame.YamlConfiguration]::ConfigurationPath)
+    [TGame.YamlConfiguration]::new($source).SaveSnapshot($snapshot)
+    [Environment]::SetEnvironmentVariable([TGame.ServerEnvironment]::Config, $snapshot)
 
     & $dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- $checkout
     if ($LASTEXITCODE -ne 0)
@@ -45,5 +57,6 @@ try
 }
 finally
 {
+    [Environment]::SetEnvironmentVariable([TGame.ServerEnvironment]::Config, $originalConfiguration)
     Pop-Location
 }

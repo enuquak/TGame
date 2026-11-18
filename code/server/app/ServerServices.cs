@@ -4,10 +4,11 @@ namespace TGame.Server;
 
 internal static class ServerServices
 {
-    internal static void AddProcessServices(IServiceCollection services, ServerSettings settings,
+    internal static void AddProcessServices(IServiceCollection services, YamlConfiguration yaml, ServerSettings settings,
         ServerConfiguration configuration, ServerGroup startup, ZooKeeperOptions zooKeeperOptions, IdGeneratorOptions idOptions,
         GameLog log)
     {
+        services.AddSingleton(yaml);
         services.AddSingleton(settings);
         services.AddSingleton(configuration);
         services.AddSingleton(startup);

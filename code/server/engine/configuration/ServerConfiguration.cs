@@ -1,11 +1,11 @@
 using System.Collections.ObjectModel;
-using System.Text.Json;
 
 namespace TGame.Server.Engine;
 
 public sealed class ServerConfiguration
 {
-    public const string FileName = "connections.json";
+    public const string FileName = YamlConfiguration.FileName;
+    public const string SectionName = "connections";
     private readonly IReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>> targets;
 
     internal ServerConfiguration(IReadOnlyDictionary<ProcessType, ProcessType[]> configured)
@@ -72,40 +72,29 @@ public sealed class ServerConfiguration
 
     public bool ArePeers(ProcessType first, ProcessType second) => Dials(first, second) || Dials(second, first);
 
-    public static ServerConfiguration Load(string path)
+    public ServerConfiguration(IReadOnlyDictionary<string, string[]> configured) : this(ParseTargets(configured))
     {
-        using var document = JsonDocument.Parse(File.ReadAllText(path));
-        if (document.RootElement.ValueKind != JsonValueKind.Object)
+    }
+
+    public static ServerConfiguration Read(YamlConfiguration configuration) =>
+        new(configuration.Read<Dictionary<string, string[]>>(SectionName));
+
+    public static ServerConfiguration Load(string path) => Read(new YamlConfiguration(path));
+
+    private static Dictionary<ProcessType, ProcessType[]> ParseTargets(IReadOnlyDictionary<string, string[]> configured)
+    {
+        var result = new Dictionary<ProcessType, ProcessType[]>();
+        foreach (var pair in configured)
         {
-            throw new InvalidDataException("Connection configuration must map process types to target arrays.");
+            if (pair.Value is null)
+            {
+                throw new InvalidDataException($"Invalid connection targets for {pair.Key}.");
+            }
+
+            var type = ServerProcess.ParseType(pair.Key);
+            result.Add(type, pair.Value.Select(ServerProcess.ParseType).ToArray());
         }
 
-        var configured = new Dictionary<ProcessType, ProcessType[]>();
-        foreach (var property in document.RootElement.EnumerateObject())
-        {
-            var type = ServerProcess.ParseType(property.Name);
-            if (property.Value.ValueKind != JsonValueKind.Array)
-            {
-                throw new InvalidDataException($"Invalid connection targets for {type}.");
-            }
-
-            var peers = new List<ProcessType>();
-            foreach (var peer in property.Value.EnumerateArray())
-            {
-                if (peer.ValueKind != JsonValueKind.String)
-                {
-                    throw new InvalidDataException($"Invalid connection target for {type}.");
-                }
-
-                peers.Add(ServerProcess.ParseType(peer.GetString()!));
-            }
-
-            if (!configured.TryAdd(type, peers.ToArray()))
-            {
-                throw new InvalidDataException($"Repeated process type {type}.");
-            }
-        }
-
-        return new ServerConfiguration(configured);
+        return result;
     }
 }

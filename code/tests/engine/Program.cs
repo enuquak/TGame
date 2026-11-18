@@ -5,6 +5,13 @@ const int ExternalTimeoutSeconds = 60;
 
 try
 {
+    if (args is ["--yaml-configuration"])
+    {
+        YamlConfigurationChecks.Run();
+        SettingsChecks.Run();
+        return 0;
+    }
+
     if (args is ["--ioc"])
     {
         await IocChecks.RunAsync();

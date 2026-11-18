@@ -2,7 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Globalization;
-using System.Text.Json;
+using System.Linq;
+using YamlDotNet.RepresentationModel;
 
 namespace TGame;
 
@@ -73,8 +74,9 @@ public sealed record ServerProcess(ProcessType Type, int ChannelId)
 
 public sealed class ServerGroup
 {
-    public const string FileName = ServerRunFiles.GroupConfiguration;
-    public static string ConfigurationPath => Path.Combine("code", "server", "config", FileName);
+    public const string FileName = YamlConfiguration.FileName;
+    public const string SectionName = "processes";
+    public static string ConfigurationPath => YamlConfiguration.ConfigurationPath;
 
     private readonly Dictionary<string, int> configuredCounts = new(StringComparer.Ordinal);
     public IReadOnlyList<ServerProcess> Processes { get; }
@@ -113,45 +115,32 @@ public sealed class ServerGroup
         Processes = processes.AsReadOnly();
     }
 
+    public ServerGroup(IReadOnlyDictionary<string, int> counts)
+        : this(counts.ToDictionary(pair => ServerProcess.ParseType(pair.Key), pair => pair.Value))
+    {
+    }
+
     public void Save(string path)
     {
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        File.WriteAllText(path, JsonSerializer.Serialize(configuredCounts, options));
+        var values = new YamlMappingNode();
+        foreach (var pair in configuredCounts)
+        {
+            values.Add(pair.Key, pair.Value.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (File.Exists(path))
+        {
+            new YamlConfiguration(path).SaveSection(path, SectionName, values);
+            return;
+        }
+
+        var root = new YamlMappingNode { { SectionName, values } };
+        using var writer = File.CreateText(path);
+        new YamlStream(new YamlDocument(root)).Save(writer, assignAnchors: false);
     }
 
-    public static ServerGroup Load(string path)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                throw new InvalidDataException($"{path} must map process types to instance counts.");
-            }
+    public static ServerGroup Read(YamlConfiguration configuration) =>
+        new(configuration.Read<Dictionary<string, int>>(SectionName));
 
-            var counts = new Dictionary<ProcessType, int>();
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                if (!Enum.TryParse<ProcessType>(property.Name, out var type) ||
-                    !Enum.IsDefined(type) || type.ToString() != property.Name)
-                {
-                    throw new InvalidDataException($"Unknown process type {property.Name} in {path}.");
-                }
-
-                if (property.Value.ValueKind != JsonValueKind.Number ||
-                    !property.Value.TryGetInt32(out int count) ||
-                    count < 0 ||
-                    !counts.TryAdd(type, count))
-                {
-                    throw new InvalidDataException($"Invalid or repeated count for {property.Name} in {path}.");
-                }
-            }
-
-            return new ServerGroup(counts);
-        }
-        catch (JsonException error)
-        {
-            throw new InvalidDataException($"Invalid server group configuration: {path}.", error);
-        }
-    }
+    public static ServerGroup Load(string path) => Read(new YamlConfiguration(path));
 }

@@ -1,4 +1,4 @@
-using System.Text.Json;
+using YamlDotNet.Serialization;
 using TGame;
 using TGame.Server.Engine;
 
@@ -10,9 +10,9 @@ internal static class ServerConfigurationChecks
         var defaults = Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName);
         try
         {
-            File.WriteAllText(path, "{}");
+            File.WriteAllText(path, "connections: {}");
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
-            File.Copy(defaults, path, true);
+            new YamlConfiguration(defaults).SaveSnapshot(path);
             var configuration = ServerConfiguration.Load(path);
 
             File.WriteAllText(path, "{}");
@@ -24,15 +24,16 @@ internal static class ServerConfigurationChecks
             var independent = ServerConfiguration.Load(defaults);
             Check(!ReferenceEquals(configuration, independent), "Independent configurations share an instance.");
 
-            var invalid = JsonSerializer.Deserialize<Dictionary<string, string[]>>(File.ReadAllText(defaults))!;
+            var invalid = new YamlConfiguration(defaults).Read<Dictionary<string, string[]>>(ServerConfiguration.SectionName);
+            var serializer = new SerializerBuilder().Build();
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Base)];
-            File.WriteAllText(path, JsonSerializer.Serialize(invalid));
+            File.WriteAllText(path, serializer.Serialize(new Dictionary<string, object> { [ServerConfiguration.SectionName] = invalid }));
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Router)];
-            File.WriteAllText(path, JsonSerializer.Serialize(invalid));
+            File.WriteAllText(path, serializer.Serialize(new Dictionary<string, object> { [ServerConfiguration.SectionName] = invalid }));
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Gate)];
-            File.WriteAllText(path, JsonSerializer.Serialize(invalid));
+            File.WriteAllText(path, serializer.Serialize(new Dictionary<string, object> { [ServerConfiguration.SectionName] = invalid }));
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
 
             var cycle = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => Array.Empty<ProcessType>());

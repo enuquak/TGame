@@ -19,17 +19,18 @@ if (args.Length != ProcessArgumentCount)
     throw new ArgumentException("Usage: TGame.Server <process-type>");
 }
 
-var processType = ServerProcess.ParseType(args[0]);
-var role = processType.ToString();
-using var log = new GameLog();
 Serilog.Debugging.SelfLog.Enable(TextWriter.Synchronized(Console.Error));
+
+using var log = new GameLog();
+var processType = ServerProcess.ParseType(args[0]);
+
 try
 {
     await RunServerAsync(processType, log);
 }
 catch (Exception error)
 {
-    log.Error(ServerLogEvents.ProcessFailed, role, detail: error.ToString(), bothPrintConsole: true);
+    log.Error(ServerLogEvents.ProcessFailed, processType.ToString(), detail: error.ToString(), bothPrintConsole: true);
     Environment.ExitCode = 1;
 }
 finally
@@ -40,26 +41,23 @@ finally
 async Task RunServerAsync(ProcessType processType, GameLog log)
 {
     var role = processType.ToString();
-    var settings = ServerSettings.LoadSelected();
+    var yaml = new YamlConfiguration(ServerSettings.SelectedPath());
+    var settings = ServerSettings.From(yaml);
     log.SetMinimumLevel(settings.MinimumLogLevel);
-    var runDir = ServerRuntime.LoadDirectory(
-        Path.Combine(AppContext.BaseDirectory, "config", ServerRuntime.FileName), Directory.GetCurrentDirectory());
+    var runDir = yaml.ResolveRunDirectory(Directory.GetCurrentDirectory());
     if (!Directory.Exists(runDir))
     {
         throw new DirectoryNotFoundException($"Runtime directory does not exist. Prepare it with the server scripts: {runDir}");
     }
 
-    var configuration = ServerConfiguration.Load(
-        Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName));
-    var startup = ServerGroup.Load(Path.Combine(AppContext.BaseDirectory, "config", ServerGroup.FileName));
-    var zooKeeperOptions = ZooKeeperOptions.Load(
-        Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName),
-        settings.ZooKeeper, settings.DiscoveryRoot);
-    var idOptions = IdGeneratorOptions.Load(
-        Path.Combine(AppContext.BaseDirectory, "config", IdGeneratorOptions.FileName));
+    var configuration = new ServerConfiguration(settings.Connections);
+    var startup = new ServerGroup(settings.Processes);
+    var zooKeeperOptions = settings.ZooKeeperSettings;
+    var idOptions = new IdGeneratorOptions { WorkerRootPath = zooKeeperOptions.WorkerRootPath };
+    idOptions.Validate();
     log.Info(ServerLogEvents.InitStepCompleted, role, detail: "配置加载完成");
 
-    await using var app = CreateApplication(processType, settings, configuration, startup, zooKeeperOptions, idOptions, log);
+    await using var app = CreateApplication(processType, yaml, settings, configuration, startup, zooKeeperOptions, idOptions, log);
     log.Info(ServerLogEvents.InitStepCompleted, role, detail: "app 服务注册及构建完成");
     var zooKeeper = app.Services.GetRequiredService<ZooKeeperProxy>();
     var process = await InitializeZooKeeperAsync(zooKeeper, processType);
@@ -136,7 +134,7 @@ static async Task<ServerProcess> InitializeZooKeeperAsync(ZooKeeperProxy zooKeep
     return await zooKeeper.ClaimProcessAsync(processType, claimTimeout.Token);
 }
 
-static WebApplication CreateApplication(ProcessType processType, ServerSettings settings,
+static WebApplication CreateApplication(ProcessType processType, YamlConfiguration yaml, ServerSettings settings,
     ServerConfiguration configuration, ServerGroup startup, ZooKeeperOptions zooKeeperOptions, IdGeneratorOptions idOptions, GameLog log)
 {
     var builder = WebApplication.CreateSlimBuilder();
@@ -147,7 +145,7 @@ static WebApplication CreateApplication(ProcessType processType, ServerSettings 
     }
 
     builder.Services.AddGrpc();
-    ServerServices.AddProcessServices(builder.Services, settings, configuration, startup, zooKeeperOptions, idOptions, log);
+    ServerServices.AddProcessServices(builder.Services, yaml, settings, configuration, startup, zooKeeperOptions, idOptions, log);
     return builder.Build();
 }
 

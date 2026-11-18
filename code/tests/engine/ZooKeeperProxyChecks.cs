@@ -19,8 +19,7 @@ internal static class ZooKeeperProxyChecks
     internal static ZooKeeperOptions LoadOptions()
     {
         var settings = ServerSettings.LoadSelected();
-        var path = Path.Combine(AppContext.BaseDirectory, "config", ZooKeeperOptions.FileName);
-        return ZooKeeperOptions.Load(path, settings.ZooKeeper, settings.DiscoveryRoot);
+        return settings.ZooKeeperSettings;
     }
 
     internal static async Task CheckSessionAsync(GameLog log)

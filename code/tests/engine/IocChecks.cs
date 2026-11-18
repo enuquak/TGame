@@ -14,6 +14,11 @@ internal static class IocChecks
         await using var second = CreateProvider(secondLogLifetime, 2);
         var firstLog = first.GetRequiredService<GameLog>();
         var secondLog = second.GetRequiredService<GameLog>();
+        var firstConfiguration = first.GetRequiredService<YamlConfiguration>();
+        Check(ReferenceEquals(firstConfiguration, first.GetRequiredService<YamlConfiguration>()),
+            "YAML configuration is not a singleton in its container.");
+        Check(!ReferenceEquals(firstConfiguration, second.GetRequiredService<YamlConfiguration>()),
+            "Independent containers share their YAML configuration.");
         Check(ReferenceEquals(firstLog, firstLogLifetime), "The container replaced the startup logger.");
         Check(!ReferenceEquals(firstLog, secondLog), "Independent containers share a logger.");
 
@@ -95,12 +100,13 @@ internal static class IocChecks
     private static ServiceCollection ProcessRegistrations(GameLog log)
     {
         var services = new ServiceCollection();
-        var settings = new ServerSettings { ZooKeeper = "127.0.0.1:invalid-port", DiscoveryRoot = "/ioc-checks" };
+        var yaml = new YamlConfiguration(Path.Combine(AppContext.BaseDirectory, "config", YamlConfiguration.FileName));
+        var settings = ServerSettings.From(yaml);
         var configuration = TestNodes.LoadConfiguration();
         var startup = ServerGroup.Load(Path.Combine(AppContext.BaseDirectory, "config", ServerGroup.FileName));
-        var options = TestServices.LocalZooKeeperOptions() with { Endpoint = settings.ZooKeeper, DiscoveryRoot = settings.DiscoveryRoot };
+        var options = TestServices.LocalZooKeeperOptions() with { Endpoint = "127.0.0.1:invalid-port", DiscoveryRoot = "/ioc-checks" };
         var idOptions = new IdGeneratorOptions { WorkerRootPath = "/ioc-workers" };
-        ServerServices.AddProcessServices(services, settings, configuration, startup, options, idOptions, log);
+        ServerServices.AddProcessServices(services, yaml, settings, configuration, startup, options, idOptions, log);
         return services;
     }
 

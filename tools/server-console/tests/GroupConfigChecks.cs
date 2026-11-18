@@ -1,4 +1,4 @@
-using System.Text.Json;
+using System.Reflection;
 using TGame;
 using TGame.ServerConsole;
 
@@ -6,101 +6,147 @@ internal static class GroupConfigChecks
 {
     public static void Run(string checkout)
     {
-        var root = Path.Combine(checkout, "build", "group-config-check", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(root, "code/server/config"));
-        Directory.CreateDirectory(Path.Combine(root, "tools/server-console"));
-        File.Copy(Path.Combine(checkout, "tools/server-console/project.json"),
-            Path.Combine(root, "tools/server-console/project.json"), overwrite: true);
+        var original = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
+        try
+        {
+            CheckSnapshot(checkout);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ServerEnvironment.Config, original);
+        }
 
+        Console.WriteLine("PASS selected YAML, expanded snapshots, startup counts and restored group isolation.");
+    }
+
+    private static void CheckSnapshot(string checkout)
+    {
+        var root = Path.Combine(checkout, "build", "group-config-check", Guid.NewGuid().ToString("N"));
+        var configDirectory = Directory.CreateDirectory(Path.Combine(root, "code/server/config")).FullName;
+        var consoleDirectory = Directory.CreateDirectory(Path.Combine(root, "tools/server-console")).FullName;
+        File.WriteAllText(Path.Combine(consoleDirectory, "project.json"),
+            """{"environmentName":"配置检查","commands":["Start"]}""");
         var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type.ToString(), _ => 1);
+        var defaultConfiguration = Path.Combine(configDirectory, YamlConfiguration.FileName);
+        WriteConfiguration(defaultConfiguration, counts);
+        Environment.SetEnvironmentVariable(ServerEnvironment.Config, null);
+        using (var defaults = new ConsoleSession(root))
+        {
+            if (defaults.Instances.Count != counts.Count)
+            {
+                throw new Exception("The console did not use the repository YAML entry point.");
+            }
+        }
+
         counts[nameof(ProcessType.Login)] = 2;
         counts[nameof(ProcessType.Base)] = 3;
-        File.WriteAllText(Path.Combine(root, "code/server/config/processes.json"), JsonSerializer.Serialize(counts));
-
+        var selectedDirectory = Directory.CreateDirectory(Path.Combine(root, "selected")).FullName;
+        var selected = Path.Combine(selectedDirectory, YamlConfiguration.FileName);
+        WriteConfiguration(selected, counts);
+        Environment.SetEnvironmentVariable(ServerEnvironment.Config, Path.GetRelativePath(root, selected));
         using var session = new ConsoleSession(root);
         if (session.Instances.Count != 11 ||
             session.Instances.Select(item => item.Name).Distinct().Count() != 11 ||
             session.Instances.Count(item => item.Role == nameof(ProcessType.Login)) != 2 ||
             session.Instances.Count(item => item.Role == nameof(ProcessType.Base)) != 3)
         {
-            throw new Exception("The console did not expand the configured instance counts.");
+            throw new Exception("The console did not expand the selected YAML instance counts.");
         }
 
-        var groupFile = Path.Combine(root, ServerGroup.ConfigurationPath);
-        var group = ServerGroup.Load(groupFile);
+        var configuration = new YamlConfiguration(selected);
+        var group = ServerGroup.Read(configuration);
         var sessionName = Guid.NewGuid().ToString("N");
         var sessions = Path.Combine(root, "logs/tools/server-console");
         var run = Directory.CreateDirectory(Path.Combine(sessions, sessionName)).FullName;
         File.WriteAllText(Path.Combine(run, ConsoleSession.SessionMarker), "");
         File.WriteAllText(Path.Combine(run, ServerRunFiles.DynamicDiscoveryMarker), "");
         File.WriteAllText(Path.Combine(sessions, "current"), sessionName);
-        group.Save(Path.Combine(run, ServerGroup.FileName));
+
+        var build = Directory.CreateDirectory(Path.Combine(root, "build-output")).FullName;
+        Directory.CreateDirectory(Path.Combine(build, "config"));
+        File.WriteAllText(Path.Combine(build, "TGame.Server.exe"), "apphost");
+        File.WriteAllText(Path.Combine(build, "config", YamlConfiguration.FileName), "stale: build output");
+        var snapshot = Path.Combine(root, "build", "server-console", "runs", sessionName);
+        var apphosts = group.Processes.Select(process => Path.Combine(snapshot, process.Name + "Server.exe")).ToArray();
+        ConsoleSession.PrepareSnapshot(build, snapshot, configuration, run, root, apphosts);
+        var snapshotFile = Path.Combine(snapshot, "config", YamlConfiguration.FileName);
+        var savedFile = Path.Combine(run, YamlConfiguration.FileName);
+        File.Copy(snapshotFile, savedFile);
+
+        // 源文件变更或删除后，本轮两个快照仍须独立包含同一份完整配置。
         counts[nameof(ProcessType.Login)] = 1;
         counts[nameof(ProcessType.Base)] = 1;
-        File.WriteAllText(groupFile, JsonSerializer.Serialize(counts));
+        WriteConfiguration(defaultConfiguration, counts);
+        File.Delete(selected);
+        File.Delete(Path.Combine(selectedDirectory, "ops.yaml"));
+        File.Delete(Path.Combine(selectedDirectory, "process.yaml"));
+        foreach (var file in new[] { snapshotFile, savedFile })
+        {
+            var saved = new YamlConfiguration(file);
+            var startup = ServerGroup.Read(saved);
+            var connections = saved.Read<Dictionary<string, string[]>>("connections");
+            if (startup.GetStartupMinimum(ProcessType.Login) != 2 ||
+                startup.GetStartupMinimum(ProcessType.Base) != 3 ||
+                saved.Read<string>("environment") != "snapshot-check" ||
+                saved.Read<Dictionary<string, string>>("mongo")["host"] != "snapshot-host" ||
+                !connections[nameof(ProcessType.Base)].SequenceEqual([nameof(ProcessType.Router)]) ||
+                saved.ResolveRunDirectory(root) != run ||
+                File.ReadAllText(file).Contains("include:"))
+            {
+                throw new Exception("The saved YAML lost counts, included settings, connections or its run directory.");
+            }
+        }
+
+        if (apphosts.Any(path => File.ReadAllText(path) != "apphost"))
+        {
+            throw new Exception("The snapshot did not create all planned process apphosts.");
+        }
+
+        Environment.SetEnvironmentVariable(ServerEnvironment.Config, Path.Combine(root, "missing-environment.yaml"));
         using var restored = new ConsoleSession(root);
         if (restored.Instances.Count != 11)
         {
-            throw new Exception("Restoring a running group used edited source counts instead of its snapshot.");
+            throw new Exception("Restoring a running group used current source counts instead of its snapshot.");
         }
 
-        File.WriteAllText(Path.Combine(run, "server.yaml"), "zooKeeper: localhost\ndiscoveryRoot: /test\n");
-        var startInfo = typeof(ConsoleSession).GetMethod("StartInfo", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var startInfo = typeof(ConsoleSession).GetMethod("StartInfo", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var start = (System.Diagnostics.ProcessStartInfo)startInfo.Invoke(restored, [restored.Instances[0], sessionName])!;
+        if (start.ArgumentList.Count != 1 ||
+            start.ArgumentList[0] != restored.Instances[0].Role ||
+            start.Environment[ServerEnvironment.Config] != savedFile)
+        {
+            throw new Exception("Restoring a process must pass only its type and the saved configuration.");
+        }
+
+        File.Delete(snapshotFile);
         try
         {
             startInfo.Invoke(restored, [restored.Instances[0], sessionName]);
-            throw new Exception("An old binary snapshot must require build and restart before missing processes are launched.");
+            throw new Exception("An incomplete binary snapshot must require build and restart.");
         }
-        catch (System.Reflection.TargetInvocationException error) when (
+        catch (TargetInvocationException error) when (
             error.InnerException is InvalidOperationException inner && inner.Message.Contains("编译并重启"))
         {
         }
 
-        var runConfig = Path.Combine(root, "build", "server-console", "runs", sessionName, "config", ServerRuntime.FileName);
-        Directory.CreateDirectory(Path.GetDirectoryName(runConfig)!);
-        ServerRuntime.Save(runConfig, run, root);
-        var start = (System.Diagnostics.ProcessStartInfo)startInfo.Invoke(restored, [restored.Instances[0], sessionName])!;
-        if (start.ArgumentList.Count != 1 || start.ArgumentList[0] != restored.Instances[0].Role)
-        {
-            throw new Exception("The console must pass only the process type to the new server entry point.");
-        }
-
-        var valid = JsonSerializer.Serialize(counts);
-        var build = Directory.CreateDirectory(Path.Combine(root, "build-output")).FullName;
-        Directory.CreateDirectory(Path.Combine(build, "config"));
-        File.WriteAllText(Path.Combine(build, "TGame.Server.exe"), "apphost");
-        File.WriteAllText(Path.Combine(build, "config", ServerGroup.FileName), valid);
-        var snapshot = Path.Combine(root, "snapshot");
-        var apphosts = group.Processes.Select(process => Path.Combine(snapshot, process.Name + "Server.exe")).ToArray();
-        ConsoleSession.PrepareSnapshot(build, snapshot, group, apphosts);
-        var runtimeStartup = ServerGroup.Load(Path.Combine(snapshot, "config", ServerGroup.FileName));
-        if (runtimeStartup.GetStartupMinimum(ProcessType.Login) != 2 ||
-            runtimeStartup.GetStartupMinimum(ProcessType.Base) != 3 ||
-            apphosts.Any(path => File.ReadAllText(path) != "apphost"))
-        {
-            throw new Exception("The build snapshot did not use the same startup minimums as the launch plan.");
-        }
-
         string[] invalid =
         [
-            "[]", "{}", "{bad", valid.Replace(":1", ":-1"), valid.Replace(":1", ":1.5"),
-            valid.Replace(":1", ":0"), valid.Replace(nameof(ProcessType.Login), "Unknown"),
-            valid[..^1] + $",\"{nameof(ProcessType.Login)}\":1}}"
+            "[]", "{}", "processes: [bad", "processes: {Router: -1}", "processes: {Router: 1.5}",
+            "processes: {Unknown: 1}", "processes: {Router: 1, Router: 2}",
+            "processes:\n" + string.Join("\n", counts.Select(pair => $"  {pair.Key}: 0"))
         ];
-        foreach (var json in invalid)
+        foreach (var yaml in invalid)
         {
-            File.WriteAllText(groupFile, json);
+            File.WriteAllText(defaultConfiguration, yaml);
             try
             {
-                ServerGroup.Load(groupFile);
+                ServerGroup.Load(defaultConfiguration);
                 throw new Exception("Accepted invalid counts, unknown types or duplicate configuration keys.");
             }
             catch (InvalidDataException)
             {
             }
         }
-
-        File.WriteAllText(groupFile, valid);
 
         File.Delete(Path.Combine(run, ServerRunFiles.DynamicDiscoveryMarker));
         try
@@ -111,7 +157,20 @@ internal static class GroupConfigChecks
         catch (InvalidDataException)
         {
         }
+    }
 
-        Console.WriteLine("PASS configured 2 Login and 3 Base instances.");
+    private static void WriteConfiguration(string path, IReadOnlyDictionary<string, int> counts)
+    {
+        var directory = Path.GetDirectoryName(path)!;
+        File.WriteAllText(path, """
+            include: [ops, process]
+            environment: snapshot-check
+            loggingMinimumLevel: DEBUG
+            runDirectory: logs/server-runs
+            """);
+        File.WriteAllText(Path.Combine(directory, "ops.yaml"), "mongo: {host: snapshot-host}\n");
+        File.WriteAllText(Path.Combine(directory, "process.yaml"),
+            "processes:\n" + string.Join("\n", counts.Select(pair => $"  {pair.Key}: {pair.Value}")) +
+            $"\nconnections:\n  {nameof(ProcessType.Base)}: [{nameof(ProcessType.Router)}]\n");
     }
 }
