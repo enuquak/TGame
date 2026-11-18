@@ -35,7 +35,6 @@ public partial class ServerNode
         this.configuration = configuration;
         Name = process.Name;
         type = process.Type;
-        Role = process.Role;
         requiredTypes = configuration.GetDialTargets(type);
         UpdateLinkReadiness();
     }
@@ -43,7 +42,7 @@ public partial class ServerNode
     public string Name { get; }
 
     public Task FirstLinks => firstLinks.Task;
-    public string Role { get; }
+    public string Role => type.ToString();
     public bool Ready => linksReady;
 
     public async Task WaitUntilReadyAsync(CancellationToken stop)
