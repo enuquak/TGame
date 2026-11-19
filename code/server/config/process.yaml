@@ -1,0 +1,21 @@
+processes:
+  # 同时定义初始启动数量和对应类型的首次连接门槛，不限制后续连接数量。
+  # 0 不阻塞首次启动或健康状态，仍持续发现并连接。
+  Router: 1
+  DBMgr: 1
+  Scene: 1
+  Login: 1
+  Base: 1
+  Profile: 1
+  GM: 1
+  Gate: 1
+
+connections:
+  Router: []
+  DBMgr: [Router]
+  Scene: [Router]
+  Login: [Router]
+  Base: [Router, DBMgr]
+  Profile: [Router]
+  GM: [Router]
+  Gate: [Login, Base]

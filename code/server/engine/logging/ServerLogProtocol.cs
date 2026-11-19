@@ -2,18 +2,12 @@ namespace TGame;
 
 public static class ServerLogEvents
 {
-    public const string EntityRpcFailed = "ENTITY_RPC_FAILED";
-    public const string LegacyReady = "READY";
-    public const string LegacyBaseSinglePointInit = "BASE_SINGLE_POINT_INIT";
-    public const string LegacyBaseSinglePointReady = "BASE_SINGLE_POINT_READY";
+    public const string InitStepCompleted = "INIT_STEP_COMPLETED";
     public const string Listen = "LISTEN";
     public const string ProcessFailed = "PROCESS_FAILED";
-    public const string SinglePointInit = "SINGLE_POINT_INIT";
-    public const string SinglePointReady = "SINGLE_POINT_READY";
-    public const string SinglePointFailed = "SINGLE_POINT_FAILED";
+    public const string ProcessReady = "PROCESS_READY";
     public const string ZkRegister = "ZK_REGISTER";
     public const string ZkDiscover = "ZK_DISCOVER";
-    public const string EntityRoute = "ENTITY_ROUTE";
     public const string LinkUp = "LINK_UP";
     public const string LinksReady = "LINKS_READY";
     public const string LinksLost = "LINKS_LOST";

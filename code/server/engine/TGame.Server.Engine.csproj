@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <InternalsVisibleTo Include="TGame.SinglePointTests" />
+    <InternalsVisibleTo Include="TGame.EngineTests" />
     <Compile Remove="generated/**/*.cs" />
     <PackageReference Include="Google.Protobuf" Version="3.36.2" />
     <PackageReference Include="Grpc.Tools" Version="2.85.0" PrivateAssets="All" />
@@ -15,5 +15,6 @@
     <PackageReference Include="Serilog" Version="4.4.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="ZooKeeperNetEx" Version="3.4.12.4" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 </Project>

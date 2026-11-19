@@ -5,7 +5,7 @@ using TGame.Transport;
 
 namespace TGame.Server.Engine;
 
-public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWriter<Frame> output)
+public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWriter<Frame> output, GameLog log)
 {
     internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(12);
 
@@ -14,9 +14,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
     private readonly Dictionary<string, TaskCompletionSource<RpcReply>> waiting = new();
     private readonly SemaphoreSlim writer = new(1);
 
-    public string Role => role;
     public string Peer => peer;
-    public string Id => id;
 
     public async Task WriteAsync(Frame frame, CancellationToken stop)
     {
@@ -31,18 +29,22 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         }
     }
 
-    public async Task<TReply> CallAsync<TReply>(IMessage message, string requestId, CancellationToken stop, Action? sent = null)
+    public async Task<TReply> CallAsync<TReply>(IMessage message, string requestId, CancellationToken stop,
+        TimeSpan? timeout = null)
         where TReply : IMessage<TReply>, new()
     {
         var request = new RpcRequest { RequestId = requestId, Payload = Any.Pack(message) };
-        var response = await CallAsync(request, stop, sent);
+        var response = await CallAsync(request, stop, timeout);
         return ReadReply<TReply>(response);
     }
 
-    internal async Task<RpcReply> CallAsync(RpcRequest request, CancellationToken stop, Action? sent = null)
+    internal async Task<RpcReply> CallAsync(RpcRequest request, CancellationToken stop,
+        TimeSpan? timeout = null)
     {
         ValidateEnvelope(request.RequestId, request.Payload);
         stop.ThrowIfCancellationRequested();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        deadline.CancelAfter(timeout ?? RequestTimeout);
         var requestId = request.RequestId;
         var reply = new TaskCompletionSource<RpcReply>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (pendingChanges)
@@ -60,10 +62,13 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
 
         try
         {
-            await WriteAsync(new Frame { Request = request }, stop);
-            sent?.Invoke();
+            await WriteAsync(new Frame { Request = request }, deadline.Token);
 
-            return await reply.Task.WaitAsync(RequestTimeout, stop);
+            return await reply.Task.WaitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException) when (!stop.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("The RPC request timed out.");
         }
         finally
         {
@@ -97,12 +102,6 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         return response.Payload.Unpack<TReply>();
     }
 
-    public Task ReplyAsync(IMessage message, string requestId, CancellationToken stop)
-    {
-        var reply = new RpcReply { RequestId = requestId, Payload = Any.Pack(message) };
-        return WriteAsync(new Frame { Reply = reply }, stop);
-    }
-
     public void Receive(RpcReply reply)
     {
         if (reply.Error is { } error)
@@ -129,7 +128,7 @@ public sealed class PeerLink(string role, string peer, string id, IAsyncStreamWr
         if (request is null)
         {
             // A timed-out call has already relinquished its slot on this shared stream.
-            GameLog.Error(ServerLogEvents.UnmatchedReply, role, peer, reply.RequestId, link: id);
+            log.Error(ServerLogEvents.UnmatchedReply, role, peer, reply.RequestId, link: id);
             return;
         }
 

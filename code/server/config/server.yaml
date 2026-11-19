@@ -1,0 +1,14 @@
+# 服务器配置总入口，由 ServerConfiguration 加载并注册为 IoC 单例。
+# include 是应用层加载约定，不是 YAML 原生的文件引用功能。
+# 列表填写不带扩展名的文件名，加载本入口同目录下对应的 .yaml 文件。
+# 各文件独立解析后合并顶层配置，include 本身只作为加载清单。
+# 合并时任意来源的顶层字段重名即加载失败，不按顺序覆盖。
+# YAML 锚点和别名仅在各自文件内生效，不跨文件共享。
+
+include: [ops, process]
+
+environment: test
+
+loggingMinimumLevel: DEBUG
+
+runDirectory: logs/server-runs

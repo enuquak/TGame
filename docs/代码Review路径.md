@@ -1,181 +1,102 @@
 # 代码 Review 路径
 
-更新时间：2026-11-18（Asia/Shanghai）。阅读分支为 `review-1117`：Engine 与业务 Shared 已分离，使用进程级 `IdGenerator.GenId()`，SinglePoint 直接持有身份和本地实体集合，初始化时传入所属 `ServerNode`，实体在业务初始化后直接调用节点方法注册；日志支持配置最低等级。
+更新时间：2026-11-19（Asia/Shanghai）。当前分支为 `review-1118`，服务器已收敛为进程基础框架：ZooKeeper、进程连接、基础 RPC、日志和 ID。进程服务由 App 的单个 IoC 根容器组装，使用方通过构造函数接收依赖；`process.yaml` 的 `processes` 同时提供控制台初始启动数量和运行时首次连接门槛。独立存储工具与业务共享协议保留，启动不再创建实体或初始化业务服务。
 
-当前进度：**第一节已读完**（2026-11-17 确认），**第三节的 `Program.cs` 已理解**（2026-11-18 确认）。其余条目保留原勾选状态；详细确认记录见[代码 Review 进度](代码Review进度.md)。
+用户此前确认第一节已读完（2026-11-17）、第三节的 `Program.cs` 已理解（2026-11-18）。这些记录保留，但本次启动流程和测试入口的变化仍需核对，不自动计为已读；详细记录见[代码 Review 进度](代码Review进度.md)。
 
-**下一步核对第三节的 `ServerNode.cs`。** 把构造函数、`FirstLinks`、`InitializeSinglePointAsync`、`Ready` 和 `Dispose` 与已读的宿主调用对应起来，再进入第四节跟踪拓扑、服务发现、连接和实体注册。第 2.4 节的 ID 内部实现可在读通连接主线后回看。
+**下一步核对第三节的 `Program.cs` 与 `ServerNode.cs`。** 先看容器注册、显式异步初始化和构造函数依赖，再看 `FirstLinks`、`Ready`，然后跟踪第四节的拓扑、服务发现与连接。阅读源码无需启动服务；测试入口与历史范围放在第 7 节。
 
-旧标签页中的 `SinglePointState.cs`、`IIdGenerator.cs` 已删除，不再作为阅读入口。阅读源码无需启动服务；测试入口与历史验证范围放在第 9 节，按需对照。
+## 1. 工程边界和进程配置
 
-## 1. 工程边界和进程配置（已读）
+- [x] [TGame.slnx](../TGame.slnx)、[宿主工程](../code/server/app/TGame.Server.csproj)、[引擎工程](../code/server/engine/TGame.Server.Engine.csproj)、[业务共享工程](../code/shared/TGame.Shared.csproj)：用户已确认工程边界。宿主分别引用 Engine 和 Shared；Engine 只引用第三方包，两套协议各自在所属项目生成。
+- [x] [ProcessType.cs](../code/server/engine/configuration/ProcessType.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)：用户已确认角色、实例名称与数量的区别；实例统一使用 `Router1`、`Base1` 等带编号名称。
+- [x] [EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs)、[ServerEnvironment.cs](../code/shared/csharp/ServerEnvironment.cs)：用户已确认引擎运行标记与宿主、存储环境变量的边界。
+- [x] [server.yaml](../code/server/config/server.yaml)：用户曾确认环境选择、配置快照、凭据变量名与配置校验；原宿主配置类型已合并，新实现仍须按下一项复核。
+- [ ] 核对本次配置合并：[ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs) 一次加载总入口与 include、展开文件内别名、严格绑定并校验核心配置、拓扑和数量。它持有配置值与类型连接图，私有 DTO 只用于绑定；App 仅注册这一配置实例及其持有的数量和选项对象，运行期间读取快照，不使用静态全局配置。
+- [ ] 核对当前 [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)、[process.yaml 的 connections](../code/server/config/process.yaml) 与 [process.yaml 的 processes](../code/server/config/process.yaml)：连接规则必须无环；数量同时决定控制台初始启动次数和运行时首次连接门槛，通过 `GetStartupMinimum(ProcessType)` 查询。实际实例仍由 ZooKeeper 动态发现，数量不是连接上限或合法编号范围。
 
-- [x] [TGame.slnx](../TGame.slnx)、[宿主工程](../code/server/app/TGame.Server.csproj)、[引擎工程](../code/server/engine/TGame.Server.Engine.csproj)、[业务共享工程](../code/shared/TGame.Shared.csproj)：确认宿主分别引用 Engine 和 Shared；Engine 只引用第三方包，Engine 与业务 Shared 之间没有项目引用。两套协议各自在所属项目生成。
-- [x] [ProcessType.cs](../code/server/engine/configuration/ProcessType.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)、[processes.json](../code/server/config/processes.json)：现有角色体系归引擎，区分进程类型、实例名称与实例数量；实例由 `ServerProcess.FormatName` 统一生成 `Router1`、`Base1` 等带编号名称。
-- [x] [EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs)、[ServerEnvironment.cs](../code/shared/csharp/ServerEnvironment.cs)：区分引擎日志目录、运行标记与宿主业务配置、存储凭据变量。
-- [x] [ServerSettings.cs](../code/server/app/ServerSettings.cs)、[server.local.yaml](../code/server/config/server.local.yaml)：理解环境选择、配置快照、凭据变量名与配置校验。
+读完应能回答：所有角色为何运行同一个程序？保留的存储代码编译到哪个程序集？Engine 为什么能独立于业务 Shared 编译？DBMgr/Profile 的角色名称为何不代表启动时初始化数据库？
 
-读完应能回答：所有角色为何运行同一个程序？业务代码编译到哪个程序集？宿主如何通过业务程序集扫描 SinglePoint 类型？移除业务 Shared 后 Engine 为什么仍能独立编译？
+## 2. 进程身份与 ID
 
-## 2. 身份与 SinglePoint
+- [ ] [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)：按构造函数 → `InitializeAsync` → `GenId` → `LeaseLost` → `DisposeAsync` 阅读。理解容器内共享实例、注入的 ZK 依赖、使用前初始化、同一对象重复初始化报错和释放后不能继续发号；宿主控制初始化顺序，容器负责其创建的服务释放。
+- [ ] [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)、[server.yaml](../code/server/config/server.yaml)、[ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs)、[ops.yaml](../code/server/config/ops.yaml)：区分 worker 根路径与 ZooKeeper 连接、会话超时；ZooKeeper 地址及进程发现根路径来自统一 `ServerConfiguration`。
+- [ ] [IdText.cs](../code/server/engine/identifiers/IdText.cs)：校验无前导零的正 `long` 十进制文本，不负责生成 ID 或判断业务对象是否存在。
+- [ ] [SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)、[SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)：主线读通后再看时间戳、worker、序号组合、同毫秒序列耗尽、时钟回退、租约有效性与释放。
 
-### 2.1 先读 ServerSinglePoint：它持有什么，何时初始化完成
-
-- [ ] [ServerSinglePoint.cs](../code/server/engine/ServerSinglePoint.cs)：先看 `localEntities`、`EntityId`、`LocalEntityIds`、`Initialized` 和 `ContainsEntity`。创建实例时调用 `IdGenerator.GenId()` 生成身份，此时集合仍为空。
-- [ ] 同文件先看 `InitializeRoleAsync` 的默认实现，再顺着 `InitializeAsync(ServerNode node, CancellationToken stop)` 阅读：从 `node.Role` 取得角色 → 执行业务初始化 → `RegisterSinglePoint` 登记自身 → 等待 `node.RegisterEntitiesAsync(stop)` → 设置 `Initialized`。两个异常分支都会撤销本地登记并继续抛出异常。
-- [ ] 区分两种操作：`RegisterSinglePoint` 只是把自己的 ID 加入本地集合；远端注册由所属节点的 `RegisterEntitiesAsync` 完成；下一步在 `ServerNode.InitializeSinglePointAsync` 确认节点如何把 `this` 传入 SinglePoint。当前集合的写入仅用于 SinglePoint 自身，没有对外开放普通实体增删接口。
-
-先用下面的状态表核对理解；`Ready` 的完整计算在第 3 节阅读。
-
-| 阶段 | `EntityId` | 本地集合包含自身 | `Initialized` | 节点 `Ready` |
-| --- | --- | --- | --- | --- |
-| 刚创建 / 业务初始化中 | 已生成 | 否 | `false` | `false` |
-| 业务初始化成功，等待远端注册确认 | 保持不变 | 是 | `false` | `false` |
-| 初始化完成，连接与注册确认齐备 | 保持不变 | 是 | `true` | `true` |
-| 初始化失败或取消 | 已生成 | 否 | `false` | `false` |
-| 初始化完成后断线 | 保留原 ID | 是 | 保持 `true` | `false` |
-
-### 2.2 再追 IdGenerator：身份从哪里来
-
-- [ ] [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)：按 `GenId` → `Current` → `InitializeAsync` → `LeaseLost` → `DisposeAsync` 阅读。先理解宿主按顺序初始化和释放、使用前必须初始化、每个进程只保留一个实例、重复初始化报错和释放后不能继续发号；生命周期没有并发锁。
-- [ ] [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)、[id-generator.json](../code/server/config/id-generator.json)：看配置加载与校验。ZooKeeper 地址来自宿主的 `ServerSettings`，编号根路径和超时来自 ID 配置。
-- [ ] [IdText.cs](../code/server/engine/identifiers/IdText.cs)：这是 ID 文本格式校验，接受无前导零的正 `long` 十进制文本，不负责生成 ID 或判断实体是否存在。
-
-此时只需知道 `GenId()` 返回字符串 ID。宿主如何用 `await using` 持有生命周期、如何监督编号租约丢失，放到第 3 节连起来看。
-
-### 2.3 最后看 SinglePoint 的创建与业务扩展
-
-- [ ] [SinglePointForAttribute.cs](../code/server/engine/SinglePointForAttribute.cs)、[SinglePointRegistry.cs](../code/server/engine/SinglePointRegistry.cs)：先看角色与类型的标注，再看构造函数收集、校验映射，最后看 `Create`。没有业务实现时创建 `ServerSinglePoint`；已注册类型的创建失败会抛出异常，初始化失败由调用链继续向上传递。
-- [ ] 对照 [DBMgrServerSinglePoint.cs](../code/server/logic/entities/SinglePoint/DBMgrServerSinglePoint.cs) 的 `[SinglePointFor]` 和 `InitializeRoleAsync`，理解基类调用如何进入业务覆写方法。存储实现留到第 8 节。
-
-读完第 2.1～2.3 节应能回答：为什么生成 ID 不等于登记实体？本地登记与远端注册分别由谁完成？为什么 `Initialized` 不能单独代表当前可服务？没有业务子类的进程为何也能初始化？
-
-### 2.4 ID 内部实现（读完第 4 节后回看）
-
-- [ ] [SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)：看时间戳、worker 编号、序列号如何组合；同毫秒序列耗尽与时钟回退如何处理。
-- [ ] [SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)：按 `CreateAsync` → `GenId` → `IdSession` → `DisposeAsync`，看 ZooKeeper 临时节点占号、并发发号、会话失效和资源释放。
+区分三种标识：进程实例名表示本次占号的进程，连接 ID 表示一次连接，RPC 请求 ID 关联一次请求与响应。进程实例编号与雪花 worker 编号独立；当前节点不生成实体身份。调用与限制见[统一 ID 生成](雪花ID.md)。
 
 ## 3. 沿启动流程读一遍
 
-- [x] [Program.cs](../code/server/app/Program.cs)：用户于 2026-11-18 确认已理解。当前顺序为配置加载 → `InitializeZooKeeperAsync` → `InitializeIdGeneratorAsync` → 创建 `ServerNode` 和网络宿主 → `app.StartAsync` → `RunWorkersAsync`。初始化任务先等待进程注册与 `FirstLinks`，再扫描业务程序集建立 `SinglePointRegistry`，调用 `node.InitializeSinglePointAsync`。已讨论 `Task.WhenAll`、`WatchStopAsync`、`WatchZooKeeperSessionAsync`、`SuperviseAsync`、取消传播和资源释放。
-- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数只准备进程信息和拓扑，不创建 SinglePoint 或分配其实体 ID；`InitializeSinglePointAsync` 在 `FirstLinks` 成功后创建 SinglePoint，并调用 `singlePoint.InitializeAsync(this, stop)`，传入所属节点。再看 `Ready` 与 `Dispose`。
+- [x] [Program.cs](../code/server/app/Program.cs)：用户已理解此前的宿主组装、并发任务、`Task.WhenAll`、停止文件与会话监控、异常监督、取消和释放。
+- [ ] 核对本次 IoC 组装后的 `Program.cs`：日志创建 → 配置加载 → 构建根容器 → ZooKeeper 会话及空地址临时占号 → ID 初始化 → 解析节点和启动监听 → 首次连接数量达标 → 发布服务地址 → `PROCESS_READY`。跟踪连接配置、`ServerGroup`、ZK、ID、身份和节点的注册与解析时机，并核对 App 输出中的 `config/server.yaml`；`WriteProcessIdentity` 单独负责通过临时文件发布本机身份记录。当前不扫描业务类型，也不初始化 DBMgr/Profile 存储；配置包含环境名、运行目录、进程数量/拓扑与完整 ZooKeeper 参数，存储字段由独立工具使用时校验。
+- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数接收进程身份、连接配置、`ServerGroup`、ZK、ID 和日志；名称和角色从身份对象派生，所需连接类型直接查询配置。核对 `FirstLinks`、`Ready`：首次按主动目标类型统计已握手的不同实例，达到各自门槛；门槛为 `0` 的类型不阻塞，无主动依赖可直接就绪，不等待入站。
 
-当前顺序为：初始化进程 ZooKeeper 代理和 ID 生成器 → 监听与 ZooKeeper 进程注册 → 建立首次拓扑连接（只交换进程名）→ 创建 SinglePoint 并生成身份 → 执行业务初始化 → SinglePoint 登记本地实体并发起远端注册 → 收到注册确认 → 标记 SinglePoint 初始化完成。
+`FirstLinks` 只完成一次；完成后，`Ready` 只要求每种正门槛类型至少一条握手连接。例如 `Router: 2` 首次需两个 Router，之后降到一个仍就绪，全部断开会报告连接不全并撤销当前就绪，恢复一个即可恢复；不撤销 `FirstLinks`，也不重新要求两个。门槛为 `0` 的类型不影响健康状态。入站连接不替代主动依赖，达到首次门槛后的额外实例不阻塞启动。
 
-`FirstLinks` 只表示首次进程连接齐备，不表示实体已注册。`Ready` 还要求 SinglePoint 初始化成功、当前连接齐备以及 `RegistrationsComplete`。断线不会重置首次连接信号或重新执行业务初始化，但会撤销当前就绪，重连并收到注册确认后才恢复。
+宿主监督停止请求与 ZooKeeper 会话。会话失效意味着进程实例身份和 worker 租约均不可继续使用，必须退出；普通对端断线由引擎持续重连，不等于本进程立即退出。退出时先取消并等待后台工作、停止监听，再异步释放容器；ID 先于 ZK 释放。日志由 App 提前创建并注册为已有共享实例，最后显式释放，以便记录容器构建、初始化或清理阶段的失败。
 
-Gate 节点的 `RegisterEntitiesAsync` 直接返回，不向邻居登记自身为 RPC 目标；它仍需完成业务初始化和本地登记。首次拓扑等待和连接维护不区分启动工具；宿主等待 `FirstLinks` 或停止请求，引擎统一自动重连。控制台会话标记仅由控制台工具维护。
-
-宿主直接创建 `ServerNode`。当前不存在 `GameServerNode`；具体业务实现放在 `logic/entities/SinglePoint/`。
-
-读完应能按调用顺序指出：谁初始化 ID 生成器，谁等待首次连接，谁创建 SinglePoint，谁传入所属节点、谁直接发起实体注册，以及哪个工作任务失败会触发退出。
+读完应能指出：谁占号，谁初始化 ID，谁等待首次连接，何时发布地址与记录进程就绪，以及哪个任务失败会触发退出。
 
 ## 4. 服务发现、拓扑与连接
 
-- [ ] [Topology.cs](../code/server/engine/Topology.cs)：从类型间连接关系展开每个实例的连接目标和预期邻居。
-- [ ] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs)：跟踪 `InitializeAsync`、`RegisterProcessAsync`、`ResolveProcessAsync`、`SessionLost` 和释放。服务发现现由进程级代理统一负责；向 ZooKeeper 登记进程地址，与向 Router 登记实体归属是两件事。
-- [ ] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[LinkService.cs](../code/server/engine/LinkService.cs)：检查 `peer`、`link` 元数据、来源检查和连接交接；原来的 `EntityHeader` 已移除。
-- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：按 `MaintainLinkAsync` → `ConnectAsync` → `RunLinkAsync` 阅读进程握手；此时只建立连接，不生成实体路由。
-- [ ] 先扫一遍 [transport.proto](../code/server/engine/protocols/transport.proto) 的 `Frame`、`RegisterEntitiesRequest` 和 `RegisterEntitiesReply`，认识握手与独立注册的消息形状；通用 RPC 的等待与回包留到第 5 节。
-- [ ] [ServerNode.Entities.cs](../code/server/engine/ServerNode.Entities.cs)：先沿发送端 `RegisterEntitiesAsync` → `EnsureRegistrationAsync` → `RegisterLinkAsync`，确认注册由 SinglePoint 直接调用所属节点的方法发起，并等待 `RegisterEntitiesReply`。
-- [ ] 再看同文件的 `HandleRegistrationAsync` → `RegisterPeerEntities`：检查注册只能来自当前直连进程、SinglePoint ID 必须在实体名单中、ID 格式与冲突校验，以及 Router 的 `owners` 和 SinglePoint 索引更新。注册处理不依赖接收方业务初始化完成，避免互相等待。
-- [ ] 最后回到 `RunLinkAsync` 的 `RestoreRegistrationAsync`、`finally` 和 `UpdateLinkReadiness`：核对断线时移除实体归属、SinglePoint 索引及当前连接的确认记录；重连后在新连接上重新登记，复用原身份和已初始化的 SinglePoint。
+- [ ] [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)：通过实例方法 `GetDialTargets`、`Dials` 和 `ArePeers` 按类型连接规则匹配动态成员，区分主动目标与入站邻居；`ValidateAcyclic` 独立负责启动依赖的无环检查。
+- [ ] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs)、[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：跟踪空地址占号、地址发布、成员快照和 Watch、身份校验、`SessionLost` 与释放。空地址节点不参与拨号，但可证明主动方持有实例身份。`EnsurePathAsync` 负责公共根目录，`TryCreateEphemeralAsync` 复用抢占步骤，`ReadDiscoveredProcessAsync` 处理单条发现记录；进程编号与 worker 编号仍各自管理申请范围和时序。
+- [ ] [DiscoveredProcess.cs](../code/server/engine/DiscoveredProcess.cs)、[ServerNode.Discovery.cs](../code/server/engine/ServerNode.Discovery.cs)：成员新增、离开、地址变化和同名重建如何取消旧连接并按快照收敛。首次达标后 Watch 与连接维护仍持续运行，后续新增实例和门槛为 `0` 的目标类型也继续连接，不因数量达标停止拨号。
+- [ ] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[LinkService.cs](../code/server/engine/LinkService.cs)：检查 `peer`、`link` 元数据、来源占号身份、本地就绪与连接交接。
+- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：沿连接维护、拨号、握手和读循环看成功与失败分支；`RunLinkAsync` 管理握手与连接登记/注销，`RunTransportAsync` 管理收发与取消协调；断线时撤销连接状态、结束等待项，重新连接后更新就绪。
 
-Router 保存实体到进程的归属及按类型选择 SinglePoint 的索引；其他直接相邻进程同步 SinglePoint 身份，以支持现有连接上的实体调用。Gate 的 SinglePoint 不向对端注册为 RPC 目标；Router 自身的 SinglePoint 索引也在自身注册流程中建立。
+读完应能回答：为什么依赖关系不能成环？Router 为何可以先发布地址？Base 为何分别按 Router 与 DBMgr 的数量等待而不等 Gate？`Router: 2` 达标后为何剩一个仍就绪、全部断开后恢复一个即可？首次达标后为何仍会连接新增 Router？
 
-读完应能回答：进程地址来自哪里？实体归属在哪里维护？为何只完成握手还不能按类型调用 Profile？为什么少一个配置实例或尚未收到注册确认时不能就绪？Base 与 DBMgr 的现有长连接和 Router 转发各自承担什么？
+## 5. 基础 RPC：信封、请求关联与错误
 
-## 5. 通用 RPC：先看信封，再看等待与回包
-
-- [ ] [transport.proto](../code/server/engine/protocols/transport.proto)：区分进程握手、请求、响应，以及独立的实体注册请求与确认；理解 `Any`、目标、来源、截止时间和错误结果。通用协议编译到 Engine，不导入业务协议。
-- [ ] 对照 `Frame` 与 `RegisterEntitiesRequest` / `RegisterEntitiesReply`：`Frame.hello` 只是进程实例名字符串，旧 `Frame.single_point_id` 已移除并保留原字段名与编号；SinglePoint ID 和实体名单现在放在独立注册请求中，通过已有 RPC 信封发送和关联回包。
-- [ ] [EntityRpcContext.cs](../code/server/engine/EntityRpcContext.cs)：区分原始调用进程 `SourceProcess` 与本跳来源 `PeerProcess`。
-- [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：按 `ValidateEnvelope`、`CallAsync`、`WriteAsync`、`Receive`、`ReadReply`、`Close` 跟踪信封校验、请求关联、超时、取消和断线。
-- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：看读循环如何直接处理响应、请求如何排队，以及实体请求如何支持嵌套调用；实体注册请求单独处理，其余请求按目标路由并直接投递给 SinglePoint。
-
-读完应能画出：发起调用 → 保存等待项 → 写出请求 → 接收响应 → 找到等待项 → 完成原来的 `Task`。
-
-同时区分四种标识：进程实例名标识配置中的进程；连接 ID 标识一次连接；RPC 请求 ID 关联一次请求与响应；实体 ID 标识调用目标。后三者虽都可以来自 `IdGenerator.GenId()`，含义和生命周期不同。
-
-## 6. 实体与 SinglePoint 路由
-
-- [ ] [ServerNode.Routing.cs](../code/server/engine/ServerNode.Routing.cs)：依次阅读 `CallEntityAsync`、`CallSinglePointAsync`、`CreateRequest`、`CallRoutedAsync`、`RouteReplyAsync`、`RouteRequestAsync`。实体 RPC 的截止时间统一由 `RouteReplyAsync` 管理，本地调用不再额外创建一套超时取消源；超时统一为 `RpcException(DeadlineExceeded)`，主动取消仍抛出取消异常。
-- [ ] 再看同文件的 `ValidateSource`、`SelectSinglePoint`、`SelectNextLink`、`RegisterPeerSinglePoint`、`RemovePeerSinglePoint`，最后看错误转换；索引登记由独立注册请求触发，ID 在注册入口统一校验，内部登记方法不再静默忽略空 ID；移除由断线清理触发。
-
-重点区分：
-
-- `CallEntityAsync` 的目标 ID 表示执行方法的实体。
-- `CallSinglePointAsync(ProcessType.Profile, …)` 由 Router 从已登记的 Profile SinglePoint 中随机选择一次，再按实体 ID 投递。
-- Gate 发出的实体调用可经现有 Login/Base 连接接入；对端没有目标实体时经 Router 转发。Gate 上的实体不作为 RPC 目标，Login/Base 向 Gate 发消息仍走已有连接。
-- 当前没有增加 Router 之间的网状连接，也没有新增 Gate 经 Base 调用 DBMgr 的业务流程。
-
-读完应能回答：类型何时变成具体实体 ID？原始来源如何保持？目标不存在、未就绪和回包失败分别如何结束调用？
-
-## 7. 以一次 Profile 查询串起业务链路
-
-- [ ] [profile.proto](../code/shared/protocols/profile.proto)：查询请求及结果枚举。历史 publish/withdraw 字段保留，但 Profile RPC 入口拒绝写入。
-- [ ] [ProfileServerSinglePoint.cs](../code/server/logic/entities/SinglePoint/ProfileServerSinglePoint.cs)：存储初始化、HandleRequestAsync 的协议解包与只读校验、查询执行、异常转换与释放。
-- [ ] [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs)、[StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs)：MongoDB 持久化、Redis 命中和回填、缓存占用标记、更新后的缓存失效。
+- [ ] [transport.proto](../code/server/engine/protocols/transport.proto)：`Frame` 分为 `Hello`、`Request` 和 `Reply`；请求用 `RequestId` 关联响应，响应中的 `Payload` 与 `Error` 二选一。`Any` 不依赖业务协议；已移除的实体、来源及转发字段保留字段号和名称。
+- [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：按信封校验、`CallAsync`、写出、接收响应、读取结果和关闭顺序跟踪请求关联、超时、取消及断线。
+- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：看 `CallPeerAsync` 如何选择指定的已连接实例，读循环如何关联响应、处理请求，以及当前没有业务处理入口时如何返回 `Unimplemented`。
 
 ```mermaid
 sequenceDiagram
-    participant L as Login / Base 调用端
-    participant R as Router
-    participant P as Profile SinglePoint
-    participant S as ProfileStore
-    L->>R: CallSinglePointAsync(Profile, request)
-    R->>R: 选择 Profile 实体并路由
-    R->>P: ServerNode 调用 HandleRequestAsync
-    P->>P: 解包并校验查询参数
-    P->>S: HandleAsync（Fetch）
-    S-->>P: ProfileReply
-    P-->>R: 通用 RPC 回包
-    R-->>L: 完成调用
+    participant A as 调用进程
+    participant L as PeerLink
+    participant B as 已连接进程
+    A->>L: CallPeerAsync(实例名, 请求)
+    L->>L: 保存请求 ID 与等待项
+    L->>B: RequestId + Payload
+    B-->>L: Reply + Error(Unimplemented)
+    L-->>A: 结束等待并返回错误
 ```
 
-RPC 目标是执行方法的 **Profile SinglePoint**，业务请求中的实体 ID 是要查询的 **摘要所属实体**。通用 RPC 的请求 ID 负责运输关联，Profile 的业务请求 ID 原样保留在业务响应中。
+这是直接连接上的请求与响应；当前 Router 不选择业务实例、不按实体 ID 路由，也不转发到第三个进程。读完应能画出“发起调用 → 保存等待项 → 写出请求 → 接收响应 → 完成原来的 Task”，并区分业务未实现、无连接、超时、取消和断线。
 
-Router 只负责通用路由与来源校验。Profile 的业务入口只接受查询；实体修改应通过实体 RPC 交给实体自身。调用方直接使用 CallSinglePointAsync，通用传输错误以 RpcException 返回，业务查询的 Rejected / Unavailable 等结果由 Profile 返回。
+## 6. 日志、控制台与独立存储工具
 
-## 8. DBMgr、日志和控制台
+- [ ] [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs)、[GameLog.cs](../code/server/engine/GameLog.cs)：从 `ServerConfiguration.MinimumLogLevel` 追到日志实例创建、注入、级别过滤、文件开启与释放。理解 App 提前创建且最后释放日志的原因。缺省为 `Info`，当前本地配置为 `DEBUG`。
+- [ ] [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs)、[LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)：看事件、实例、连接、请求及等级如何写入 JSON；`ProcessReady` 的事件值为 `PROCESS_READY`。
+- [ ] [控制台工程](../tools/server-console/TGame.ServerConsole.csproj)、[ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)：控制台分别引用 Engine 与业务 Shared，将同一启动计划保存到运行目录与可执行快照的 `config/server.yaml`，保证起服数量和首次连接门槛一致；按启动计划起服、获配实例名和 `ProcessReady` 更新状态，再看精确停止、恢复和编译重启。
+- [ ] [Import-ServerTypes.ps1](../tools/scripts/powershell/Import-ServerTypes.ps1)、[Read-ServerGroup.ps1](../tools/scripts/powershell/Read-ServerGroup.ps1)：脚本从引擎唯一声明加载基础类型，按需加载业务环境变量，不复制常量。
+- [ ] [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs)、[StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs)、[MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs)、[MongoStorageSettings.cs](../code/server/engine/configuration/MongoStorageSettings.cs)：`MongoStorageSettings` 是 Engine 中的纯配置，其余是 logic 中的独立存储实现。按需阅读，不把它们理解为当前启动阶段；存储实现未通过进程 RPC 暴露。
+- [ ] [profile.proto](../code/shared/protocols/profile.proto)、[ProfileLogEvents.cs](../code/shared/csharp/ProfileLogEvents.cs)：业务协议和事件仍由 Shared 持有，不进入引擎传输层。
 
-- [ ] [DBMgrServerSinglePoint.cs](../code/server/logic/entities/SinglePoint/DBMgrServerSinglePoint.cs)、[MongoStorageSettings.cs](../code/server/logic/storage/MongoStorageSettings.cs)、[MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs)、[dbmgr-storage.yaml](../code/server/config/dbmgr-storage.yaml)：独立存储配置、凭据、连接检查与失败就绪状态。
-- [ ] [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs)、[GameLog.cs](../code/server/engine/GameLog.cs)：从 `ServerSettings.MinimumLogLevel` 和 `server.local.yaml` 的 `minimumLogLevel` 追到宿主的 `SetMinimumLevel`，再看 `Debug` / `Info` / `Error` 与写出前过滤。配置缺省为 `Info`，当前本地配置为 `DEBUG`。
-- [ ] [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs)、[LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)、[ProfileLogEvents.cs](../code/shared/csharp/ProfileLogEvents.cs)：通用日志设施属于 Engine，Profile 业务事件属于 Shared；看事件、实例、连接、请求、实体及日志等级如何写入 JSON。
-- [ ] [控制台工程](../tools/server-console/TGame.ServerConsole.csproj)、[ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)：控制台分别引用 Engine 与业务 Shared；先看两套协议导出，再看起服、选关、补起、接管、配置快照、编译并重启及状态计算。
-- [ ] [Import-ServerTypes.ps1](../tools/scripts/powershell/Import-ServerTypes.ps1)、[Read-ServerGroup.ps1](../tools/scripts/powershell/Read-ServerGroup.ps1)：脚本从引擎的唯一声明加载进程与基础类型，同时按需加载业务环境变量，不复制常量。
-- [ ] [MainWindow.xaml.cs](../tools/server-console/MainWindow.xaml.cs)、[MainWindow.Logs.cs](../tools/server-console/MainWindow.Logs.cs)、[ProcessPage.cs](../tools/server-console/ProcessPage.cs)：最后看操作入口与日志展示。
+## 7. 用测试反查理解
 
-当前 GM 使用默认 SinglePoint，保留拓扑连接；GM Ping 命令和 Probe Ping/Pong 已移除，不再沿旧诊断入口阅读。
+阅读测试不需要执行测试。优先关注准备状态、执行步骤与断言结果；完整、耗时或外部服务联调仍须按规范单独确认。
 
-## 9. 用测试反查理解
+当前检查项目为 [TGame.EngineTests.csproj](../code/tests/engine/TGame.EngineTests.csproj)，实际入口集中在 [Program.cs](../code/tests/engine/Program.cs)。按功能选择命令：
 
-阅读测试不需要运行测试。优先在读完一个模块后找对应检查，关注“准备了什么状态、执行了哪一步、断言了什么结果”。完整或耗时验证仍须按项目规范单独确认。
-
-历史验证范围：
-
-- [完整测试记录](2026-11-17完整测试记录.md)对应 Engine / Shared 拆分前的代码；拆分检查见[迁移计划与执行记录](superpowers/plans/2026-11-17-engine-business-shared.md)。
-- 实体注册调整（`b05e619`）和静态 ID 入口调整（`5dc7535`）后记录了检查工程编译及 `--routing`、`--node`、`--profile` 通过。
-- 状态归属调整（`4e5b707`）记录了隔离编译及 `--engine`、`--routing` 通过，详见 [SinglePoint 自持身份与实体集合执行记录](superpowers/plans/2026-11-17-singlepoint-owned-state.md)。这些历史记录各自对应当时版本。
-- 本次改为传入所属 `ServerNode` 并直接注册后，检查工程编译通过（0 警告、0 错误），`--node`、`--routing` 通过，覆盖初始化取消、业务失败、注册确认、拒绝与重连。未运行数据库检查、外部服务或完整联调。
-
-- 清理冗余注册分支、Client 特例、DBMgr 包装、旧 ID 生命周期保护及重复 RPC 超时后，检查工程编译通过（0 警告、0 错误），`--engine`、`--routing` 通过；其中包含一次现有 12 秒截止时间的本地 RPC 检查。未运行数据库检查、外部服务或完整联调。
-
-| 想确认的行为 | 对应检查 |
+| 阅读内容 | 检查入口 |
 | --- | --- |
-| Engine 不引用业务 Shared、通用协议和基础类型归属正确 | [RpcChecks.CheckTransportBoundary](../code/tests/singlepoint/RpcChecks.cs)，随 `--engine` 小范围检查运行 |
-| 默认实现、注册错误与两阶段初始化 | [SinglePointChecks.cs](../code/tests/singlepoint/SinglePointChecks.cs)、[Program.cs](../code/tests/singlepoint/Program.cs) |
-| ID 并发、回退、会话丢失与真实编号分配 | [IdGeneratorChecks.cs](../code/tests/singlepoint/IdGeneratorChecks.cs) |
-| 静态 ID 入口的初始化、取消、并发发号、租约监督和释放 | [IdGeneratorLifecycleChecks.cs](../code/tests/singlepoint/IdGeneratorLifecycleChecks.cs)，随上述内存检查模式运行 |
-| 握手不登记实体、业务初始化后发起注册、等待确认、注册拒绝与重连确认 | [EntityRegistrationChecks.cs](../code/tests/singlepoint/EntityRegistrationChecks.cs)，随 `--routing` 小范围检查运行 |
-| 服务注册冲突与重新注册 | [ServiceRegistryChecks.cs](../code/tests/singlepoint/ServiceRegistryChecks.cs) |
-| 消息关联、信封校验、排队与取消 | [RpcChecks.cs](../code/tests/singlepoint/RpcChecks.cs)、[MessageDispatchChecks.cs](../code/tests/singlepoint/MessageDispatchChecks.cs) |
-| Gate 接入、实例选择、嵌套调用、无目标请求拒绝、身份冲突、断线路由清理和重连恢复 | [EntityRoutingChecks.cs](../code/tests/singlepoint/EntityRoutingChecks.cs)、[GroupChecks.cs](../code/tests/singlepoint/GroupChecks.cs)，随 `--routing` 小范围检查运行 |
-| 本地实体 RPC 的真实截止时间、超时错误和超时后继续调用 | `EntityRoutingChecks.CheckLocalDeadlineAsync`，随 `--routing` 运行，使用现有 12 秒超时 |
-| Profile 写入归属、参数校验与回包 | [ProfileRpcChecks.cs](../code/tests/singlepoint/ProfileRpcChecks.cs) |
-| 真实 MongoDB/Redis 与 Profile 服务处理 | [ProfileStorageChecks.cs](../code/tests/singlepoint/ProfileStorageChecks.cs) |
-| 日志等级配置、过滤、JSON 等级和文件输出 | [LogLevelChecks.cs](../code/tests/singlepoint/LogLevelChecks.cs)，`--logging` 模式 |
-| 配置、日志、起停、恢复与编译重启 | [控制台检查](../tools/server-console/tests/Program.cs)、[Test-ServerConsole.ps1](../tools/scripts/powershell/Test-ServerConsole.ps1) |
-| 从无生成文件的目录导出引擎和业务两套协议 | [控制台检查](../tools/server-console/tests/Program.cs) 的 `--export-only` 模式；仅在带 `.console-check` 标记的隔离副本使用，不启动服务器 |
+| 进程握手、当前就绪与基础 RPC | `--engine`；`--node` 为同义入口，无参数也只运行 engine |
+| 首次连接数量门槛、零门槛及达标后的连接健康 | `--connection-readiness` |
+| 动态成员、后续新增实例及冗余连接 | `--dynamic-topology`、`--discovery-links` |
+| IoC 共享、容器隔离与释放 | `--ioc`，不连接外部服务 |
+| 配置、日志和本地会话生命周期守卫 | `--configuration`、`--logging`、`--zookeeper-session`，不连接外部服务 |
+| 真实 ZooKeeper 占号、地址发布与身份校验 | `--registry`、`--startup-publication` |
+| 真实 ZooKeeper worker 租约与发号 | `--id-zookeeper code/server/config/server.yaml` |
+| 独立 MongoDB 配置、取消及连接失败 | `--mongo-storage`，使用本地回环测试端点，无需真实数据库 |
+| 真实 MongoDB/Redis 的独立 Profile 存储 | `--profile-storage code/server/config/server.yaml`，需 ZooKeeper 与存储服务 |
+| 控制台就绪状态、身份、恢复与精确停止 | [控制台检查](../tools/server-console/tests/Program.cs) 的 `--state-only`；`--identity-only` 只检查身份 |
+| 完整控制台进程组联调 | [Test-ServerConsole.ps1](../tools/scripts/powershell/Test-ServerConsole.ps1)，需另行确认执行范围 |
 
-每次完成一个小节后记录问题与用户确认结果。下一步核对第三节的 `ServerNode` 生命周期，再进入第四节；`Program.cs` 已确认，不重复从入口讲起。
+命令示例与环境要求见[服务器启动与动态发现](服务器组配置.md)和[统一 ID 生成](雪花ID.md)。[2026-11-17 完整测试记录](2026-11-17完整测试记录.md)及 `docs/superpowers/` 中旧方案保留历史适用范围，其中实体与业务 RPC 的结果不代表当前框架已经验证。本文更新没有执行或宣称新的联调通过。
+
+每次完成一个小节后记录问题与用户确认结果。已理解的 C# 基础不必从头复讲，重点核对 IoC 组装与实例依赖、启动顺序、连接就绪和 RPC 错误行为。

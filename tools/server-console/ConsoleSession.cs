@@ -11,8 +11,6 @@ internal sealed class ConsoleSession : IDisposable
     private const string Project = "code/server/app/TGame.Server.csproj";
     private const string EngineProject = "code/server/engine/TGame.Server.Engine.csproj";
     private const string ProtocolProject = "code/shared/TGame.Shared.csproj";
-    private const string RunConfigurationFile = "server.yaml";
-    private const string LocalCredentialsMarker = "local-credentials";
     private const string MongoPasswordKey = "MONGO_TEST_PASSWORD";
     private const string RedisPasswordKey = "REDIS_TEST_PASSWORD";
     private const string SessionDirectoryFormat = "yyyyMMdd-HHmmss-fffffff";
@@ -42,7 +40,7 @@ internal sealed class ConsoleSession : IDisposable
         var current = Path.Combine(sessions, "current");
         if (!File.Exists(current))
         {
-            var configured = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
+            var configured = LoadSelectedConfiguration().Group;
             Instances = CreateInstances(configured);
             return;
         }
@@ -54,11 +52,9 @@ internal sealed class ConsoleSession : IDisposable
             throw new InvalidDataException("控制台当前会话记录无效。");
         }
 
-        if (HasLegacyRun(saved))
+        if (!File.Exists(Path.Combine(sessions, saved, ServerRunFiles.DynamicDiscoveryMarker)))
         {
-            var configured = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
-            Instances = CreateInstances(configured);
-            return;
+            throw new InvalidDataException($"当前运行组不支持动态身份。请先用旧版控制台停止整组，再删除会话指针 {current} 后重新打开控制台。");
         }
 
         var group = ServerGroup.Load(Path.Combine(sessions, saved, ServerGroup.FileName));
@@ -67,34 +63,7 @@ internal sealed class ConsoleSession : IDisposable
     }
 
     private static ServerInstance[] CreateInstances(ServerGroup group) =>
-        group.Processes.Select(process => new ServerInstance(process.Role, process.Number)).ToArray();
-
-    private bool HasLegacyRun(string id)
-    {
-        bool legacy = false;
-        foreach (var type in Enum.GetValues<ProcessType>())
-        {
-            var legacyExecutable = Path.Combine(Snapshot(id), type + "Server.exe");
-            if (!File.Exists(legacyExecutable))
-            {
-                continue;
-            }
-
-            legacy = true;
-            foreach (var candidate in Process.GetProcessesByName(type + "Server"))
-            {
-                using (candidate)
-                {
-                    if (!candidate.HasExited && string.Equals(candidate.MainModule?.FileName, legacyExecutable, StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new InvalidDataException("该运行组使用旧的无编号实例名，请先用旧版控制台停止整组，再创建新的运行组。");
-                    }
-                }
-            }
-        }
-
-        return legacy;
-    }
+        group.Processes.Select(process => new ServerInstance(process.Role, process.ChannelId)).ToArray();
 
     public void Refresh()
     {
@@ -143,7 +112,7 @@ internal sealed class ConsoleSession : IDisposable
 
     private Task Compile() => Dotnet("编译服务器", "build", Project, "--nologo");
 
-    // The UI dispatches commands, timer ticks and continuations on the same thread.
+    // 界面命令、计时器和异步续体由同一条 UI 线程调度。
     private async Task Command(Func<Task> action)
     {
         if (busy)
@@ -166,9 +135,10 @@ internal sealed class ConsoleSession : IDisposable
 
     private async Task StartNewRun()
     {
-        var group = ServerGroup.Load(Path.Combine(root, ServerGroup.ConfigurationPath));
+        var configuration = LoadSelectedConfiguration();
+        var group = configuration.Group;
         var configuredNames = group.Processes.Select(process => process.Name);
-        bool changed = !Instances.Select(instance => instance.Name).SequenceEqual(configuredNames);
+        bool changed = !Instances.Select(instance => instance.SlotName).SequenceEqual(configuredNames);
         var nextInstances = Instances;
         if (changed)
         {
@@ -177,27 +147,20 @@ internal sealed class ConsoleSession : IDisposable
 
         var name = DateTime.UtcNow.ToString(SessionDirectoryFormat, CultureInfo.InvariantCulture);
         var snapshot = Snapshot(name);
-        var runDir = Directory.CreateDirectory(Path.Combine(sessions, name)).FullName;
-        File.WriteAllText(Path.Combine(runDir, SessionMarker), "");
-        group.Save(Path.Combine(runDir, ServerGroup.FileName));
-        SaveRunConfiguration(runDir);
-        // Prepare credentials and a complete copy before asking healthy processes to shut down.
-        var starts = nextInstances.Select(i => StartInfo(i, name)).ToArray();
+        var runDir = Path.Combine(sessions, name);
+        // 在停止健康进程前准备完整的启动信息和构建快照。
         await Task.Run(() =>
         {
             var source = Path.Combine(root, "build", "bin", "TGame.Server", "debug");
-            foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-            {
-                string dest = Path.Combine(snapshot, Path.GetRelativePath(source, file));
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                File.Copy(file, dest);
-            }
-
-            foreach (var start in starts)
-            {
-                File.Copy(Path.Combine(snapshot, "TGame.Server.exe"), start.FileName);
-            }
+            var apphosts = nextInstances.Select(instance => Path.Combine(snapshot, instance.ExecutableName));
+            PrepareSnapshot(source, snapshot, configuration, runDir, root, apphosts);
         });
+        var runtimeConfig = Path.Combine(snapshot, "config", ServerRuntime.FileName);
+        await PrepareRunDirectory(runtimeConfig);
+        File.WriteAllText(Path.Combine(runDir, SessionMarker), "");
+        File.WriteAllText(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker), "");
+        File.Copy(runtimeConfig, Path.Combine(runDir, ServerConfiguration.FileName));
+        var starts = nextInstances.Select(i => StartInfo(i, name)).ToArray();
         await Task.WhenAll(Instances.Select(i => i.StopAsync(Report)));
         if (changed)
         {
@@ -237,20 +200,35 @@ internal sealed class ConsoleSession : IDisposable
         }
     }
 
-    private void SaveRunConfiguration(string runDir)
+    internal static void PrepareSnapshot(string source, string snapshot, ServerConfiguration configuration,
+        string runDirectory, string workingDirectory, IEnumerable<string> apphosts)
     {
-        var source = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
-        bool localConfig = string.IsNullOrWhiteSpace(source);
-        if (localConfig)
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
         {
-            source = Path.Combine(root, "build", "bin", "TGame.Server", "debug", "config", "server.local.yaml");
+            string dest = Path.Combine(snapshot, Path.GetRelativePath(source, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            File.Copy(file, dest);
         }
 
-        File.Copy(Path.GetFullPath(source!, root), Path.Combine(runDir, RunConfigurationFile));
-        if (localConfig)
+        // 启动数量、连接关系和运行参数使用同一次加载的完整配置，补起时不再依赖源文件。
+        var configDirectory = Directory.CreateDirectory(Path.Combine(snapshot, "config")).FullName;
+        configuration.SaveSnapshot(Path.Combine(configDirectory, ServerConfiguration.FileName),
+            Path.GetRelativePath(workingDirectory, runDirectory));
+        foreach (var apphost in apphosts)
         {
-            File.WriteAllText(Path.Combine(runDir, LocalCredentialsMarker), "");
+            File.Copy(Path.Combine(snapshot, "TGame.Server.exe"), apphost);
         }
+    }
+
+    private ServerConfiguration LoadSelectedConfiguration()
+    {
+        var selected = Environment.GetEnvironmentVariable(EngineEnvironment.Config);
+        if (string.IsNullOrWhiteSpace(selected))
+        {
+            selected = ServerConfiguration.ConfigurationPath;
+        }
+
+        return new ServerConfiguration(Path.GetFullPath(selected, root));
     }
 
     private void Open(string name)
@@ -274,65 +252,28 @@ internal sealed class ConsoleSession : IDisposable
     private void Launch(ServerInstance instance, ProcessStartInfo start)
     {
         instance.Launch(start);
-        Report($"已启动 {instance.Name} · PID {instance.Pid}");
+        Report($"已启动 {instance.Role} 进程 · PID {instance.Pid}，实例身份由服务器注册后显示");
     }
 
     private ProcessStartInfo StartInfo(ServerInstance instance, string name)
     {
+        if (!File.Exists(Path.Combine(Snapshot(name), "config", ServerRuntime.FileName)))
+        {
+            throw new InvalidOperationException("当前运行组使用旧版启动参数，请使用“编译并重启”升级后再补起进程；仍可正常关闭原有进程。");
+        }
+
         var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
-        info.ArgumentList.Add(instance.Name);
         var runDir = Path.Combine(sessions, name);
-        var config = Path.Combine(runDir, RunConfigurationFile);
+        info.ArgumentList.Add(instance.Role);
+        var config = Path.Combine(runDir, ServerConfiguration.FileName);
         if (!File.Exists(config))
         {
             throw new InvalidOperationException("当前运行缺少环境配置快照，请选择环境后编译并重启。");
         }
 
-        bool localConfig = File.Exists(Path.Combine(runDir, LocalCredentialsMarker));
-        info.ArgumentList.Add(runDir);
-        info.Environment[ServerEnvironment.Config] = config;
+        info.Environment[EngineEnvironment.Config] = config;
         info.Environment[EngineEnvironment.LogRoot] = logRoot;
-        if (instance.Role == nameof(ProcessType.DBMgr))
-        {
-            var password = Environment.GetEnvironmentVariable(ServerEnvironment.DBMgrMongoPassword);
-            if (string.IsNullOrWhiteSpace(password))
-            {
-                password = Password(ServerEnvironment.MongoPassword, MongoPasswordKey);
-            }
-
-            info.Environment[ServerEnvironment.DBMgrMongoPassword] = password;
-        }
-
-        if (instance.Role == nameof(ProcessType.Profile))
-        {
-            info.Environment[ServerEnvironment.MongoPassword] = Environment.GetEnvironmentVariable(ServerEnvironment.MongoPassword);
-            info.Environment[ServerEnvironment.RedisPassword] = Environment.GetEnvironmentVariable(ServerEnvironment.RedisPassword);
-            if (localConfig)
-            {
-                info.Environment[ServerEnvironment.MongoPassword] = Password(ServerEnvironment.MongoPassword, MongoPasswordKey);
-                info.Environment[ServerEnvironment.RedisPassword] = Password(ServerEnvironment.RedisPassword, RedisPasswordKey);
-            }
-        }
-
         return info;
-    }
-
-    private string Password(string envKey, string key)
-    {
-        if (Environment.GetEnvironmentVariable(envKey) is { Length: > 0 } password)
-        {
-            return password;
-        }
-
-        var path = Path.Combine(root, ".local", "secrets", "cloud.env");
-        var prefix = key + "=";
-        if (File.Exists(path) && File.ReadLines(path).FirstOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal)) is { } line &&
-            line.Length > prefix.Length)
-        {
-            return line[prefix.Length..];
-        }
-
-        throw new InvalidOperationException($"请设置 {envKey} 或在 .local/secrets/cloud.env 中配置 {key}。");
     }
 
     private ProcessStartInfo NewProcess(string exe)
@@ -356,6 +297,25 @@ internal sealed class ConsoleSession : IDisposable
             info.ArgumentList.Add(argument);
         }
 
+        await RunProcess(operation, info);
+    }
+
+    private async Task PrepareRunDirectory(string configuration)
+    {
+        var installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe");
+        var info = NewProcess(File.Exists(installed) ? installed : "pwsh.exe");
+        string[] arguments = ["-NoProfile", "-File", Path.Combine(root, "tools", "scripts", "powershell", "New-ServerRunDirectory.ps1"),
+            "-Configuration", configuration];
+        foreach (var argument in arguments)
+        {
+            info.ArgumentList.Add(argument);
+        }
+
+        await RunProcess("创建运行目录", info);
+    }
+
+    private async Task RunProcess(string operation, ProcessStartInfo info)
+    {
         info.RedirectStandardOutput = info.RedirectStandardError = true;
         Report(operation + "…");
         using var child = Process.Start(info) ?? throw new InvalidOperationException(operation + "启动失败。");

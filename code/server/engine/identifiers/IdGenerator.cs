@@ -2,53 +2,82 @@ namespace TGame.Server.Engine;
 
 public sealed class IdGenerator : IAsyncDisposable
 {
-    private static IdGenerator? instance;
-    private readonly SnowflakeIdGenerator generator;
+    private bool disposed;
+    private SnowflakeIdGenerator? generator;
+    private readonly SemaphoreSlim lifecycle = new(1);
+    private readonly Func<CancellationToken, Task<SnowflakeIdGenerator>> create;
 
-    private IdGenerator(SnowflakeIdGenerator generator)
+    public IdGenerator(IdGeneratorOptions options, ZooKeeperProxy zooKeeper)
+        : this(stop => SnowflakeIdGenerator.CreateAsync(options, zooKeeper, stop))
     {
-        this.generator = generator;
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(zooKeeper);
     }
 
-    private static SnowflakeIdGenerator Current => Volatile.Read(ref instance)?.generator
-        ?? throw new InvalidOperationException("Initialize the process ID generator before use.");
-
-    public static string GenId() => Current.GenId();
-
-    public static Task LeaseLost => Current.LeaseLost;
-
-    // 宿主按顺序初始化和释放，返回对象只用于 await using 管理生命周期。
-    public static Task<IdGenerator> InitializeAsync(IdGeneratorOptions options, CancellationToken stop = default) =>
-        InitializeAsync(token => SnowflakeIdGenerator.CreateAsync(options, token), stop);
-
-    // 测试可创建不连接 ZooKeeper 的内部实现，仍经过相同的单例生命周期。
-    internal static async Task<IdGenerator> InitializeAsync(
-        Func<CancellationToken, Task<SnowflakeIdGenerator>> create, CancellationToken stop = default)
+    internal IdGenerator(Func<CancellationToken, Task<SnowflakeIdGenerator>> create)
     {
-        stop.ThrowIfCancellationRequested();
-        if (instance is not null)
-        {
-            throw new InvalidOperationException("The process ID generator is already initialized.");
-        }
+        this.create = create;
+    }
 
-        var generator = await create(stop).ConfigureAwait(false);
+    private SnowflakeIdGenerator Current
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return Volatile.Read(ref generator)
+                ?? throw new InvalidOperationException("Initialize the process ID generator before use.");
+        }
+    }
+
+    public string GenId() => Current.GenId();
+
+    public Task LeaseLost => Current.LeaseLost;
+
+    public async Task InitializeAsync(CancellationToken stop = default)
+    {
+        await lifecycle.WaitAsync(stop).ConfigureAwait(false);
         try
         {
-            stop.ThrowIfCancellationRequested();
-            var initialized = new IdGenerator(generator);
-            Volatile.Write(ref instance, initialized);
-            return initialized;
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (generator is not null)
+            {
+                throw new InvalidOperationException("The process ID generator is already initialized.");
+            }
+
+            var initialized = await create(stop).ConfigureAwait(false);
+            if (stop.IsCancellationRequested)
+            {
+                await initialized.DisposeAsync().ConfigureAwait(false);
+                stop.ThrowIfCancellationRequested();
+            }
+
+            Volatile.Write(ref generator, initialized);
         }
-        catch
+        finally
         {
-            await generator.DisposeAsync().ConfigureAwait(false);
-            throw;
+            lifecycle.Release();
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        Volatile.Write(ref instance, null);
-        await generator.DisposeAsync().ConfigureAwait(false);
+        await lifecycle.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            disposed = true;
+            if (generator is not null)
+            {
+                await generator.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            lifecycle.Release();
+        }
     }
 }

@@ -3,8 +3,9 @@
 param([string]$Configuration)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'Import-ServerTypes.ps1')
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
+. "$PSScriptRoot/Import-ServerTypes.ps1"
+$originalConfiguration = [Environment]::GetEnvironmentVariable([TGame.EngineEnvironment]::Config)
 $checkout = [IO.Directory]::CreateTempSubdirectory('tgame-console-check-').FullName
 $null = New-Item -ItemType File -Path "$checkout/.console-check"
 $dotnet = "$env:ProgramFiles/dotnet/dotnet.exe"
@@ -13,12 +14,11 @@ if (!(Test-Path -LiteralPath $dotnet))
     $dotnet = (Get-Command dotnet -CommandType Application).Source
 }
 
-$addedEnvironment = @()
 Push-Location -LiteralPath $root
 
 try
 {
-    $files = @(git ls-files --cached --others --exclude-standard -- 'code/server' 'code/shared' 'code/tests/singlepoint' 'code/tests/fixtures' 'code/Directory.Build.props' 'global.json' 'tools/server-console/project.json')
+    $files = @(git ls-files --cached --others --exclude-standard -- 'code/server' 'code/shared' 'code/tests/engine' 'code/tests/fixtures' 'code/Directory.Build.props' 'global.json' 'tools/server-console/project.json' 'tools/scripts/powershell/New-ServerRunDirectory.ps1' 'tools/scripts/powershell/Import-ServerTypes.ps1')
     if ($LASTEXITCODE -ne 0)
     {
         throw 'Unable to list server inputs.'
@@ -31,33 +31,20 @@ try
         [IO.File]::Copy((Join-Path $root $file), $target)
     }
 
-    if ($Configuration)
+    $selected = $Configuration
+    if ([string]::IsNullOrWhiteSpace($selected))
     {
-        Copy-Item -LiteralPath $Configuration -Destination (Join-Path $checkout 'code/server/config/processes.json') -Force
+        $selected = $originalConfiguration
     }
-
-    $credentials = @{
-        ([TGame.ServerEnvironment]::MongoPassword) = 'MONGO_TEST_PASSWORD'
-        ([TGame.ServerEnvironment]::RedisPassword) = 'REDIS_TEST_PASSWORD'
-    }
-    foreach ($variable in $credentials.Keys)
+    if ([string]::IsNullOrWhiteSpace($selected))
     {
-        $key = $credentials[$variable]
-        if ([Environment]::GetEnvironmentVariable($variable))
-        {
-            continue
-        }
-
-        $line = Get-Content -LiteralPath '.local/secrets/cloud.env' |
-            Where-Object { $_.StartsWith("$key=") } | Select-Object -First 1
-        if (!$line)
-        {
-            throw "Missing $variable."
-        }
-
-        [Environment]::SetEnvironmentVariable($variable, $line.Substring($key.Length + 1))
-        $addedEnvironment += $variable
+        $selected = [TGame.ServerConfiguration]::ConfigurationPath
     }
+
+    $source = [IO.Path]::GetFullPath($selected, $root)
+    $snapshot = Join-Path $checkout ([TGame.ServerConfiguration]::ConfigurationPath)
+    [TGame.ServerConfiguration]::new($source).SaveSnapshot($snapshot)
+    [Environment]::SetEnvironmentVariable([TGame.EngineEnvironment]::Config, $snapshot)
 
     & $dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- $checkout
     if ($LASTEXITCODE -ne 0)
@@ -65,15 +52,11 @@ try
         exit $LASTEXITCODE
     }
 
-    & $dotnet run --project "$checkout/code/tests/singlepoint/TGame.SinglePointTests.csproj"
+    & $dotnet run --project "$checkout/code/tests/engine/TGame.EngineTests.csproj"
     exit $LASTEXITCODE
 }
 finally
 {
-    foreach ($key in $addedEnvironment)
-    {
-        [Environment]::SetEnvironmentVariable($key, $null)
-    }
-
+    [Environment]::SetEnvironmentVariable([TGame.EngineEnvironment]::Config, $originalConfiguration)
     Pop-Location
 }

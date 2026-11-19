@@ -17,7 +17,7 @@ internal static class ServerStatus
     public const string Failed = "异常退出";
 }
 
-internal sealed class ServerInstance(string role, int number = 1) : IDisposable
+internal sealed class ServerInstance(string role, int channelId = 1) : IDisposable
 {
     internal const int MaxRetainedLines = 1000;
     private const int StopTimeoutSeconds = 10;
@@ -31,12 +31,15 @@ internal sealed class ServerInstance(string role, int number = 1) : IDisposable
     private Process? process;
     private string runDir = "";
     private string logDir = "";
+    private string logRoot = "";
+    private bool identityResolved;
     private long startedUtcTicks;
     private RollingLog? log;
     private bool initializing, initialized, connected, failed;
 
     public string Role { get; } = role;
-    public string Name { get; } = ServerProcess.FormatName(role, number);
+    public string Name { get; private set; } = ServerProcess.FormatName(role, channelId);
+    internal string SlotName { get; } = ServerProcess.FormatName(role, channelId);
     public int? Pid
     {
         get; private set;
@@ -50,15 +53,15 @@ internal sealed class ServerInstance(string role, int number = 1) : IDisposable
     }
 
     internal bool Alive => process is { HasExited: false };
-    internal string ExecutableName => Name + "Server.exe";
-    private string IdentityPath => Path.Combine(runDir, Name + ".json");
-    private string LaunchMarker => Path.Combine(runDir, "starting-" + Name);
-    private string StopMarker => Path.Combine(runDir, ServerRunFiles.StopRolePrefix + Name);
+    internal string ExecutableName => SlotName + "Server.exe";
+    private string IdentityPath => Path.Combine(runDir, SlotName + ".json");
+    private string LaunchMarker => Path.Combine(runDir, "starting-" + SlotName);
 
     internal void Open(string directory, string logRoot, string snapshot)
     {
         Reset();
         runDir = directory;
+        this.logRoot = logRoot;
         logDir = Path.Combine(logRoot, Name + "Server");
         var exe = Path.Combine(snapshot, ExecutableName);
         var saved = File.Exists(IdentityPath)
@@ -140,7 +143,6 @@ internal sealed class ServerInstance(string role, int number = 1) : IDisposable
 
     internal void Launch(ProcessStartInfo startInfo)
     {
-        File.Delete(StopMarker);
         File.WriteAllText(LaunchMarker, "");
         Reset();
         process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{Name} 启动失败。");
@@ -165,6 +167,24 @@ internal sealed class ServerInstance(string role, int number = 1) : IDisposable
             return;
         }
 
+        if (!identityResolved)
+        {
+            var identityPath = Path.Combine(runDir, ServerRunFiles.IdentityPrefix + ServerRunFiles.ProcessKey(Pid.Value, startedUtcTicks));
+            if (File.Exists(identityPath))
+            {
+                var assigned = ServerProcess.Parse(File.ReadAllText(identityPath));
+                if (assigned.Role != Role)
+                {
+                    throw new InvalidDataException("Claimed process type does not match its launch type.");
+                }
+
+                Name = assigned.Name;
+                logDir = Path.Combine(logRoot, Name + "Server");
+                log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
+                identityResolved = true;
+            }
+        }
+
         bool caughtUp;
         try
         {
@@ -181,7 +201,8 @@ internal sealed class ServerInstance(string role, int number = 1) : IDisposable
             lines.RemoveRange(0, lines.Count - MaxRetainedLines);
         }
 
-        bool stopping = File.Exists(StopMarker);
+        var stopMarker = Path.Combine(runDir, ServerRunFiles.StopProcessPrefix + ServerRunFiles.ProcessKey(Pid.Value, startedUtcTicks));
+        bool stopping = File.Exists(stopMarker);
         if (failed)
         {
             Status = ServerStatus.Failed;
@@ -254,10 +275,9 @@ internal sealed class ServerInstance(string role, int number = 1) : IDisposable
         switch (name)
         {
             case ServerLogEvents.Listen:
-            case ServerLogEvents.SinglePointInit:
                 initializing = true;
                 break;
-            case ServerLogEvents.SinglePointReady:
+            case ServerLogEvents.ProcessReady:
                 initialized = true;
                 break;
             case ServerLogEvents.LinksReady:
@@ -279,7 +299,8 @@ internal sealed class ServerInstance(string role, int number = 1) : IDisposable
             return;
         }
 
-        File.WriteAllText(StopMarker, "");
+        var stopMarker = Path.Combine(runDir, ServerRunFiles.StopProcessPrefix + ServerRunFiles.ProcessKey(child.Id, startedUtcTicks));
+        File.WriteAllText(stopMarker, "");
         Status = ServerStatus.Stopping;
         try
         {
@@ -308,6 +329,9 @@ internal sealed class ServerInstance(string role, int number = 1) : IDisposable
         Dispose();
         process = null;
         Pid = null;
+        Name = SlotName;
+        identityResolved = false;
+        logDir = Path.Combine(logRoot, Name + "Server");
         log = null;
         lines.Clear();
         LineCount = 0;

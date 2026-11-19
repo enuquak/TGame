@@ -1,26 +1,24 @@
-using System.Text.Json;
+using System;
 
 namespace TGame.Server.Engine;
 
 public sealed record ZooKeeperOptions
 {
-    public const string FileName = "zookeeper.json";
+    public const string SectionName = "zooKeeper";
+    public const string FileName = ServerConfiguration.FileName;
 
     public string Endpoint { get; init; } = "";
     public string DiscoveryRoot { get; init; } = "";
+    public string WorkerRootPath { get; init; } = "";
     public required int SessionTimeoutMilliseconds { get; init; }
     public required int ConnectTimeoutMilliseconds { get; init; }
 
-    public static ZooKeeperOptions Load(string path, string endpoint, string discoveryRoot)
+    public static ZooKeeperOptions Load(string path)
     {
-        var configured = JsonSerializer.Deserialize<ZooKeeperOptions>(File.ReadAllText(path))
-            ?? throw new InvalidDataException("Missing ZooKeeper configuration.");
-        var options = configured with { Endpoint = endpoint, DiscoveryRoot = discoveryRoot };
-        options.Validate();
-        return options;
+        return new ServerConfiguration(path).ZooKeeperSettings;
     }
 
-    internal void Validate()
+    public void Validate()
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(Endpoint);
         ValidatePath(DiscoveryRoot);

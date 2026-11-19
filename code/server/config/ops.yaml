@@ -1,0 +1,28 @@
+# 第三方组件运维配置：连接地址、认证参数、命名空间和超时。
+# 由 server.yaml 的 include 声明加载；进程规模与连接拓扑见 process.yaml。
+# 本地 MongoDB、Redis 通过既有 SSH 隧道访问，ZooKeeper 使用本机地址。
+# 这里只保存密码环境变量名；基础框架启动不初始化 MongoDB、Redis 存储。
+
+mongo:
+  endpoint: "127.0.0.1:37017"
+  databaseName: &mongoDatabase tgame_test
+  authenticationDatabase: *mongoDatabase
+  userName: &storageUser tgame_test
+  serverSelectionTimeoutSeconds: 5
+  passwordVariables:
+    profile: TGAME_MONGO_PASSWORD
+    dbmgr: TGAME_DBMGR_MONGO_PASSWORD
+
+redis:
+  endpoint: "127.0.0.1:16379"
+  userName: *storageUser
+  passwordVariable: TGAME_REDIS_PASSWORD
+  profileCachePrefix: "tgame:test:profile:"
+
+zooKeeper:
+  endpoint: "127.0.0.1:2181"
+  discoveryRoot: /tgame/test
+  # 保留原有 ID worker 租约路径及 ID 分配范围。
+  workerRootPath: /tgame/id-workers
+  sessionTimeoutMilliseconds: 10000
+  connectTimeoutMilliseconds: 10000

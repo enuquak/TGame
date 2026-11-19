@@ -1,20 +1,15 @@
-using System.Text.Json;
-
 namespace TGame.Server.Engine;
 
 public sealed record IdGeneratorOptions
 {
-    public const string FileName = "id-generator.json";
+    public const string FileName = ServerConfiguration.FileName;
 
     public required string WorkerRootPath { get; init; }
 
     public static IdGeneratorOptions Load(string path)
     {
-        var options = JsonSerializer.Deserialize<IdGeneratorOptions>(File.ReadAllText(path))
-            ?? throw new InvalidDataException("Missing ID generator configuration.");
-        options.Validate();
-        return options;
+        return new ServerConfiguration(path).Identifiers;
     }
 
-    internal void Validate() => ZooKeeperOptions.ValidatePath(WorkerRootPath);
+    public void Validate() => ZooKeeperOptions.ValidatePath(WorkerRootPath);
 }

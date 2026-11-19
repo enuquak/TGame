@@ -1,7 +1,0 @@
-# Local development MongoDB endpoint, forwarded over the project's SSH tunnel.
-# Deployments supply their own values. Password: TGAME_DBMGR_MONGO_PASSWORD.
-endpoint: "127.0.0.1:37017"
-databaseName: "tgame_test"
-authenticationDatabase: "tgame_test"
-userName: "tgame_test"
-serverSelectionTimeoutSeconds: 5
