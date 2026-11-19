@@ -9,7 +9,7 @@ internal static class SettingsChecks
         var path = Path.Combine(Path.GetTempPath(), $"tgame-settings-{Guid.NewGuid().ToString("N")}.yaml");
         try
         {
-            const string core = """
+            var core = """
                 environment: staging
                 runDirectory: logs/server-runs
                 zooKeeper:
@@ -19,6 +19,8 @@ internal static class SettingsChecks
                   sessionTimeoutMilliseconds: 10000
                   connectTimeoutMilliseconds: 10000
                 """;
+            core += "\nprocesses:\n" + string.Join("\n", Enum.GetValues<ProcessType>().Select(type => $"  {type}: 1"));
+            core += "\nconnections:\n" + string.Join("\n", Enum.GetValues<ProcessType>().Select(type => $"  {type}: []"));
             const string storage = """
                 mongo:
                   endpoint: mongo-b:27017
@@ -37,7 +39,7 @@ internal static class SettingsChecks
                 """;
             var yaml = core + "\n" + storage;
             File.WriteAllText(path, yaml);
-            var settings = ServerSettings.Load(path);
+            var settings = ServerConfiguration.Load(path);
             settings.ValidateProfileStorage();
             if (settings.MongoDatabase != "game_staging" || settings.MongoUser != "game_service" ||
                 settings.MongoPasswordVariable != "GAME_DB_SECRET" || settings.RedisPasswordVariable != "GAME_CACHE_SECRET" ||
@@ -49,7 +51,7 @@ internal static class SettingsChecks
             }
 
             File.WriteAllText(path, core);
-            var coreSettings = ServerSettings.Load(path);
+            var coreSettings = ServerConfiguration.Load(path);
             if (coreSettings.ZooKeeper != "zk-a:2181" || coreSettings.DiscoveryRoot != "/game/staging")
             {
                 throw new Exception("The process framework requires only ZooKeeper settings.");
@@ -69,7 +71,7 @@ internal static class SettingsChecks
                 File.WriteAllText(path, invalid);
                 try
                 {
-                    ServerSettings.Load(path);
+                    ServerConfiguration.Load(path);
                     throw new Exception("Invalid server configuration was accepted.");
                 }
                 catch (InvalidDataException)

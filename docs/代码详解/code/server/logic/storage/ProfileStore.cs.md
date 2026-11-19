@@ -6,7 +6,7 @@
 
 ## 创建和依赖
 
-`OpenAsync` 先校验 Profile 存储设置，从环境变量取得 Redis 与 Mongo 密码，使用配置中的 Mongo 认证数据库和超时创建客户端并执行 ping，再创建 Redis 多路复用连接。Mongo 初始化后的任意打开失败都会释放 Mongo 客户端。
+`OpenAsync` 接收已有 `ServerConfiguration`，先校验其中的 Profile 存储设置，从环境变量取得 Redis 与 Mongo 密码，使用配置中的 Mongo 认证数据库和超时创建客户端并执行 ping，再创建 Redis 多路复用连接。Mongo 初始化后的任意打开失败都会释放 Mongo 客户端。
 
 构造函数保存注入的 `GameLog` 和 `IdGenerator`，但不拥有它们；它自身拥有 MongoClient 和 ConnectionMultiplexer。集合名为 `entity_profiles`，键前缀来自配置。Redis 使用 2 秒连接/异步超时和一次连接重试。
 

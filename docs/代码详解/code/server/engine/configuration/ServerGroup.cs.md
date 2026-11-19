@@ -20,8 +20,8 @@
 
 ## 读写行为
 
-`Read(configuration)` 复用已加载的 YAML 快照；`Load(path)` 自行加载快照后读取。`Save(path)` 把数量写成 YAML 映射：目标已存在时先读取完整配置，再用 `SaveSection` 替换 `processes` 并保存展开后的配置；目标不存在时只创建含 `processes` 的 YAML 文档。
+`Read(configuration)` 直接返回 `configuration.Group`，不重新绑定或分配数量配置；`Load(path)` 创建完整 `ServerConfiguration` 后取得它的 `Group`。`Save(path)` 把数量写成 YAML 映射，先加载并校验目标已有的完整配置，再用 `SaveSection` 替换 `processes`，保存展开后的配置。
 
-因此新建的数量文件不自动具备所有服务器配置节；保存已有入口时会展开其 include，不保留原来的文件拆分形式。写入不修改当前 `ServerGroup`，也不会自动创建父目录。解析错误和文件 I/O 错误向调用方传播。
+目标缺失、只有数量节或包含其他无效配置时直接失败，不创建不完整文件。保存已有入口时会展开其 include，不保留原来的文件拆分形式。写入不修改当前 `ServerGroup`，也不会自动创建父目录。解析错误和文件 I/O 错误向调用方传播。
 
-相关实现：[YamlConfiguration.cs](YamlConfiguration.cs.md)、[ProcessType.cs](ProcessType.cs.md)、[ZooKeeperProxy.cs](../ZooKeeperProxy.cs.md)。
+相关实现：[ServerConfiguration.cs](ServerConfiguration.cs.md)、[ProcessType.cs](ProcessType.cs.md)、[ZooKeeperProxy.cs](../ZooKeeperProxy.cs.md)。

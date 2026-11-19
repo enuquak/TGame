@@ -4,7 +4,7 @@
 
 `StorageConnections` 是少量无状态的存储连接辅助函数，不是单例服务，也不保存全局客户端。
 
-`Mongo(settings)` 从已经绑定的 `ServerSettings.Mongo` 取得完整配置，再使用 `MongoPasswordVariable` 从环境读取密码，调用 `MongoStorage.CreateClient`。认证数据库和选择超时直接沿用配置，不再从端点重新拼出一份硬编码设置。缺少 Mongo 节点时明确抛出配置错误。
+`Mongo(settings)` 从已经绑定的 `ServerConfiguration.Mongo` 取得完整配置，再使用 `MongoPasswordVariable` 从环境读取密码，调用 `MongoStorage.CreateClient`。认证数据库和选择超时直接沿用配置，不再从端点重新拼出一份硬编码设置。缺少 Mongo 节点时明确抛出配置错误。
 
 `Password(key)` 读取指定环境变量；变量不存在时异常仅包含变量名，不打印密码。空字符串最终会在 Mongo 客户端创建校验中被拒绝。Redis 使用方也复用此方法取得其独立密码变量。
 

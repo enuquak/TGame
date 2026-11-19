@@ -1,6 +1,10 @@
-namespace TGame.Server.Storage;
+using System;
+using System.IO;
+using System.Linq;
 
-internal sealed class RedisStorageSettings
+namespace TGame;
+
+public sealed class RedisStorageSettings
 {
     public string Endpoint { get; init; } = "";
     public string UserName { get; init; } = "";

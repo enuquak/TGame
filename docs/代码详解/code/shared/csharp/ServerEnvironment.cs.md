@@ -6,14 +6,15 @@
 
 本文件在 `TGame` 命名空间定义两组纯常量，供宿主与业务存储复用稳定标识。
 
-`ServerEnvironment` 给出四个环境变量名称：
+`ServerEnvironment` 给出三个存储凭据环境变量名称：
 
 | 常量 | 环境变量 | 用途 |
 | --- | --- | --- |
 | `DBMgrMongoPassword` | `TGAME_DBMGR_MONGO_PASSWORD` | DBMgr 专用 MongoDB 密码来源 |
-| `Config` | `TGAME_SERVER_CONFIG` | 选择宿主配置文件 |
 | `MongoPassword` | `TGAME_MONGO_PASSWORD` | MongoDB 密码来源 |
 | `RedisPassword` | `TGAME_REDIS_PASSWORD` | Redis 密码来源 |
+
+配置选择键 `TGAME_SERVER_CONFIG` 已归属 Engine 的 `EngineEnvironment.Config`，不在业务 Shared 重复声明。
 
 `ServerPeerNames.MongoDB` 的值为 `MongoDB`，用于统一外部数据库对端名称，不能与进程类型或带编号的进程实例身份混为一谈。
 

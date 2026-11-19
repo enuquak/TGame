@@ -4,13 +4,13 @@
 
 ## 职责与依赖
 
-`Run(services)` 检查类型连接拓扑、规范进程名和配置快照隔离。它读取测试输出的默认连接配置，通过 `YamlConfiguration.SaveSnapshot` 写到临时文件，使用 `YamlDotNet` 序列化修改后的连接映射。`TestServices` 仅用于构造无依赖 Router 节点，不需要初始化真实服务。
+`Run(services)` 检查类型连接拓扑、规范进程名和配置快照隔离。它读取测试输出的完整默认配置，通过 `ServerConfiguration.SaveSnapshot` 生成临时快照；`SaveConnections` 使用 `YamlMappingNode` 构造连接映射，再调用内部 `SaveSection` 只替换完整配置的 `connections`。`TestServices` 仅用于构造无依赖 Router 节点，不需要初始化真实服务。
 
 ## 拓扑与独立性检查
 
 空 `connections` 映射必须被拒绝。加载完整快照后，把磁盘文件改成空对象，已经持有的配置仍应保留 Base 到 Router、DBMgr 的主动依赖；Router 的主动目标为空。以 `Router999` 创建节点可立即完成首连，说明合法实例编号不受初始数量上限约束。再次加载默认文件必须得到独立对象。
 
-随后修改 Router 的目标：指向 Base 会与现有 Base→Router 形成环；指向自身是自环；指向 Gate 会通过现有依赖形成循环，三者均应拒绝。另直接构造 Login→Base→Scene→Login 的三节点循环，验证内存构造入口也执行环检测。
+随后修改 Router 的目标：指向 Base 会与现有 Base→Router 形成环；指向自身是自环；指向 Gate 违反禁止以 Gate 为主动目标的规则，三者均应拒绝。另将 Login→Base→Scene→Login 的三节点循环写进完整快照，再加载验证环检测。
 
 最后构造没有任何主动连接的独立配置，再加载默认配置，要求前者仍不具有 Scene→Router，后者具有该关系，证明加载新配置不会改写已存在实例。
 

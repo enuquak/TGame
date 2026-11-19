@@ -1,6 +1,9 @@
-namespace TGame.Server.Storage;
+using System;
+using System.IO;
 
-internal sealed class MongoStorageSettings
+namespace TGame;
+
+public sealed class MongoStorageSettings
 {
     public const string SectionName = "mongo";
     public MongoPasswordVariables PasswordVariables { get; init; } = new();
@@ -36,12 +39,13 @@ internal sealed class MongoStorageSettings
 
     public static MongoStorageSettings Load(string path)
     {
-        var settings = new YamlConfiguration(path).Read<MongoStorageSettings>(SectionName);
+        var settings = new ServerConfiguration(path).Mongo
+            ?? throw new InvalidDataException("Missing MongoDB storage configuration.");
         settings.Validate();
         return settings;
     }
 
-    internal void Validate()
+    public void Validate()
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(Endpoint);
         ArgumentException.ThrowIfNullOrWhiteSpace(DatabaseName);
@@ -51,7 +55,7 @@ internal sealed class MongoStorageSettings
     }
 }
 
-internal sealed class MongoPasswordVariables
+public sealed class MongoPasswordVariables
 {
     public string Profile { get; init; } = "";
     public string Dbmgr { get; init; } = "";

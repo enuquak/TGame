@@ -6,7 +6,7 @@ namespace TGame.Server.Logic;
 
 internal static class StorageConnections
 {
-    public static MongoClient Mongo(ServerSettings settings)
+    public static MongoClient Mongo(ServerConfiguration settings)
     {
         var options = settings.Mongo ?? throw new InvalidDataException("Missing MongoDB storage configuration.");
         return MongoStorage.CreateClient(options, Password(settings.MongoPasswordVariable));

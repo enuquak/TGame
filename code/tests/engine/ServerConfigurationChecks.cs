@@ -1,4 +1,4 @@
-using YamlDotNet.Serialization;
+using YamlDotNet.RepresentationModel;
 using TGame;
 using TGame.Server.Engine;
 
@@ -8,11 +8,22 @@ internal static class ServerConfigurationChecks
     {
         var path = Path.GetTempFileName();
         var defaults = Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName);
+        var baseline = ServerConfiguration.Load(defaults);
+        void SaveConnections(IReadOnlyDictionary<string, string[]> configured)
+        {
+            var targets = new YamlMappingNode();
+            foreach (var pair in configured)
+            {
+                targets.Add(pair.Key, new YamlSequenceNode(pair.Value.Select(value => new YamlScalarNode(value))));
+            }
+
+            baseline.SaveSection(path, ServerConfiguration.SectionName, targets);
+        }
         try
         {
-            File.WriteAllText(path, "connections: {}");
+            SaveConnections(new Dictionary<string, string[]>());
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
-            new YamlConfiguration(defaults).SaveSnapshot(path);
+            new ServerConfiguration(defaults).SaveSnapshot(path);
             var configuration = ServerConfiguration.Load(path);
 
             File.WriteAllText(path, "{}");
@@ -24,26 +35,23 @@ internal static class ServerConfigurationChecks
             var independent = ServerConfiguration.Load(defaults);
             Check(!ReferenceEquals(configuration, independent), "Independent configurations share an instance.");
 
-            var invalid = new YamlConfiguration(defaults).Read<Dictionary<string, string[]>>(ServerConfiguration.SectionName);
-            var serializer = new SerializerBuilder().Build();
+            var invalid = new ServerConfiguration(defaults).Read<Dictionary<string, string[]>>(ServerConfiguration.SectionName);
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Base)];
-            File.WriteAllText(path, serializer.Serialize(new Dictionary<string, object> { [ServerConfiguration.SectionName] = invalid }));
+            SaveConnections(invalid);
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Router)];
-            File.WriteAllText(path, serializer.Serialize(new Dictionary<string, object> { [ServerConfiguration.SectionName] = invalid }));
+            SaveConnections(invalid);
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Gate)];
-            File.WriteAllText(path, serializer.Serialize(new Dictionary<string, object> { [ServerConfiguration.SectionName] = invalid }));
+            SaveConnections(invalid);
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
 
             var cycle = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => Array.Empty<ProcessType>());
             cycle[ProcessType.Login] = [ProcessType.Base];
             cycle[ProcessType.Base] = [ProcessType.Scene];
             cycle[ProcessType.Scene] = [ProcessType.Login];
-            Expect<InvalidDataException>(() =>
-            {
-                _ = new ServerConfiguration(cycle);
-            });
+            SaveConnections(cycle.ToDictionary(pair => pair.Key.ToString(), pair => pair.Value.Select(type => type.ToString()).ToArray()));
+            Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
 
             foreach (var name in new[] { "Router", "Router0", "Router01", "router1", "Unknown1", "1", "Router2147483648", "Router-1" })
             {
@@ -53,8 +61,9 @@ internal static class ServerConfigurationChecks
             Check(ServerProcess.Parse("Router123").ChannelId == 123, "Number parsing failed.");
             Expect<InvalidDataException>(() => ServerProcess.ParseType("Router1"));
             Expect<InvalidDataException>(() => ServerProcess.ParseType("0"));
-            var isolatedTargets = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => Array.Empty<ProcessType>());
-            var isolated = new ServerConfiguration(isolatedTargets);
+            var isolatedTargets = Enum.GetValues<ProcessType>().ToDictionary(type => type.ToString(), _ => Array.Empty<string>());
+            SaveConnections(isolatedTargets);
+            var isolated = ServerConfiguration.Load(path);
             var next = ServerConfiguration.Load(defaults);
             Check(!isolated.Dials(ProcessType.Scene, ProcessType.Router) && next.Dials(ProcessType.Scene, ProcessType.Router),
                 "Loading another configuration changed an existing snapshot.");

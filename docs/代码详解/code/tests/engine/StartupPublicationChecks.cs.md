@@ -4,7 +4,7 @@
 
 ## 职责与执行条件
 
-`RunAsync(stop)` 先执行本地 `StartupReadinessChecks`，再连接真实 ZooKeeper 并启动正式 `LinkService` 的本机 gRPC 服务，验证“临时占号、监听就绪、发布地址”之间的边界。ZooKeeper 配置来自 `ServerSettings.LoadSelected()`；每次检查在原发现根下创建带 GUID 的 `startup-check-*` 子根。
+`RunAsync(stop)` 先执行本地 `StartupReadinessChecks`，再连接真实 ZooKeeper 并启动正式 `LinkService` 的本机 gRPC 服务，验证“临时占号、监听就绪、发布地址”之间的边界。ZooKeeper 配置来自 `ServerConfiguration.LoadSelected()`；每次检查在原发现根下创建带 GUID 的 `startup-check-*` 子根。
 
 ## 主要流程
 

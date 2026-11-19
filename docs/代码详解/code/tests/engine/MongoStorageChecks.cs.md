@@ -8,7 +8,7 @@
 
 ## 关键流程
 
-将监听地址、数据库 `configured_database`、认证库 `configured_auth`、用户 `configured_user` 和一秒服务选择超时写入临时 YAML，再通过 `MongoStorageSettings.Load`、`MongoStorage.CreateClient` 创建客户端。
+先加载输出目录的完整 `ServerConfiguration`，由本地 `SaveSettings` 仅替换 `mongo` 节，保留有效的核心配置、数量与拓扑。将监听地址、数据库 `configured_database`、认证库 `configured_auth`、用户 `configured_user` 和一秒服务选择超时写入临时 YAML，再通过 `MongoStorageSettings.Load`、`MongoStorage.CreateClient` 创建客户端。
 
 测试直接读取驱动设置，要求 endpoint、认证来源、用户名、数据库名称和超时时间均来自配置。调用 `GetDatabase` 只用于核对数据库命名空间，本身不代表已经连接成功。
 

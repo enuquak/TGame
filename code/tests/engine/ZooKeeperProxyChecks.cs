@@ -18,7 +18,7 @@ internal static class ZooKeeperProxyChecks
 
     internal static ZooKeeperOptions LoadOptions()
     {
-        var settings = ServerSettings.LoadSelected();
+        var settings = ServerConfiguration.LoadSelected();
         return settings.ZooKeeperSettings;
     }
 

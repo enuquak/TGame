@@ -6,11 +6,11 @@
 
 `RunAsync()` 验证真实 `ServerServices.AddProcessServices` 注册的单例共享、容器隔离、异步释放以及启动日志的外部生命周期。它先创建两份 `GameLog`，再为 Router1、Router2 建两个独立容器；没有使用全局服务定位器。
 
-`ProcessRegistrations(log)` 从输出目录加载统一 YAML、宿主设置、连接配置和启动数量，调用正式注册入口。ZooKeeper 使用非法端口的测试地址，ID worker 根也为测试值。`CreateProvider` 再注册明确进程身份并覆盖 ID 服务工厂，使用 worker 与编号对应的本地雪花生成器，开启 `ValidateOnBuild`、`ValidateScopes`。因此它复用正式组装逻辑，但避免真正分配 ZooKeeper worker。
+`ProcessRegistrations(log)` 从输出目录加载一个完整 `ServerConfiguration`，调用正式注册入口，并断言配置服务只注册一次。测试随后覆盖 ZooKeeper 与 ID 选项：ZooKeeper 使用非法端口的测试地址，ID worker 根也为测试值。`CreateProvider` 再注册明确进程身份并覆盖 ID 服务工厂，使用 worker 与编号对应的本地雪花生成器，开启 `ValidateOnBuild`、`ValidateScopes`。因此它复用正式组装逻辑，但避免真正分配 ZooKeeper worker。
 
 ## 共享、隔离与释放检查
 
-同一容器重复获取 YAML、日志、ID、ZooKeeper 和节点应保持共享；两个容器中的 YAML、日志、ID、ZooKeeper、节点和进程身份应互相独立。初始化两个 ID 服务后，要求不同 worker 的 ID 不同；两个 Router 节点都可立即就绪。
+同一容器重复获取 `ServerConfiguration`、日志、ID、ZooKeeper 和节点应保持共享，容器取得的 `ServerGroup` 必须与配置持有的 `Group` 是同一引用；两个容器中的配置、日志、ID、ZooKeeper、节点和进程身份应互相独立。初始化两个 ID 服务后，要求不同 worker 的 ID 不同；两个 Router 节点都可立即就绪。
 
 异步释放第一个容器后，其 ID 不能再用，ZooKeeper 不能再初始化；第二个容器仍可生成合法 ID。对第二个代理执行预取消初始化应返回取消异常，而不是因另一个容器退出而被释放。再次释放第一个容器也不应影响第二个实例。
 

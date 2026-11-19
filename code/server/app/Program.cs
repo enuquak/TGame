@@ -41,23 +41,17 @@ finally
 async Task RunServerAsync(ProcessType processType, GameLog log)
 {
     var role = processType.ToString();
-    var yaml = new YamlConfiguration(ServerSettings.SelectedPath());
-    var settings = ServerSettings.From(yaml);
-    log.SetMinimumLevel(settings.MinimumLogLevel);
-    var runDir = yaml.ResolveRunDirectory(Directory.GetCurrentDirectory());
+    var configuration = ServerConfiguration.LoadSelected();
+    log.SetMinimumLevel(configuration.MinimumLogLevel);
+    var runDir = configuration.ResolveRunDirectory(Directory.GetCurrentDirectory());
     if (!Directory.Exists(runDir))
     {
         throw new DirectoryNotFoundException($"Runtime directory does not exist. Prepare it with the server scripts: {runDir}");
     }
 
-    var configuration = new ServerConfiguration(settings.Connections);
-    var startup = new ServerGroup(settings.Processes);
-    var zooKeeperOptions = settings.ZooKeeperSettings;
-    var idOptions = new IdGeneratorOptions { WorkerRootPath = zooKeeperOptions.WorkerRootPath };
-    idOptions.Validate();
     log.Info(ServerLogEvents.InitStepCompleted, role, detail: "配置加载完成");
 
-    await using var app = CreateApplication(processType, yaml, settings, configuration, startup, zooKeeperOptions, idOptions, log);
+    await using var app = CreateApplication(processType, configuration, log);
     log.Info(ServerLogEvents.InitStepCompleted, role, detail: "app 服务注册及构建完成");
     var zooKeeper = app.Services.GetRequiredService<ZooKeeperProxy>();
     var process = await InitializeZooKeeperAsync(zooKeeper, processType);
@@ -134,8 +128,7 @@ static async Task<ServerProcess> InitializeZooKeeperAsync(ZooKeeperProxy zooKeep
     return await zooKeeper.ClaimProcessAsync(processType, claimTimeout.Token);
 }
 
-static WebApplication CreateApplication(ProcessType processType, YamlConfiguration yaml, ServerSettings settings,
-    ServerConfiguration configuration, ServerGroup startup, ZooKeeperOptions zooKeeperOptions, IdGeneratorOptions idOptions, GameLog log)
+static WebApplication CreateApplication(ProcessType processType, ServerConfiguration configuration, GameLog log)
 {
     var builder = WebApplication.CreateSlimBuilder();
     builder.Logging.ClearProviders();
@@ -145,7 +138,7 @@ static WebApplication CreateApplication(ProcessType processType, YamlConfigurati
     }
 
     builder.Services.AddGrpc();
-    ServerServices.AddProcessServices(builder.Services, yaml, settings, configuration, startup, zooKeeperOptions, idOptions, log);
+    ServerServices.AddProcessServices(builder.Services, configuration, log);
     return builder.Build();
 }
 

@@ -59,7 +59,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 服务端通过 `TGAME_SERVER_CONFIG` 显式选择 YAML 文件；未选择或基础配置不完整时拒绝启动。进程基础框架要求环境名、相对运行目录、进程数量与拓扑以及完整 `zooKeeper` 配置，`loggingMinimumLevel` 可选，默认 `INFO`。启动不要求数据库地址、账号或密码；独立存储工具使用时自行校验所需配置与凭据。
 
-[server.yaml](code/server/config/server.yaml) 是本地默认入口，脚本与控制台优先使用 `TGAME_SERVER_CONFIG` 指定的入口。它通过 `include: [ops, process]` 引用同目录的两个文件；各文件独立解析后合并顶层字段，重名直接失败，YAML 锚点和别名只在单文件内有效。宿主将加载器 `YamlConfiguration` 和绑定后的配置对象注册为 IoC 单例，不自动热重载。新运行组把展开后的完整配置保存到运行目录和可执行快照中，重新接管或补起继续使用它。
+[server.yaml](code/server/config/server.yaml) 是本地默认入口，脚本与控制台优先使用 `TGAME_SERVER_CONFIG` 指定的入口。它通过 `include: [ops, process]` 引用同目录的两个文件；各文件独立解析后合并顶层字段，重名直接失败，YAML 锚点和别名只在单文件内有效。Engine 的 `ServerConfiguration` 一次解析、严格绑定并校验核心配置、数量和拓扑；宿主将该实例及其持有的 `Group`、ZooKeeper/ID 选项注册为 IoC 单例，不另建宿主配置对象，也不自动热重载。新运行组把展开后的完整配置保存到运行目录和可执行快照中，重新接管或补起继续使用它。
 
 总入口示例（其引用文件也必须存在）：
 
@@ -113,7 +113,7 @@ dotnet build/bin/TGame.Server/debug/TGame.Server.dll Router
 
 ### 独立存储工具
 
-[MongoStorageSettings](code/server/logic/storage/MongoStorageSettings.cs) 和 [MongoStorage](code/server/logic/storage/MongoStorage.cs) 保留配置读取、客户端创建与连接检查能力；[ops.yaml](code/server/config/ops.yaml) 提供独立 MongoDB 配置示例。调用方显式提供密码，配置文件不保存密码。DBMgr 进程启动不调用这些工具，也不以数据库检查决定就绪。
+[MongoStorageSettings](code/server/engine/configuration/MongoStorageSettings.cs) 是 Engine 中的纯配置类型；[MongoStorage](code/server/logic/storage/MongoStorage.cs) 在 logic 中负责客户端创建与连接检查。`MongoStorageSettings.Load` 要求完整有效的服务器配置，不接受只有 Mongo 节的片段；[ops.yaml](code/server/config/ops.yaml) 提供独立 MongoDB 配置示例。调用方显式提供密码，配置文件不保存密码。DBMgr 进程启动不调用这些工具，也不以数据库检查决定就绪。
 
 [ProfileStore](code/server/logic/storage/ProfileStore.cs) 与 [StorageConnections](code/server/logic/storage/StorageConnections.cs) 保留 MongoDB/Redis 存储能力，使用时要求完整的存储字段与配置指定的凭据变量。本地示例变量为 `TGAME_MONGO_PASSWORD` 和 `TGAME_REDIS_PASSWORD`。这些工具没有进程 RPC 入口；只有独立存储操作和存储联调需要准备对应数据库及凭据。
 

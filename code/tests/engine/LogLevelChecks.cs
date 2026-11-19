@@ -144,17 +144,17 @@ internal static class LogLevelChecks
 
     private static void CheckSettings(string root)
     {
-        var source = Path.Combine(AppContext.BaseDirectory, "config", YamlConfiguration.FileName);
-        if (ServerSettings.Load(source).MinimumLogLevel != ServerLogLevel.Debug)
+        var source = Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName);
+        if (ServerConfiguration.Load(source).MinimumLogLevel != ServerLogLevel.Debug)
         {
             throw new Exception("The test environment must default to DEBUG.");
         }
 
         var path = Path.Combine(root, "server.yaml");
-        new YamlConfiguration(source).SaveSnapshot(path);
+        new ServerConfiguration(source).SaveSnapshot(path);
         var yaml = File.ReadAllText(path).Replace("loggingMinimumLevel: DEBUG", "");
         File.WriteAllText(path, yaml);
-        if (ServerSettings.Load(path).MinimumLogLevel != ServerLogLevel.Info)
+        if (ServerConfiguration.Load(path).MinimumLogLevel != ServerLogLevel.Info)
         {
             throw new Exception("An unspecified minimum log level must default to INFO.");
         }
@@ -162,7 +162,7 @@ internal static class LogLevelChecks
         foreach (var minimum in Enum.GetValues<ServerLogLevel>())
         {
             File.WriteAllText(path, yaml.Replace("...", "") + $"\nloggingMinimumLevel: {minimum.ToString().ToUpperInvariant()}\n");
-            if (ServerSettings.Load(path).MinimumLogLevel != minimum)
+            if (ServerConfiguration.Load(path).MinimumLogLevel != minimum)
             {
                 throw new Exception($"Minimum log level {minimum} was not loaded.");
             }
@@ -173,7 +173,7 @@ internal static class LogLevelChecks
             File.WriteAllText(path, yaml.Replace("...", "") + $"\nloggingMinimumLevel: {invalid}\n");
             try
             {
-                ServerSettings.Load(path);
+                ServerConfiguration.Load(path);
                 throw new Exception($"Invalid log level {invalid} was accepted.");
             }
             catch (InvalidDataException)

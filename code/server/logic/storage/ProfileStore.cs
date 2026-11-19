@@ -30,7 +30,7 @@ internal sealed class ProfileStore : IDisposable
     private readonly ConnectionMultiplexer redis;
     private readonly IMongoCollection<BsonDocument> summaries;
 
-    private ProfileStore(MongoClient mongo, ConnectionMultiplexer redis, ServerSettings settings, IdGenerator ids, GameLog log)
+    private ProfileStore(MongoClient mongo, ConnectionMultiplexer redis, ServerConfiguration settings, IdGenerator ids, GameLog log)
     {
         this.log = log;
         this.ids = ids;
@@ -41,7 +41,7 @@ internal sealed class ProfileStore : IDisposable
         cache = redis.GetDatabase();
     }
 
-    public static async Task<ProfileStore> OpenAsync(ServerSettings settings, IdGenerator ids, GameLog log, CancellationToken stop)
+    public static async Task<ProfileStore> OpenAsync(ServerConfiguration settings, IdGenerator ids, GameLog log, CancellationToken stop)
     {
         settings.ValidateProfileStorage();
         var options = new ConfigurationOptions

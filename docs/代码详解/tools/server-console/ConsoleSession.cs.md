@@ -10,7 +10,7 @@ ConsoleSession 是一个仓库工作目录对应的控制台会话，负责编�
 
 ## 配置选择与恢复
 
-没有 current 指针时，LoadSelectedConfiguration 优先读取 ServerEnvironment.Config 所代表的 TGAME_SERVER_CONFIG；空值时使用 YamlConfiguration.ConfigurationPath，即 code/server/config/server.yaml。相对路径以仓库根目录解析。ServerGroup.Read 从同一个 YamlConfiguration 的 processes 节点展开实例，所以环境配置与启动数量不会分别选择来源。
+没有 current 指针时，LoadSelectedConfiguration 优先读取 EngineEnvironment.Config 所代表的 TGAME_SERVER_CONFIG；空值时使用 ServerConfiguration.ConfigurationPath，即 code/server/config/server.yaml。相对路径以仓库根目录解析。ServerConfiguration 在构造时统一解析并校验环境、运行目录、ZooKeeper、进程数量和连接关系，控制台直接读取它的 Group 属性，所以环境配置与启动数量不会分别选择来源。可选的 Mongo/Redis 设置仅绑定数据，不建立服务连接。
 
 存在 current 时先验证目录名只含 ASCII 字母、数字或连字符，再检查 console 和动态身份标记。恢复分支直接读取该运行目录中的 server.yaml，完全不重新选择环境变量或源码配置。CreateInstances 先按保存的计划建立槽位，Open 再让各 ServerInstance 恢复真实身份。
 
@@ -18,7 +18,7 @@ ConsoleSession 是一个仓库工作目录对应的控制台会话，负责编�
 
 StartAsync 分三种情况：全部存活时仅报告；部分缺失时针对缺失槽位调用 StartInfo 和 Launch；全部缺失时先编译再建立新组。BuildAsync 的 restart 参数决定编译后是否换组，ExportAsync 分别调用 Engine 和 Shared 的 Protobuf_Compile。
 
-StartNewRun 在编译成功后只加载一次选定 YAML，并从中读取 ServerGroup。它比较计划名称与现有 SlotName，只有数量或排列改变才重建实例集合。UTC 时间戳生成组名；运行记录放在 logs/tools/server-console/<组名>，可执行快照放在 build/server-console/runs/<组名>。
+StartNewRun 在编译成功后只加载一次选定 YAML，并读取它持有的 Group。它比较计划名称与现有 SlotName，只有数量或排列改变才重建实例集合。UTC 时间戳生成组名；运行记录放在 logs/tools/server-console/<组名>，可执行快照放在 build/server-console/runs/<组名>。
 
 PrepareSnapshot 复制构建输出，随后用本次加载的配置覆盖 snapshot/config/server.yaml。SaveSnapshot 已展开所有 include，并把 runDirectory 改为相对于仓库根目录的本组目录。最后按各槽位的 ExecutableName 复制独立 apphost。运行目录脚本接收这份 YAML；脚本建目录后，控制台把同一文件复制到 runDir/server.yaml，两个入口具有一致内容且无需原 include 文件。
 

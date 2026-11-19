@@ -19,12 +19,14 @@ if (!(Test-Path -LiteralPath $yamlAssembly))
     throw '缺少 YAML 依赖，请先运行 dotnet restore code/server/engine/TGame.Server.Engine.csproj。'
 }
 Add-Type -Path $yamlAssembly
-$sources = @('ProcessType.cs', 'ServerGroup.cs', 'ServerRunFiles.cs', 'ServerRuntime.cs', 'YamlConfiguration.cs', 'EngineEnvironment.cs' | ForEach-Object {
+$sources = @('ProcessType.cs', 'ServerGroup.cs', 'ServerRunFiles.cs', 'ServerRuntime.cs', 'ServerConfiguration.cs', 'EngineEnvironment.cs', 'MongoStorageSettings.cs', 'RedisStorageSettings.cs' | ForEach-Object {
     Join-Path $engineDirectory "configuration/$_"
 })
 $sources += Join-Path $engineDirectory 'identifiers/IdText.cs'
+$sources += Join-Path $engineDirectory 'identifiers/IdGeneratorOptions.cs'
+$sources += Join-Path $engineDirectory 'ZooKeeperOptions.cs'
+$sources += Join-Path $engineDirectory 'logging/ServerLogLevel.cs'
 $sources += Join-Path $engineDirectory 'logging/ServerLogProtocol.cs'
-$sources += Join-Path $PSScriptRoot '../../../code/shared/csharp/ServerEnvironment.cs'
 $references = @(Get-ChildItem -LiteralPath (Join-Path $PSHOME 'ref') -Filter '*.dll' | ForEach-Object FullName)
 $references += $yamlAssembly
 # YamlDotNet 面向 .NET 8，PowerShell 可在更新运行时加载它；忽略该引用版本统一提示。

@@ -6,7 +6,7 @@
 
 `ZooKeeperOptions` 是 ZooKeeper 连接和命名空间配置的 record，使用 init 属性供加载时赋值。`Endpoint` 是服务连接串，`DiscoveryRoot` 是进程发现根路径，`WorkerRootPath` 是雪花 worker 占号根路径。`SessionTimeoutMilliseconds` 与 `ConnectTimeoutMilliseconds` 分别控制 ZooKeeper 会话超时及本地等待连接/租约操作的超时预算。
 
-`FileName` 引用统一 `server.yaml`；`SectionName` 为 `zooKeeper`。`Load(path)` 通过 `YamlConfiguration.Read<ZooKeeperOptions>` 读取该节，再调用 `Validate`，不再使用独立 JSON 配置。
+`FileName` 引用统一 `server.yaml`；`SectionName` 为 `zooKeeper`。`Load(path)` 创建完整 `ServerConfiguration`，返回它已校验并持有的 `ZooKeeperSettings`，不只读取一个孤立的 ZooKeeper 片段。宿主直接注册已有配置持有的同一对象。
 
 ## 校验边界
 

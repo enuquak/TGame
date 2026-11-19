@@ -1,9 +1,11 @@
+using System;
+
 namespace TGame.Server.Engine;
 
 public sealed record ZooKeeperOptions
 {
     public const string SectionName = "zooKeeper";
-    public const string FileName = YamlConfiguration.FileName;
+    public const string FileName = ServerConfiguration.FileName;
 
     public string Endpoint { get; init; } = "";
     public string DiscoveryRoot { get; init; } = "";
@@ -13,9 +15,7 @@ public sealed record ZooKeeperOptions
 
     public static ZooKeeperOptions Load(string path)
     {
-        var options = new YamlConfiguration(path).Read<ZooKeeperOptions>(SectionName);
-        options.Validate();
-        return options;
+        return new ServerConfiguration(path).ZooKeeperSettings;
     }
 
     public void Validate()

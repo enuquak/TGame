@@ -41,7 +41,7 @@ foreach ($name in @($entryNames) + 'Run-ServerScript')
 }
 
 $sourceFiles = @(Get-ChildItem -LiteralPath "$root/code/server/engine/configuration" -Filter '*.cs')
-$sourceFiles += Get-Item -LiteralPath "$root/code/server/engine/identifiers/IdText.cs", "$root/code/server/engine/logging/ServerLogProtocol.cs", "$root/code/shared/csharp/ServerEnvironment.cs"
+$sourceFiles += Get-Item -LiteralPath "$root/code/server/engine/identifiers/IdText.cs", "$root/code/server/engine/identifiers/IdGeneratorOptions.cs", "$root/code/server/engine/ZooKeeperOptions.cs", "$root/code/server/engine/logging/ServerLogProtocol.cs", "$root/code/server/engine/logging/ServerLogLevel.cs"
 foreach ($file in $sourceFiles)
 {
     $relative = [IO.Path]::GetRelativePath($root, $file.FullName)
@@ -51,6 +51,7 @@ foreach ($file in $sourceFiles)
 }
 Copy-Item -LiteralPath "$root/code/server/engine/TGame.Server.Engine.csproj" -Destination "$checkout/code/server/engine/TGame.Server.Engine.csproj"
 
+$connections = [TGame.ServerConfiguration]::new((Join-Path $root ([TGame.ServerConfiguration]::ConfigurationPath))).Read[System.Collections.Generic.Dictionary[string, string[]]]('connections')
 $counts = [ordered]@{}
 foreach ($type in [Enum]::GetValues([TGame.ProcessType]))
 {
@@ -66,12 +67,17 @@ function Save-TestCounts
     {
         $lines += "  $($pair.Key): $($pair.Value)"
     }
+    $lines += 'connections:'
+    foreach ($pair in $connections.GetEnumerator())
+    {
+        $lines += "  $($pair.Key): [$($pair.Value -join ', ')]"
+    }
     Set-Content -LiteralPath "$configDir/process.yaml" -Value $lines
 }
 Save-TestCounts
 Set-Content -LiteralPath "$configDir/server.yaml" -Value "include: [process, ops]`nenvironment: fixture-environment`nrunDirectory: logs/custom runs"
-Set-Content -LiteralPath "$configDir/ops.yaml" -Value "mongo:`n  databaseName: &db fixture`n  authenticationDatabase: *db"
-[TGame.YamlConfiguration]::new("$configDir/server.yaml").SaveSnapshot("$output/config/server.yaml")
+Copy-Item -LiteralPath "$root/code/server/config/ops.yaml" -Destination "$configDir/ops.yaml"
+[TGame.ServerConfiguration]::new("$configDir/server.yaml").SaveSnapshot("$output/config/server.yaml")
 
 @'
 <Project Sdk="Microsoft.NET.Sdk">
@@ -83,10 +89,10 @@ Set-Content -LiteralPath "$configDir/ops.yaml" -Value "mongo:`n  databaseName: &
   </PropertyGroup>
 </Project>
 '@ | Set-Content -LiteralPath "$fixture/TGame.Server.csproj"
-Copy-Item -LiteralPath "$root/code/server/engine/configuration/ServerRunFiles.cs" -Destination "$fixture/ServerRunFiles.cs"
-Copy-Item -LiteralPath "$root/code/shared/csharp/ServerEnvironment.cs" -Destination "$fixture/ServerEnvironment.cs"
-Copy-Item -LiteralPath "$root/code/server/engine/configuration/ServerRuntime.cs" -Destination "$fixture/ServerRuntime.cs"
-Copy-Item -LiteralPath "$root/code/server/engine/configuration/YamlConfiguration.cs" -Destination "$fixture/YamlConfiguration.cs"
+foreach ($file in $sourceFiles)
+{
+    Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $fixture $file.Name)
+}
 $engineProject = [xml](Get-Content -LiteralPath "$root/code/server/engine/TGame.Server.Engine.csproj" -Raw)
 $yamlVersion = ($engineProject.Project.ItemGroup.PackageReference | Where-Object Include -eq 'YamlDotNet').Version
 $fixtureProject = Get-Content -LiteralPath "$fixture/TGame.Server.csproj" -Raw
@@ -103,12 +109,12 @@ if (args.Length != 1)
 var runDir = ServerRuntime.LoadDirectory(Path.Combine(AppContext.BaseDirectory, "config", ServerRuntime.FileName), Directory.GetCurrentDirectory());
 using var process = Process.GetCurrentProcess();
 var key = ServerRunFiles.ProcessKey(process.Id, process.StartTime.ToUniversalTime().Ticks);
-var config = Environment.GetEnvironmentVariable(ServerEnvironment.Config)!;
+var config = Environment.GetEnvironmentVariable(EngineEnvironment.Config)!;
 File.WriteAllText(Path.Combine(runDir, process.Id + ".started.json"), JsonSerializer.Serialize(new
 {
     Role = args[0],
-    Environment = new YamlConfiguration(config).Read<string>("environment"),
-    Minimums = new YamlConfiguration(Path.Combine(AppContext.BaseDirectory, "config", ServerRunFiles.GroupConfiguration)).Read<Dictionary<string, int>>("processes")
+    Environment = new ServerConfiguration(config).Environment,
+    Minimums = new ServerConfiguration(Path.Combine(AppContext.BaseDirectory, "config", ServerRunFiles.GroupConfiguration)).Read<Dictionary<string, int>>("processes")
 }));
 while (true)
 {
@@ -132,7 +138,7 @@ function Invoke-Entry([string]$Name, [string[]]$Options = @(), [int]$ExpectedExi
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.Environment['TGAME_NONINTERACTIVE'] = '1'
-    $null = $info.Environment.Remove([TGame.ServerEnvironment]::Config)
+    $null = $info.Environment.Remove([TGame.EngineEnvironment]::Config)
     $child = [Diagnostics.Process]::Start($info)
     try
     {
@@ -196,7 +202,7 @@ try
     $restored = @(Get-TestProcesses)
     Assert-True ($restored.Count -eq 2 -and $restored.Id -contains $first[1].Id) '补起不应重启存活进程。'
     Assert-True ((Split-Path ((Get-Content -LiteralPath $currentFile -Raw).Trim()) -Leaf) -eq $current) '补起必须复用当前快照。'
-    Assert-True ([TGame.YamlConfiguration]::new("$runDir/server.yaml").Read[string]('environment') -eq 'fixture-environment') '补起改变了环境快照。'
+    Assert-True ([TGame.ServerConfiguration]::new("$runDir/server.yaml").Environment -eq 'fixture-environment') '补起改变了环境快照。'
 
     $lock = [IO.File]::Open("$management/manage.lock", 'OpenOrCreate', 'ReadWrite', 'None')
     try
@@ -236,7 +242,7 @@ try
     $info.WorkingDirectory = $checkout
     $info.ArgumentList.Add([TGame.ProcessType]::Router.ToString())
     [TGame.ServerRuntime]::Save("$output/config/server.yaml", $runDir, $checkout)
-    $info.Environment[[TGame.ServerEnvironment]::Config] = "$runDir/server.yaml"
+    $info.Environment[[TGame.EngineEnvironment]::Config] = "$runDir/server.yaml"
     $foreign = [Diagnostics.Process]::Start($info)
     $deadline = [DateTime]::UtcNow.AddSeconds(3)
     while (!(Test-Path -LiteralPath "$runDir/$($foreign.Id).started.json"))

@@ -73,10 +73,10 @@ try
     }
 
     var selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
-    var originalConfig = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
+    var originalConfig = Environment.GetEnvironmentVariable(EngineEnvironment.Config);
     try
     {
-        Environment.SetEnvironmentVariable(ServerEnvironment.Config, Path.Combine(checkout, "missing-new-environment.yaml"));
+        Environment.SetEnvironmentVariable(EngineEnvironment.Config, Path.Combine(checkout, "missing-new-environment.yaml"));
         session.Dispose();
         session = new ConsoleSession(checkout);
         session.Output += Console.WriteLine;
@@ -91,7 +91,7 @@ try
     }
     finally
     {
-        Environment.SetEnvironmentVariable(ServerEnvironment.Config, originalConfig);
+        Environment.SetEnvironmentVariable(EngineEnvironment.Config, originalConfig);
     }
 
     if (selected.Pid == pids[selected.SlotName] || session.Instances.Any(i => i.Name != selected.Name && i.Pid != pids[i.SlotName]))
@@ -139,7 +139,7 @@ try
     }
 
     var configuration = Path.Combine(checkout, ServerGroup.ConfigurationPath);
-    var counts = new YamlConfiguration(configuration).Read<Dictionary<string, int>>(ServerGroup.SectionName);
+    var counts = new ServerConfiguration(configuration).Read<Dictionary<string, int>>(ServerGroup.SectionName);
     int expectedInstances = session.Instances.Count + 1;
     counts[nameof(ProcessType.Login)]++;
     new ServerGroup(counts).Save(configuration);
@@ -222,7 +222,7 @@ async Task CheckDynamicRegistrationAsync()
     };
     info.ArgumentList.Add(nameof(ProcessType.Router));
     info.Environment[EngineEnvironment.LogRoot] = Path.Combine(checkout, "dynamic-registration", "logs");
-    info.Environment[ServerEnvironment.Config] = runtimeConfig;
+    info.Environment[EngineEnvironment.Config] = runtimeConfig;
     using var extra = Process.Start(info)!;
     try
     {

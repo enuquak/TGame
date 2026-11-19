@@ -1,3 +1,4 @@
+using YamlDotNet.Serialization;
 using TGame;
 using TGame.Server;
 
@@ -6,7 +7,7 @@ internal static class YamlConfigurationChecks
     public static void Run()
     {
         var source = Path.Combine(AppContext.BaseDirectory, "config", "server.yaml");
-        var settings = ServerSettings.Load(source);
+        var settings = ServerConfiguration.Load(source);
         if (settings.MinimumLogLevel != ServerLogLevel.Debug || settings.MongoDatabase != "tgame_test" ||
             settings.MongoUser != settings.RedisUser || settings.Mongo!.AuthenticationDatabase != settings.MongoDatabase)
         {
@@ -17,49 +18,54 @@ internal static class YamlConfigurationChecks
         Directory.CreateDirectory(directory);
         try
         {
-            var entry = Path.Combine(directory, YamlConfiguration.FileName);
+            var entry = Path.Combine(directory, ServerConfiguration.FileName);
             var first = Path.Combine(directory, "first.yaml");
             var second = Path.Combine(directory, "second.yaml");
-            File.WriteAllText(first, "first:\n  value: &shared alpha\n  alias: *shared\n");
-            File.WriteAllText(second, "second:\n  value: &shared beta\n  alias: *shared\n");
-            File.WriteAllText(entry, "include: [first, second]\nrunDirectory: logs/original\n");
-            var configuration = new YamlConfiguration(entry);
-            Check(configuration.Read<Dictionary<string, string>>("first")["alias"] == "alpha", "First document alias changed.");
-            Check(configuration.Read<Dictionary<string, string>>("second")["alias"] == "beta", "Anchor names leaked across files.");
+            File.WriteAllText(first, "mongo:\n  endpoint: &shared alpha\n  databaseName: *shared\n");
+            File.WriteAllText(second, "redis:\n  endpoint: &shared beta\n  userName: *shared\n");
+            var baseline = settings.Read<Dictionary<string, object>>();
+            baseline.Remove("mongo");
+            baseline.Remove("redis");
+            baseline["include"] = new[] { "first", "second" };
+            baseline[ServerConfiguration.RunDirectoryKey] = "logs/original";
+            File.WriteAllText(entry, new SerializerBuilder().Build().Serialize(baseline));
+            var configuration = new ServerConfiguration(entry);
+            Check(configuration.Mongo!.DatabaseName == "alpha", "First document alias changed.");
+            Check(configuration.Redis!.UserName == "beta", "Anchor names leaked across files.");
             Check(configuration.ResolveRunDirectory(directory) == Path.Combine(directory, "logs", "original"), "Relative runtime path changed.");
 
             var snapshot = Path.Combine(directory, "snapshot.yaml");
             configuration.SaveSnapshot(snapshot, "logs/current");
             File.Delete(first);
             File.Delete(second);
-            var saved = new YamlConfiguration(snapshot);
-            Check(saved.Read<Dictionary<string, string>>("second")["alias"] == "beta", "Snapshot still depends on source include files.");
-            Check(saved.Read<string>(YamlConfiguration.RunDirectoryKey) == "logs/current", "Snapshot runtime directory was not updated.");
-            Check(configuration.Read<string>(YamlConfiguration.RunDirectoryKey) == "logs/original", "Saving a snapshot mutated its source instance.");
-            Expect<FileNotFoundException>(() => new YamlConfiguration(entry));
+            var saved = new ServerConfiguration(snapshot);
+            Check(saved.Redis!.UserName == "beta", "Snapshot still depends on source include files.");
+            Check(saved.Read<string>(ServerConfiguration.RunDirectoryKey) == "logs/current", "Snapshot runtime directory was not updated.");
+            Check(configuration.Read<string>(ServerConfiguration.RunDirectoryKey) == "logs/original", "Saving a snapshot mutated its source instance.");
+            Expect<FileNotFoundException>(() => new ServerConfiguration(entry));
 
             File.WriteAllText(first, "shared: first\n");
             File.WriteAllText(second, "shared: second\n");
-            Expect<InvalidDataException>(() => new YamlConfiguration(entry));
+            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
             File.WriteAllText(entry, "include: [first]\nshared: entry\n");
-            Expect<InvalidDataException>(() => new YamlConfiguration(entry));
+            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
 
             foreach (var invalid in new[] { "include: first", "include: [../first]", "include: [first.yaml]", "include: [first, first]",
                 "value: 1\nvalue: 2", "values:\n  value: 1\n  value: 2", "[one, two]", "---\na: 1\n---\nb: 2" })
             {
                 File.WriteAllText(entry, invalid);
-                Expect<InvalidDataException>(() => new YamlConfiguration(entry));
+                Expect<InvalidDataException>(() => new ServerConfiguration(entry));
             }
 
             File.WriteAllText(entry, "include: [first]\n");
             File.WriteAllText(first, "include: [server]\n");
-            Expect<InvalidDataException>(() => new YamlConfiguration(entry));
+            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
             File.WriteAllText(entry, "include: [first, second]\n");
             File.WriteAllText(first, "first: &onlyHere value\n");
             File.WriteAllText(second, "second: *onlyHere\n");
-            Expect<InvalidDataException>(() => new YamlConfiguration(entry));
+            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
             File.WriteAllText(entry, "value: &recursive [*recursive]\n");
-            Expect<InvalidDataException>(() => new YamlConfiguration(entry));
+            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
         }
         finally
         {

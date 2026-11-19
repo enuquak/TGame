@@ -4,7 +4,7 @@
 
 ## 职责与取值
 
-`TGame.ServerLogLevel` 定义项目公开的三个日志级别：`Debug`、`Info`、`Error`。它让宿主配置、日志调用和序列化使用同一种类型，不把 Serilog 的全部级别直接暴露到项目接口。
+`TGame.ServerLogLevel` 定义项目公开的三个日志级别：`Debug`、`Info`、`Error`。它让统一服务器配置、日志调用和序列化使用同一种类型，不把 Serilog 的全部级别直接暴露到项目接口。
 
 ## 数据流与边界
 

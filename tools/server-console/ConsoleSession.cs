@@ -40,7 +40,7 @@ internal sealed class ConsoleSession : IDisposable
         var current = Path.Combine(sessions, "current");
         if (!File.Exists(current))
         {
-            var configured = ServerGroup.Read(LoadSelectedConfiguration());
+            var configured = LoadSelectedConfiguration().Group;
             Instances = CreateInstances(configured);
             return;
         }
@@ -136,7 +136,7 @@ internal sealed class ConsoleSession : IDisposable
     private async Task StartNewRun()
     {
         var configuration = LoadSelectedConfiguration();
-        var group = ServerGroup.Read(configuration);
+        var group = configuration.Group;
         var configuredNames = group.Processes.Select(process => process.Name);
         bool changed = !Instances.Select(instance => instance.SlotName).SequenceEqual(configuredNames);
         var nextInstances = Instances;
@@ -159,7 +159,7 @@ internal sealed class ConsoleSession : IDisposable
         await PrepareRunDirectory(runtimeConfig);
         File.WriteAllText(Path.Combine(runDir, SessionMarker), "");
         File.WriteAllText(Path.Combine(runDir, ServerRunFiles.DynamicDiscoveryMarker), "");
-        File.Copy(runtimeConfig, Path.Combine(runDir, YamlConfiguration.FileName));
+        File.Copy(runtimeConfig, Path.Combine(runDir, ServerConfiguration.FileName));
         var starts = nextInstances.Select(i => StartInfo(i, name)).ToArray();
         await Task.WhenAll(Instances.Select(i => i.StopAsync(Report)));
         if (changed)
@@ -200,7 +200,7 @@ internal sealed class ConsoleSession : IDisposable
         }
     }
 
-    internal static void PrepareSnapshot(string source, string snapshot, YamlConfiguration configuration,
+    internal static void PrepareSnapshot(string source, string snapshot, ServerConfiguration configuration,
         string runDirectory, string workingDirectory, IEnumerable<string> apphosts)
     {
         foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
@@ -212,7 +212,7 @@ internal sealed class ConsoleSession : IDisposable
 
         // 启动数量、连接关系和运行参数使用同一次加载的完整配置，补起时不再依赖源文件。
         var configDirectory = Directory.CreateDirectory(Path.Combine(snapshot, "config")).FullName;
-        configuration.SaveSnapshot(Path.Combine(configDirectory, YamlConfiguration.FileName),
+        configuration.SaveSnapshot(Path.Combine(configDirectory, ServerConfiguration.FileName),
             Path.GetRelativePath(workingDirectory, runDirectory));
         foreach (var apphost in apphosts)
         {
@@ -220,15 +220,15 @@ internal sealed class ConsoleSession : IDisposable
         }
     }
 
-    private YamlConfiguration LoadSelectedConfiguration()
+    private ServerConfiguration LoadSelectedConfiguration()
     {
-        var selected = Environment.GetEnvironmentVariable(ServerEnvironment.Config);
+        var selected = Environment.GetEnvironmentVariable(EngineEnvironment.Config);
         if (string.IsNullOrWhiteSpace(selected))
         {
-            selected = YamlConfiguration.ConfigurationPath;
+            selected = ServerConfiguration.ConfigurationPath;
         }
 
-        return new YamlConfiguration(Path.GetFullPath(selected, root));
+        return new ServerConfiguration(Path.GetFullPath(selected, root));
     }
 
     private void Open(string name)
@@ -265,13 +265,13 @@ internal sealed class ConsoleSession : IDisposable
         var info = NewProcess(Path.Combine(Snapshot(name), instance.ExecutableName));
         var runDir = Path.Combine(sessions, name);
         info.ArgumentList.Add(instance.Role);
-        var config = Path.Combine(runDir, YamlConfiguration.FileName);
+        var config = Path.Combine(runDir, ServerConfiguration.FileName);
         if (!File.Exists(config))
         {
             throw new InvalidOperationException("当前运行缺少环境配置快照，请选择环境后编译并重启。");
         }
 
-        info.Environment[ServerEnvironment.Config] = config;
+        info.Environment[EngineEnvironment.Config] = config;
         info.Environment[EngineEnvironment.LogRoot] = logRoot;
         return info;
     }

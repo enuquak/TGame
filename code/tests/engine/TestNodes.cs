@@ -1,3 +1,4 @@
+using TGame;
 using TGame.Server.Engine;
 using TGame.Transport;
 

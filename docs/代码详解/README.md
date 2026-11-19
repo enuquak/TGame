@@ -1,20 +1,19 @@
 # 全项目手写源码详解
 
-按当前代码整理，共 **78 个源码文件、78 份独立详解**。覆盖 C#、XAML 和手写 Protobuf 定义，包括测试及桌面控制台；排除工具脚本、生成代码、构建产物、第三方工具二进制、项目构建文件和配置数据。当前客户端目录尚无手写源码。
+按当前代码整理，共 **76 个源码文件、76 份独立详解**。覆盖 C#、XAML 和手写 Protobuf 定义，包括测试及桌面控制台；排除工具脚本、生成代码、构建产物、第三方工具二进制、项目构建文件和配置数据。当前客户端目录尚无手写源码。
 
 详解与源码目录对应，文件名保留原扩展名，例如 `Program.cs.md`。文档描述当前实现；测试入口说明不代表本次执行过完整测试或外部服务联调。
 
-建议先读 App 的 Program、ServerServices、ServerSettings，再读引擎 YamlConfiguration、ServerConfiguration、ServerGroup，随后沿 ZooKeeper、ID、ServerNode 与 PeerLink 追踪启动和通信；控制台与各测试文件可按需查阅。
+建议先读 App 的 Program、ServerServices，再读引擎统一配置 ServerConfiguration、ServerGroup，随后沿 ZooKeeper、ID、ServerNode 与 PeerLink 追踪启动和通信；控制台与各测试文件可按需查阅。
 
-## 服务器宿主（3）
+## 服务器宿主（2）
 
 | 源码 | 详解 |
 | --- | --- |
 | [code/server/app/Program.cs](../../code/server/app/Program.cs) | [阅读详解](code/server/app/Program.cs.md) |
 | [code/server/app/ServerServices.cs](../../code/server/app/ServerServices.cs) | [阅读详解](code/server/app/ServerServices.cs.md) |
-| [code/server/app/ServerSettings.cs](../../code/server/app/ServerSettings.cs) | [阅读详解](code/server/app/ServerSettings.cs.md) |
 
-## 服务器引擎（26）
+## 服务器引擎（27）
 
 | 源码 | 详解 |
 | --- | --- |
@@ -29,12 +28,13 @@
 | [code/server/engine/ZooKeeperProxy.cs](../../code/server/engine/ZooKeeperProxy.cs) | [阅读详解](code/server/engine/ZooKeeperProxy.cs.md) |
 | [code/server/engine/ZooKeeperSession.cs](../../code/server/engine/ZooKeeperSession.cs) | [阅读详解](code/server/engine/ZooKeeperSession.cs.md) |
 | [code/server/engine/configuration/EngineEnvironment.cs](../../code/server/engine/configuration/EngineEnvironment.cs) | [阅读详解](code/server/engine/configuration/EngineEnvironment.cs.md) |
+| [code/server/engine/configuration/MongoStorageSettings.cs](../../code/server/engine/configuration/MongoStorageSettings.cs) | [阅读详解](code/server/engine/configuration/MongoStorageSettings.cs.md) |
 | [code/server/engine/configuration/ProcessType.cs](../../code/server/engine/configuration/ProcessType.cs) | [阅读详解](code/server/engine/configuration/ProcessType.cs.md) |
+| [code/server/engine/configuration/RedisStorageSettings.cs](../../code/server/engine/configuration/RedisStorageSettings.cs) | [阅读详解](code/server/engine/configuration/RedisStorageSettings.cs.md) |
 | [code/server/engine/configuration/ServerConfiguration.cs](../../code/server/engine/configuration/ServerConfiguration.cs) | [阅读详解](code/server/engine/configuration/ServerConfiguration.cs.md) |
 | [code/server/engine/configuration/ServerGroup.cs](../../code/server/engine/configuration/ServerGroup.cs) | [阅读详解](code/server/engine/configuration/ServerGroup.cs.md) |
 | [code/server/engine/configuration/ServerRunFiles.cs](../../code/server/engine/configuration/ServerRunFiles.cs) | [阅读详解](code/server/engine/configuration/ServerRunFiles.cs.md) |
 | [code/server/engine/configuration/ServerRuntime.cs](../../code/server/engine/configuration/ServerRuntime.cs) | [阅读详解](code/server/engine/configuration/ServerRuntime.cs.md) |
-| [code/server/engine/configuration/YamlConfiguration.cs](../../code/server/engine/configuration/YamlConfiguration.cs) | [阅读详解](code/server/engine/configuration/YamlConfiguration.cs.md) |
 | [code/server/engine/identifiers/IdGenerator.cs](../../code/server/engine/identifiers/IdGenerator.cs) | [阅读详解](code/server/engine/identifiers/IdGenerator.cs.md) |
 | [code/server/engine/identifiers/IdGeneratorOptions.cs](../../code/server/engine/identifiers/IdGeneratorOptions.cs) | [阅读详解](code/server/engine/identifiers/IdGeneratorOptions.cs.md) |
 | [code/server/engine/identifiers/IdText.cs](../../code/server/engine/identifiers/IdText.cs) | [阅读详解](code/server/engine/identifiers/IdText.cs.md) |
@@ -45,14 +45,12 @@
 | [code/server/engine/logging/ServerLogProtocol.cs](../../code/server/engine/logging/ServerLogProtocol.cs) | [阅读详解](code/server/engine/logging/ServerLogProtocol.cs.md) |
 | [code/server/engine/protocols/transport.proto](../../code/server/engine/protocols/transport.proto) | [阅读详解](code/server/engine/protocols/transport.proto.md) |
 
-## 独立存储逻辑（5）
+## 独立存储逻辑（3）
 
 | 源码 | 详解 |
 | --- | --- |
 | [code/server/logic/storage/MongoStorage.cs](../../code/server/logic/storage/MongoStorage.cs) | [阅读详解](code/server/logic/storage/MongoStorage.cs.md) |
-| [code/server/logic/storage/MongoStorageSettings.cs](../../code/server/logic/storage/MongoStorageSettings.cs) | [阅读详解](code/server/logic/storage/MongoStorageSettings.cs.md) |
 | [code/server/logic/storage/ProfileStore.cs](../../code/server/logic/storage/ProfileStore.cs) | [阅读详解](code/server/logic/storage/ProfileStore.cs.md) |
-| [code/server/logic/storage/RedisStorageSettings.cs](../../code/server/logic/storage/RedisStorageSettings.cs) | [阅读详解](code/server/logic/storage/RedisStorageSettings.cs.md) |
 | [code/server/logic/storage/StorageConnections.cs](../../code/server/logic/storage/StorageConnections.cs) | [阅读详解](code/server/logic/storage/StorageConnections.cs.md) |
 
 ## 共享代码与业务协议（3）

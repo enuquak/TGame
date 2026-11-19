@@ -74,9 +74,9 @@ public sealed record ServerProcess(ProcessType Type, int ChannelId)
 
 public sealed class ServerGroup
 {
-    public const string FileName = YamlConfiguration.FileName;
+    public const string FileName = ServerConfiguration.FileName;
     public const string SectionName = "processes";
-    public static string ConfigurationPath => YamlConfiguration.ConfigurationPath;
+    public static string ConfigurationPath => ServerConfiguration.ConfigurationPath;
 
     private readonly Dictionary<string, int> configuredCounts = new(StringComparer.Ordinal);
     public IReadOnlyList<ServerProcess> Processes { get; }
@@ -116,7 +116,8 @@ public sealed class ServerGroup
     }
 
     public ServerGroup(IReadOnlyDictionary<string, int> counts)
-        : this(counts.ToDictionary(pair => ServerProcess.ParseType(pair.Key), pair => pair.Value))
+        : this((counts ?? throw new InvalidDataException("Missing processes configuration."))
+            .ToDictionary(pair => ServerProcess.ParseType(pair.Key), pair => pair.Value))
     {
     }
 
@@ -128,19 +129,10 @@ public sealed class ServerGroup
             values.Add(pair.Key, pair.Value.ToString(CultureInfo.InvariantCulture));
         }
 
-        if (File.Exists(path))
-        {
-            new YamlConfiguration(path).SaveSection(path, SectionName, values);
-            return;
-        }
-
-        var root = new YamlMappingNode { { SectionName, values } };
-        using var writer = File.CreateText(path);
-        new YamlStream(new YamlDocument(root)).Save(writer, assignAnchors: false);
+        new ServerConfiguration(path).SaveSection(path, SectionName, values);
     }
 
-    public static ServerGroup Read(YamlConfiguration configuration) =>
-        new(configuration.Read<Dictionary<string, int>>(SectionName));
+    public static ServerGroup Read(ServerConfiguration configuration) => configuration.Group;
 
-    public static ServerGroup Load(string path) => Read(new YamlConfiguration(path));
+    public static ServerGroup Load(string path) => Read(new ServerConfiguration(path));
 }

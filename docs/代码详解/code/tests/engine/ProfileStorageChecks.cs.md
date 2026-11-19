@@ -4,7 +4,7 @@
 
 ## 职责与执行条件
 
-`RunAsync(idConfig, log, stop)` 是独立 Profile 存储的集成检查。它读取 ID 配置，初始化真实 ZooKeeper 与 ID 服务，再用 `ServerSettings.LoadSelected()` 打开 `ProfileStore`。运行需要配置对应的 ZooKeeper、MongoDB/Redis 环境可用，并由入口显式选择该检查。
+`RunAsync(idConfig, log, stop)` 是独立 Profile 存储的集成检查。它读取 ID 配置，初始化真实 ZooKeeper 与 ID 服务，再用 `ServerConfiguration.LoadSelected()` 打开 `ProfileStore`。运行需要配置对应的 ZooKeeper、MongoDB/Redis 环境可用，并由入口显式选择该检查。
 
 本检查直接调用存储对象的 `HandleAsync`，不会启动 Profile 进程或经过基础 RPC。尤其是这里构造 `Publish`、`Withdraw` 只是在验证存储接口，不代表当前进程框架公开了这些业务 RPC。
 

@@ -1,5 +1,5 @@
 using TGame.Profile;
-using TGame.Server;
+using TGame;
 using TGame.Server.Engine;
 using TGame.Server.Logic;
 using Result = TGame.Profile.ProfileReply.Types.Result;
@@ -13,7 +13,7 @@ internal static class ProfileStorageChecks
         await zooKeeper.InitializeAsync(stop);
         await using var ids = new IdGenerator(options, zooKeeper);
         await ids.InitializeAsync(stop);
-        using var store = await ProfileStore.OpenAsync(ServerSettings.LoadSelected(), ids, log, stop);
+        using var store = await ProfileStore.OpenAsync(ServerConfiguration.LoadSelected(), ids, log, stop);
         var subject = ids.GenId();
         try
         {

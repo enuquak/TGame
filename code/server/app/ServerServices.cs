@@ -4,16 +4,12 @@ namespace TGame.Server;
 
 internal static class ServerServices
 {
-    internal static void AddProcessServices(IServiceCollection services, YamlConfiguration yaml, ServerSettings settings,
-        ServerConfiguration configuration, ServerGroup startup, ZooKeeperOptions zooKeeperOptions, IdGeneratorOptions idOptions,
-        GameLog log)
+    internal static void AddProcessServices(IServiceCollection services, ServerConfiguration configuration, GameLog log)
     {
-        services.AddSingleton(yaml);
-        services.AddSingleton(settings);
         services.AddSingleton(configuration);
-        services.AddSingleton(startup);
-        services.AddSingleton(zooKeeperOptions);
-        services.AddSingleton(idOptions);
+        services.AddSingleton(configuration.Group);
+        services.AddSingleton(configuration.ZooKeeperSettings);
+        services.AddSingleton(configuration.Identifiers);
 
         // 日志先于配置和容器创建，仍由 App 在所有资源退出后释放。
         services.AddSingleton(log);

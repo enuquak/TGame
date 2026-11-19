@@ -6,7 +6,7 @@
 
 `ServerNode` 是进程连接与基础 RPC 的运行核心。本文件负责身份属性、握手、连接集合、就绪状态、流读写及调用入口；另一部分 [ServerNode.Discovery.cs](ServerNode.Discovery.cs.md) 根据服务发现快照增删主动连接任务。两者是同一个 partial 类型，共享依赖和状态，不是两个节点服务。
 
-构造函数接收不可变 `ServerProcess`、拓扑 `ServerConfiguration`、数量计划 `ServerGroup`、ZooKeeper、ID 和日志。它读取一次 `process.Name` 校验编号，并立即计算初始就绪状态；无主动依赖或所有相关门槛为零的进程可以直接就绪。节点不创建实体，不注册实体归属，也不自行开启监听端口。
+构造函数接收不可变 `ServerProcess`、统一配置 `ServerConfiguration`、该配置持有的数量计划 `ServerGroup`、ZooKeeper、ID 和日志。它读取一次 `process.Name` 校验编号，并立即计算初始就绪状态；无主动依赖或所有相关门槛为零的进程可以直接就绪。节点不创建实体，不注册实体归属，也不自行开启监听端口。
 
 ## 连接集合与同步
 
