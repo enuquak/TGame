@@ -84,6 +84,12 @@ try
         return 0;
     }
 
+    if (args is ["--node"])
+    {
+        await new NodeCommunicationChecks(services).RunAsync(stop);
+        return 0;
+    }
+
     if (args is ["--rpc"])
     {
         new RpcChecks(services).CheckTransportBoundary();

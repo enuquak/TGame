@@ -68,7 +68,8 @@ internal sealed class DynamicTopologyChecks(TestServices services)
             var stream = new FrameStream();
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
             streams[peer] = stream;
-            tasks[peer] = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, lifetime.Token);
+            tasks[peer] = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, lifetime.Token,
+                requireReady: node.AcceptsIncoming(peer));
         }
 
         async Task Close(string peer)

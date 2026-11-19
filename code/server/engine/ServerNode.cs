@@ -107,7 +107,7 @@ public partial class ServerNode
         }
     }
 
-    public bool AcceptsIncoming(string peer)
+    internal bool AcceptsIncoming(string peer)
     {
         return ServerProcess.TryParse(peer, out var peerProcess) && configuration.Dials(peerProcess.Type, process.Type);
     }
@@ -136,6 +136,11 @@ public partial class ServerNode
 
     private async Task ConnectAsync(string peer, string address, CancellationToken stop)
     {
+        if (!ServerProcess.TryParse(peer, out var peerProcess) || !configuration.Dials(process.Type, peerProcess.Type))
+        {
+            throw new RpcException(new Status(StatusCode.InvalidArgument, $"Unexpected peer instance {peer}."));
+        }
+
         using var channel = GrpcChannel.ForAddress(address);
         var id = ids.GenId();
         var headers = new Metadata { { TransportProtocol.PeerHeader, Name }, { TransportProtocol.LinkHeader, id } };
@@ -145,14 +150,30 @@ public partial class ServerNode
         await RunLinkAsync(peer, id, call.ResponseStream, call.RequestStream, stop);
     }
 
-    public async Task RunLinkAsync(string peer, string id, IAsyncStreamReader<Frame> input,
-        IAsyncStreamWriter<Frame> output, CancellationToken stop, bool requireReady = false)
+    public async Task AcceptConnectAsync(string peer, string id, IAsyncStreamReader<Frame> input,
+        IAsyncStreamWriter<Frame> output, CancellationToken stop)
     {
-        if (!ServerProcess.TryParse(peer, out var peerProcess) || !configuration.ArePeers(process.Type, peerProcess.Type))
+        if (!IdText.IsValid(id) || !AcceptsIncoming(peer))
         {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, $"Unexpected peer instance {peer}."));
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "Unexpected link."));
         }
 
+        if (!await zooKeeper.IsProcessClaimedAsync(peer, stop))
+        {
+            throw new RpcException(new Status(StatusCode.Unavailable, "Peer identity is not claimed."));
+        }
+
+        if (!Ready)
+        {
+            throw new RpcException(new Status(StatusCode.Unavailable, "The receiving process is not ready."));
+        }
+
+        await RunLinkAsync(peer, id, input, output, stop, requireReady: true);
+    }
+
+    internal async Task RunLinkAsync(string peer, string id, IAsyncStreamReader<Frame> input,
+        IAsyncStreamWriter<Frame> output, CancellationToken stop, bool requireReady = false)
+    {
         var link = new PeerLink(Role, peer, id, output, log);
         if (!await input.MoveNext(stop) || input.Current.Hello != peer)
         {
@@ -174,7 +195,7 @@ public partial class ServerNode
 
         try
         {
-            if (AcceptsIncoming(peer))
+            if (requireReady)
             {
                 await output.WriteAsync(CreateHello(), stop);
             }
