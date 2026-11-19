@@ -4,7 +4,28 @@
 
 详解与源码目录对应，文件名保留原扩展名，例如 `Program.cs.md`。文档描述当前实现；测试入口说明不代表本次执行过完整测试或外部服务联调。
 
-建议先读 App 的 Program、ServerServices，再读引擎统一配置 ServerConfiguration、ServerGroup，随后沿 ZooKeeper、ID、ServerNode 与 PeerLink 追踪启动和通信；控制台与各测试文件可按需查阅。
+## 当前 Review 进度与下一步
+
+更新于 2026-11-20（Asia/Shanghai），按 `review-1119` 本轮代码核对。用户明确确认已读完下面两个文件；其他文件即使已讨论过，也不自动标为已读。历史确认见[代码 Review 进度](../代码Review进度.md)。
+
+- [x] [Program.cs](code/server/app/Program.cs.md)：宿主启动、监督任务、发布服务地址与退出。
+- [x] [ServerNode.Discovery.cs](code/server/engine/ServerNode.Discovery.cs.md)：发现快照、连接任务增删、替换与清理。
+
+**下一步从 `ServerNode.cs` 开始，再接 `PeerLink.cs`，把已经读过的启动和发现主线接到实际通信。** 以下按阅读顺序排列；表中链接进入详解，每份详解顶部可跳转源码。
+
+| 顺序 | 阅读文件 | 建议方法顺序与需要弄清的问题 |
+| --- | --- | --- |
+| 1 | [ServerNode.cs](code/server/engine/ServerNode.cs.md)，对照 [LinkService.cs](code/server/engine/LinkService.cs.md)、[TransportProtocol.cs](code/server/engine/TransportProtocol.cs.md) 和 [transport.proto](code/server/engine/protocols/transport.proto.md) | `MaintainLinkAsync` → `ConnectAsync` / `AcceptConnectAsync` → `RunLinkAsync` → `TryCompleteFirstLinks` → `RunTransportAsync` / `ReceiveFrame` → `CallPeerAsync`。入口校验在哪里？Hello 何时完成？为什么首连完成后断线不撤销 Ready？ |
+| 2 | [PeerLink.cs](code/server/engine/PeerLink.cs.md) | `CallAsync<TReply>` → 内部 `CallAsync` → `WriteAsync` → `Receive` → `ReadReply` → `Close`。区分发起方的 `waiting` 与处理方的请求队列；跟踪请求 ID、写锁、超时、取消和断线。 |
+| 3 | [ZooKeeperProxy.cs](code/server/engine/ZooKeeperProxy.cs.md)、[ZooKeeperSession.cs](code/server/engine/ZooKeeperSession.cs.md)，对照 [DiscoveredProcess.cs](code/server/engine/DiscoveredProcess.cs.md)、[ZooKeeperOptions.cs](code/server/engine/ZooKeeperOptions.cs.md) | `InitializeAsync` → `ClaimProcessAsync` → `RegisterProcessAsync` → `WatchProcessesAsync` → `IsProcessClaimedAsync` → 关闭。空地址占号与已发布地址有什么区别？为什么 `Generation` 能识别同名重启？会话失效为什么要退出？ |
+| 4 | [ServerServices.cs](code/server/app/ServerServices.cs.md)、[ServerConfiguration.cs](code/server/engine/configuration/ServerConfiguration.cs.md)、[ServerGroup.cs](code/server/engine/configuration/ServerGroup.cs.md)、[ProcessType.cs](code/server/engine/configuration/ProcessType.cs.md) | 回看 Program 的依赖来源：单例注册与延迟身份解析 → YAML/include 加载与严格校验 → `Dials` / `GetDialTargets` → 首次连接数量 → 实例命名。配合 `code/server/config/` 的三个 YAML 文件阅读。 |
+| 5 | [IdGenerator.cs](code/server/engine/identifiers/IdGenerator.cs.md)、[IdGeneratorOptions.cs](code/server/engine/identifiers/IdGeneratorOptions.cs.md)、[IdText.cs](code/server/engine/identifiers/IdText.cs.md)，再看 [SnowflakeIdGenerator.cs](code/server/engine/identifiers/SnowflakeIdGenerator.cs.md)、[SnowflakeSequence.cs](code/server/engine/identifiers/SnowflakeSequence.cs.md) | 先看初始化、worker 租约、`GenId` 与释放，再看位布局和时钟边界。区分进程实例名、连接 ID 和请求 ID。回到 ZooKeeperProxy 的 `AcquireWorkerAsync` 补齐租约来源。 |
+| 6 | [GameLog.cs](code/server/engine/GameLog.cs.md)、[ServerLogProtocol.cs](code/server/engine/logging/ServerLogProtocol.cs.md)、[ServerLogLevel.cs](code/server/engine/logging/ServerLogLevel.cs.md)、[LogEventJson.cs](code/server/engine/logging/LogEventJson.cs.md)，对照 [ServerRuntime.cs](code/server/engine/configuration/ServerRuntime.cs.md)、[ServerRunFiles.cs](code/server/engine/configuration/ServerRunFiles.cs.md)、[EngineEnvironment.cs](code/server/engine/configuration/EngineEnvironment.cs.md) | 日志何时创建和释放？`LINK_UP`、`LINKS_READY`、`PROCESS_READY` 各表示什么？PID 加启动时间如何避免误停新进程？ |
+| 7 | [StartupReadinessChecks.cs](code/tests/engine/StartupReadinessChecks.cs.md) → [NodeCommunicationChecks.cs](code/tests/engine/NodeCommunicationChecks.cs.md) → [RpcChecks.cs](code/tests/engine/RpcChecks.cs.md) → [DynamicTopologyChecks.cs](code/tests/engine/DynamicTopologyChecks.cs.md) → [DiscoveryLinkChecks.cs](code/tests/engine/DiscoveryLinkChecks.cs.md) | 用断言反查前面理解。先读准备、动作和结果，不需要执行测试；按需回查 [FrameStream.cs](code/tests/engine/FrameStream.cs.md)、[TestNodes.cs](code/tests/engine/TestNodes.cs.md)、[TestServices.cs](code/tests/engine/TestServices.cs.md) 及[测试入口](code/tests/engine/Program.cs.md)。 |
+| 8（按需） | [ConsoleSession.cs](tools/server-console/ConsoleSession.cs.md) → [ServerInstance.cs](tools/server-console/ServerInstance.cs.md) → [RollingLog.cs](tools/server-console/RollingLog.cs.md) → [MainWindow.xaml.cs](tools/server-console/MainWindow.xaml.cs.md) | 看控制台如何准备快照、起停进程、恢复身份、回放日志和刷新页面；其余界面及控制台测试从下方索引进入。 |
+| 9（按需） | [StorageConnections.cs](code/server/logic/storage/StorageConnections.cs.md)、[MongoStorage.cs](code/server/logic/storage/MongoStorage.cs.md)、[ProfileStore.cs](code/server/logic/storage/ProfileStore.cs.md)、[profile.proto](code/shared/protocols/profile.proto.md) | 独立存储与业务共享协议不在当前进程启动及基础 RPC 主线中，放在框架读通之后。 |
+
+每读完一个文件，再更新阅读确认。已读的两个文件无需重头复读，只在追踪调用时回看；更完整的问题清单与检查入口见[代码 Review 路径](../代码Review路径.md)。
 
 ## 服务器宿主（2）
 

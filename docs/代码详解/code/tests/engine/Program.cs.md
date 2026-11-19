@@ -21,12 +21,13 @@
 | `--id-zookeeper <idConfig>` | 先初始化本地测试 ID，再检查真实 ZooKeeper worker 分配；检查内部有自己的期限。 |
 | `--registry` | 真实 ZooKeeper 占号、发布、动态发现与回收。 |
 | `--zookeeper-session` | 本地会话初始化保护及 `IdGeneratorLifecycleChecks`。 |
-| `--connection-readiness` | 内存首连门槛、当前就绪及延迟握手检查。 |
+| `--connection-readiness` | 内存首连数量门槛、运行期全部断线后保持就绪及延迟握手检查。 |
+| `--node` | 仅执行 `NodeCommunicationChecks`，检查连接入口、握手和节点直接 RPC。 |
 | `--rpc` | 程序集/协议边界检查及内存 `PeerLink` RPC 检查。 |
 | `--startup-publication` | 本地就绪检查加真实 ZooKeeper 与本机正式 gRPC 接入；外层期限为 60 秒。 |
 | `--discovery-links` | 真实本机 gRPC 与模拟发现快照，检查动态连接维护。 |
-| `--dynamic-topology` | 内存连接的类型就绪、冗余链路和恢复。 |
-| 无参数、`--engine`、`--node` | 三种形式进入同一组默认检查，见下文。 |
+| `--dynamic-topology` | 内存连接的首次就绪、冗余链路、全部断线后保持就绪及重连。 |
+| 无参数、`--engine` | 两种形式进入同一组默认检查，见下文；`--node` 已是独立专项。 |
 
 ## 默认组合与时限
 

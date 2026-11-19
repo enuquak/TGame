@@ -12,9 +12,9 @@
 
 先调用 ExportAsync，检查 Engine Transport.cs、TransportGrpc.cs 和业务 Profile.cs 已生成；--export-only 在此结束。正常继续 StartAsync，等待所有实例就绪，再额外启动 Router 验证动态认领。重新创建 ConsoleSession 并刷新，要求实例 PID 和状态保持不变，证明会话重新附加正确。
 
-随后保存原环境变量，故意将 TGAME_SERVER_CONFIG 改成不存在的文件，关闭并重新打开控制台，停止一个 Base，再补起。恢复必须使用运行组快照，不能重新读取这个失效入口。finally 恢复环境变量，并检查补起没有扰动其他 PID。Router 的选择性停止/补起还验证下游 Base 在依赖不足时报告连接不全。
+随后保存原环境变量，故意将 `EngineEnvironment.Config`（TGAME_SERVER_CONFIG）改成不存在的文件，关闭并重新打开控制台，停止一个 Base，要求 Gate 保持就绪，再补起 Base。恢复必须使用运行组快照，不能重新读取这个失效入口。finally 恢复环境变量，并检查补起没有扰动其他 PID。Router 的选择性停止/补起同样要求下游 Base 保持首次启动完成后的就绪状态；停止唯一 Base 或唯一 Router 都不再等待“连接不全”。补起后等待所有进程就绪并核对 Router 的新 PID；实际链路与 RPC 恢复另由引擎专项检查覆盖。
 
-测试接着写入带 #error 的临时源码，让 BuildAsync(restart:true) 编译失败。无论失败如何都删除该文件，然后检查旧组仍就绪且 PID 未变。最后从 YAML 的 processes 节点读计数，增加一个 Login，用 ServerGroup.Save 更新完整入口，再编译重启，验证 InstancesChanged、新数量、新 PID 和再次附加。
+测试接着写入带 #error 的临时源码，让 BuildAsync(restart:true) 编译失败。无论失败如何都删除该文件，然后检查旧组仍就绪且 PID 未变。最后通过 `ServerConfiguration.Read` 从完整 YAML 的 processes 节点读计数，增加一个 Login，用 ServerGroup.Save 更新完整入口，再编译重启，验证 InstancesChanged、新数量、新 PID 和再次附加。
 
 ## 等待和动态注册
 

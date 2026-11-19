@@ -16,6 +16,8 @@
 
 `requireReady: true` 表示接收端：公共握手在连接占位前确认首次就绪，并在占位成功后回复本端 Hello。首次就绪不会因依赖断线撤销，因此运行期依赖全部缺失也可接受新的入站连接。
 
+`Connect` 返回的是 `AcceptConnectAsync` 的整条连接任务。它不会在接收到 Hello 后立即结束；后续还要持续运行双向流，直到断开、取消或失败。收到的 Request 由本端 ServeAsync 回复，本端也可以在同一条流上主动发起 RPC。
+
 ## 生命周期与边界
 
 所有异步步骤都使用 `ServerCallContext.CancellationToken`，连接取消会传递到 ZooKeeper 查询和流处理。服务不释放注入的共享依赖。这里校验的是“此名称已被某个活动 ZooKeeper 会话占用”和拓扑规则，不应把它描述为带密钥的对端身份认证。

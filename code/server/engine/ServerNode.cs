@@ -125,8 +125,8 @@ public partial class ServerNode
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"Unexpected peer instance {peer}."));
         }
 
-        using var channel = GrpcChannel.ForAddress(address);
         var id = ids.GenId();
+        using var channel = GrpcChannel.ForAddress(address);
         var headers = new Metadata { { TransportProtocol.PeerHeader, Name }, { TransportProtocol.LinkHeader, id } };
 
         using var call = new ServerLink.ServerLinkClient(channel).Connect(headers, cancellationToken: stop);

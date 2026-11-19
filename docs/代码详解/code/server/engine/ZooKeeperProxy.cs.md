@@ -38,6 +38,8 @@
 
 `IsProcessClaimedAsync(name)` 要求规范实例名，查询对应节点是否存在且具有非零 `ephemeralOwner`，查询前后都检查会话。它不要求数据非空，因此刚占号、正在主动连接依赖的进程也可以通过接收端检查。该查询只证明名称被临时会话占用，并不验证调用者持有该节点所有权的凭据。
 
+`stat` 是节点元信息；对这里使用的普通持久节点和临时节点，`getEphemeralOwner()` 为 0 表示持久节点，非零值为临时节点所属的 ZooKeeper 会话 ID。`stat is not null && stat.getEphemeralOwner() != 0` 因而同时检查存在性和临时占号。它不代表该进程已 Ready，也不是连接数；ZooKeeper 会话过期或关闭后清理临时节点，不能把进程刚断网等同于节点立即消失。项目的 ZooKeeperSession 对已建立连接的断开采用失效退出策略，具体见其详解。
+
 ## Snowflake worker 租约
 
 `AcquireWorkerAsync` 校验 worker 根路径，建立关联超时，按 `0..1023` 依次尝试临时节点。成功后至少等到申请时刻之后的下一毫秒才交付租约，减少编号立即复用落在同一毫秒的重号风险；这段等待同样受超时和取消约束。全部占满则明确失败。

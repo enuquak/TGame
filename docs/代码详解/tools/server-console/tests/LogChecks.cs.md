@@ -14,6 +14,8 @@ LogChecks.Run 在独立临时子目录复制 sort.exe 为 LogCheck1Server.exe，
 
 追加 LINKS_READY 后仍应初始化中，说明连接就绪不能替代 PROCESS_READY。随后追加 PROCESS_READY 和损坏文本，要求状态就绪、坏文本仍可见。它验证诊断信息可保留，但无效 JSON 不驱动状态变化。
 
+本文件会人工写入 LINKS_LOST 来检查旧事件解析与日志重放。当前引擎运行期断线已不产生该事件，这些断言不表示 ServerNode.Ready 还会随连接丢失变成 false，也不代替真实进程的断线检查。
+
 ## 滚动、预算与字符边界
 
 测试写 1200 条大 TRAFFIC 到 _999 分片，再把 LINKS_LOST 写到 _1000。重新 Open 后因为回放预算未追平，必须显示初始化中，不能暂用历史绿色状态。后续多次 Refresh 完成回放后，累计行数应为 1205，内存只保留 MaxRetainedLines，最终状态为连接不全。这同时检测数字分片排序和有界缓存。

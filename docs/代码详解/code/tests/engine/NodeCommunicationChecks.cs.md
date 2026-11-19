@@ -4,7 +4,13 @@
 
 ## 职责与运行方式
 
-`RunAsync(stop)` 顺序验证节点层的直接对端 RPC、入站请求和身份握手失败。所有连接由 `FrameStream` 模拟，使用真实 `ServerNode` 和实际连接配置，但不启动 gRPC 监听或 ZooKeeper 会话。`TestServices` 必须已初始化 ID 服务。
+`RunAsync(stop)` 顺序验证主动/入站入口的静态检查、节点层直接对端 RPC、入站请求和身份握手失败；可通过独立的 `--node` 模式运行。所有连接由 `FrameStream` 模拟，使用真实 `ServerNode` 和实际连接配置，但不启动 gRPC 监听或 ZooKeeper 会话。`TestServices` 必须已初始化 ID 服务。
+
+## 入口检查必须早于外部操作
+
+`CheckOutgoingValidationAsync` 用反射取得私有 `ConnectAsync` 的委托。传入不带编号的实例名或不允许的主动连接方向，同时使用非法地址，要求先得到 `InvalidArgument`，而不是进入地址解析或网络建连。反射仅存在于测试，不为测试新增生产公开入口。
+
+`CheckIncomingValidationAsync` 在 ZooKeeper 未初始化时调用 `AcceptConnectAsync`，分别给出非法连接 ID、无编号名称和错误方向。都必须返回 `InvalidArgument`，且没有写出 Hello，证明静态检查早于占号查询与握手。
 
 ## `CheckPeerCallsAsync`
 

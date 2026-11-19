@@ -82,10 +82,9 @@ try
         session.Output += Console.WriteLine;
         selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
         await session.StopAsync([selected]);
-        await UntilAsync("Base stopped, Gate still running with a missing link", () =>
+        await UntilAsync("Base stopped and Gate preserves startup readiness", () =>
             selected.Status == ServerStatus.Stopped &&
-            session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.Gate), 1)).Status ==
-                (session.Instances.Count(i => i.Role == nameof(ProcessType.Base)) > 1 ? ServerStatus.Ready : ServerStatus.Disconnected));
+            session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.Gate), 1)).Status == ServerStatus.Ready);
         await session.StartAsync();
         await UntilAsync("Base rejoined with the original run configuration", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
     }
@@ -102,10 +101,9 @@ try
     var router = session.Instances.Last(i => i.Role == nameof(ProcessType.Router));
     var routerPid = router.Pid;
     await session.StopAsync([router]);
-    await UntilAsync("Router stopped and every Base has an incomplete topology", () =>
+    await UntilAsync("Router stopped and every Base preserves startup readiness", () =>
         router.Status == ServerStatus.Stopped &&
-        session.Instances.Where(i => i.Role == nameof(ProcessType.Base)).All(i => i.Status ==
-            (session.Instances.Count(i => i.Role == nameof(ProcessType.Router)) > 1 ? ServerStatus.Ready : ServerStatus.Disconnected)));
+        session.Instances.Where(i => i.Role == nameof(ProcessType.Base)).All(i => i.Status == ServerStatus.Ready));
     await session.StartAsync();
     await UntilAsync("Router rejoined", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
     if (router.Pid == routerPid)
