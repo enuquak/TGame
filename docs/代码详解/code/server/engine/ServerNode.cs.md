@@ -10,27 +10,27 @@
 
 ## 连接集合与同步
 
-`sessions` 记录已占据连接席位的对端实例，防止同一对端在握手阶段被重复接纳；`links` 则保存已经完成握手、可供 RPC 使用的 `PeerLink`。两者有不同阶段语义。连接接纳、移除及就绪重算放在 `linkChanges` 锁下，`links` 本身使用并发字典以支持调用路径读取。
+`sessions` 记录已占据连接席位的对端实例，防止同一对端在握手阶段被重复接纳；`links` 则保存已经完成握手、可供 RPC 使用的 `PeerLink`。两者有不同阶段语义。连接接纳、移除及首次门槛检查放在 `linkChanges` 锁下，`links` 本身使用并发字典以支持调用路径读取。
 
-`Name`、`Role` 从身份对象计算；`linksReady` 是当前健康状态，供读取及状态变化比较。`firstLinks` 是只完成一次的历史信号，`readinessChanges` 是每次状态变更都会替换的等待信号。
+`Name`、`Role` 从身份对象计算；`firstLinks` 是首次连接达标后只完成一次的信号。`Ready` 直接读取其 `IsCompletedSuccessfully`，不另存就绪布尔值或运行期状态变化通知。
 
-## 首次门槛与运行期健康
+## 首次门槛与运行期就绪
 
-`HasRequiredLinks` 只检查本进程主动拨号的类型。首次达标前，每种目标类型需要的已握手不同实例数等于 `ServerGroup.GetStartupMinimum`；首次达标后，正门槛缩为 `1`，零门槛保持 `0`。这不会限制实际连接数，也不要求入站连接达到数量。
+`TryCompleteFirstLinks` 合并首次门槛检查和完成信号：已经 `Ready` 就直接返回，否则检查本进程每种主动目标类型的已握手不同实例数是否达到 `ServerGroup.GetStartupMinimum`。全部满足后完成 `firstLinks` 并记录一次 `LINKS_READY`。实际连接数不受门槛限制，也不要求入站连接达到数量。
 
-例如某主动目标类型的首次门槛是 `3`：连接达到三条时 `FirstLinks` 完成、`Ready` 为真；随后只剩一条仍健康，全部断开则 `Ready` 变假；恢复一条即可恢复健康，不会重新等待三条。`FirstLinks` 从不因断线撤销。
+例如某主动目标类型的首次门槛是 `3`：连接达到三条时 `FirstLinks` 完成、`Ready` 为真；之后即使全部断开也保持就绪，继续接收入站并发现、重连。恢复的连接可以立即用于通信，不会重新等待三条；缺失对端的 RPC 仍返回 `Unavailable`。
 
-`UpdateLinkReadiness` 完成首次信号、比较新旧健康状态并唤醒状态等待者，记录 `LINKS_READY` 或 `LINKS_LOST`。`WaitUntilReadyAsync` 在锁内同时检查状态与取得当前通知任务，醒来后循环复查，支持取消且避免错过状态变化。宿主仍负责在监听与依赖连接完成后发布地址和记录 `PROCESS_READY`。
+`TryCompleteFirstLinks` 只在构造及加入握手连接时调用；断线不再重算就绪，也不再产生运行期 `LINKS_LOST`。`WaitUntilReadyAsync` 检查取消并等待同一个首次完成任务；已经完成时立即返回。宿主仍负责在监听与首次依赖连接完成后发布地址和记录 `PROCESS_READY`。
 
 ## 主动建连与入站接纳
 
-`ConnectAsync` 为目标地址创建 gRPC channel，生成新的连接 ID，在元数据中发送本端名称与连接 ID，先写出 hello，再进入公共 `RunLinkAsync`。channel 与 call 都由此方法的 `using` 管理。
+`ConnectAsync` 先校验实例名称及主动连接方向，再为目标地址创建 gRPC channel，生成新的连接 ID，在元数据中发送本端名称与连接 ID，先写出 hello，再进入公共 `RunLinkAsync`。channel 与 call 都由此方法的 `using` 管理。
 
 `MaintainLinkAsync` 保持针对某一发现记录的连接。正常流结束也被视为断线；对于 I/O、超时、非全局取消，以及 `Unavailable`、`Cancelled`、`Internal`、`AlreadyExists` 这些 gRPC 状态，等待 500 毫秒再重试。其他错误向发现层传播，避免把协议或配置错误永久掩盖为重连。
 
-`AcceptsIncoming` 要求对端名称可解析，且配置中存在“对端类型主动连接本端类型”的有向边。`RunLinkAsync` 则先检查双方是允许的邻居，读取第一帧并要求 hello 与预期实例名一致，再在锁内检查入站就绪条件和重复会话。入站方向会回写本端 hello，之后才把连接加入可调用集合并更新健康状态。
+`AcceptConnectAsync` 校验连接 ID、通过 `AcceptsIncoming` 检查实例名称和入站方向，再查询临时占号并要求本端首次启动已经就绪。`RunLinkAsync` 读取第一帧并要求 hello 与预期实例名一致，在锁内检查入站就绪条件和重复会话；接收端回复 hello 后才把连接加入可调用集合并尝试完成首次门槛。
 
-连接退出时，`finally` 删除会话占位和链接，重新计算就绪，并关闭 `PeerLink` 以唤醒所有待回复调用。入站入口额外的临时占号检查见 [LinkService.cs](LinkService.cs.md)。
+连接退出时，`finally` 删除会话占位和链接，并关闭 `PeerLink` 以结束所有待回复调用，不撤销首次就绪。[LinkService.cs](LinkService.cs.md) 只提取 gRPC 元数据并转交 `AcceptConnectAsync`。
 
 ## 基础 RPC 与双向流
 

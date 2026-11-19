@@ -109,7 +109,7 @@ internal sealed class NodeCommunicationChecks(TestServices services)
             {
             }
 
-            Check(!node.Ready, "A disconnected dependency left the node ready.");
+            Check(node.Ready, "A disconnected dependency revoked completed startup readiness.");
             await ExpectStatusAsync(StatusCode.Unavailable, () => node.CallPeerAsync<Empty>(peer, new Empty(), stop));
         }
         finally

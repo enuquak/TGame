@@ -13,11 +13,9 @@ public partial class ServerNode
     private const int RequestQueueCapacity = 64;
 
     private readonly ServerProcess process;
-    private volatile bool linksReady;
     private readonly object linkChanges = new();
     private readonly HashSet<string> sessions = [];
     private readonly TaskCompletionSource firstLinks = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private TaskCompletionSource readinessChanges = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<string, PeerLink> links = new();
 
     private readonly GameLog log;
@@ -37,33 +35,19 @@ public partial class ServerNode
         // 构造时仍校验实例编号，名称只通过身份对象派生。
         _ = process.Name;
         this.process = process;
-        UpdateLinkReadiness();
+        TryCompleteFirstLinks();
     }
 
     public string Name => process.Name;
 
     public Task FirstLinks => firstLinks.Task;
     public string Role => process.Role;
-    public bool Ready => linksReady;
+    public bool Ready => firstLinks.Task.IsCompletedSuccessfully;
 
     public async Task WaitUntilReadyAsync(CancellationToken stop)
     {
-        while (true)
-        {
-            stop.ThrowIfCancellationRequested();
-            Task changed;
-            lock (linkChanges)
-            {
-                if (Ready)
-                {
-                    return;
-                }
-
-                changed = readinessChanges.Task;
-            }
-
-            await changed.WaitAsync(stop);
-        }
+        stop.ThrowIfCancellationRequested();
+        await firstLinks.Task.WaitAsync(stop);
     }
 
     public Task<TReply> CallPeerAsync<TReply>(string peer, IMessage request, CancellationToken stop)
@@ -204,7 +188,7 @@ public partial class ServerNode
             {
                 links[peer] = link;
                 log.Info(ServerLogEvents.LinkUp, Role, peer, link: id);
-                UpdateLinkReadiness();
+                TryCompleteFirstLinks();
             }
 
             await RunTransportAsync(link, input, stop);
@@ -214,10 +198,7 @@ public partial class ServerNode
             lock (linkChanges)
             {
                 sessions.Remove(peer);
-                if (links.TryRemove(peer, out _))
-                {
-                    UpdateLinkReadiness();
-                }
+                links.TryRemove(peer, out _);
             }
 
             link.Close();
@@ -274,51 +255,27 @@ public partial class ServerNode
     }
 
     // 调用方持有 linkChanges；首次构造尚未发布节点时除外。
-    private bool HasRequiredLinks()
+    private void TryCompleteFirstLinks()
     {
-        bool starting = !firstLinks.Task.IsCompletedSuccessfully;
+        // 首次达标后保持就绪，运行期断线只影响对应连接和 RPC。
+        if (Ready)
+        {
+            return;
+        }
+
         foreach (var target in configuration.GetDialTargets(process.Type))
         {
             int minimum = startup.GetStartupMinimum(target);
-            if (!starting)
-            {
-                // 启动数量只检查一次；运行中仅跟踪必需类型是否仍有可用连接。
-                minimum = Math.Min(minimum, 1);
-            }
-
             int connected = links.Values.Count(link => ServerProcess.Parse(link.Peer).Type == target);
             if (connected < minimum)
             {
-                return false;
+                return;
             }
         }
 
-        return true;
-    }
-
-    private void UpdateLinkReadiness()
-    {
-        bool connected = HasRequiredLinks();
-        if (connected)
-        {
-            firstLinks.TrySetResult();
-        }
-
-        if (connected == linksReady)
-        {
-            return;
-        }
-
-        linksReady = connected;
-        var previous = readinessChanges;
-        readinessChanges = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        previous.TrySetResult();
-        if (connected)
+        if (firstLinks.TrySetResult())
         {
             log.Info(ServerLogEvents.LinksReady, Role, detail: links.Count.ToString());
-            return;
         }
-
-        log.Error(ServerLogEvents.LinksLost, Role, detail: links.Count.ToString());
     }
 }

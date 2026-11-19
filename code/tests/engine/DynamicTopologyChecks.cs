@@ -33,20 +33,19 @@ internal sealed class DynamicTopologyChecks(TestServices services)
             await Close(router1);
             Check(node.Ready, "Losing a redundant Router revoked readiness.");
             await Close(router2);
-            Check(!node.Ready && node.FirstLinks.IsCompletedSuccessfully,
-                "Losing the last Router must revoke only current readiness.");
+            Check(node.Ready && node.FirstLinks.IsCompletedSuccessfully,
+                "Losing the last Router must preserve completed startup readiness.");
 
-            var recovered = node.WaitUntilReadyAsync(stop);
+            await node.WaitUntilReadyAsync(stop);
             Open(router9);
-            await recovered;
-            Check(node.Ready, "A replacement Router did not restore readiness.");
+            Check(node.Ready, "A replacement Router revoked readiness.");
 
             Open(gate);
             await streams[gate].Output.Reader.ReadAsync(stop);
             Check(node.Ready, "An incoming peer revoked readiness.");
             await Close(gate);
             Check(node.Ready, "Losing an incoming peer revoked readiness.");
-            Console.WriteLine("PASS dynamic type readiness, redundant and incoming links, last-link loss and recovery.");
+            Console.WriteLine("PASS dynamic links, stable startup readiness, last-link loss and reconnection.");
         }
         finally
         {

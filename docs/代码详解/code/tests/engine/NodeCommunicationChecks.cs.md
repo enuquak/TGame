@@ -10,7 +10,7 @@
 
 构造 `Login1` 并与 Router1 完成内存握手，等待当前就绪后调用 `CallPeerAsync<StringValue>`。检查输出请求有规范 ID，`Any` 解包后的负载等于原对象；注入匹配应答后调用者得到字符串结果。
 
-随后检查远端 `Unimplemented` 错误会变成对应 `RpcException`；调用没有连接的 Profile1 返回 `Unavailable`，且 Router 的输出流没有新增帧，证明缺失直接对端时不会偷偷转发给其他进程。预取消令牌必须取消调用。再发送一个待完成请求，关闭输入流并等待链路退出，要求请求收到 `IOException`、节点失去就绪、后续对同一已断开对端的调用返回 `Unavailable`。
+随后检查远端 `Unimplemented` 错误会变成对应 `RpcException`；调用没有连接的 Profile1 返回 `Unavailable`，且 Router 的输出流没有新增帧，证明缺失直接对端时不会偷偷转发给其他进程。预取消令牌必须取消调用。再发送一个待完成请求，关闭输入流并等待链路退出，要求请求收到 `IOException`、节点仍保持首次就绪、后续对同一已断开对端的调用返回 `Unavailable`。
 
 ## 入站与错误握手
 

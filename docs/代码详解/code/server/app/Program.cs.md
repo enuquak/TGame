@@ -11,7 +11,7 @@
 3. 将同一个配置实例及其已持有的数量门槛和 ZooKeeper/ID 选项交给 `ServerServices` 注册，再构建 App。只读连接拓扑也由配置实例提供；宿主不重新绑定或复制配置，没有热重载。
 4. 从根容器取 ZooKeeper，连接后以空地址临时节点占用实例编号；随后 `log.OpenServer` 开启实例日志，并通过临时文件替换发布 PID/启动时间对应的身份记录。
 5. 初始化 ID 生成器，再解析节点并启动监听。节点构造依赖的进程身份此时才已确定。
-6. 启动停止标记、ZooKeeper 会话和动态连接维护任务。等待 `FirstLinks` 与当前 `Ready`，发布地址后才记录 `PROCESS_READY`。
+6. 启动停止标记、ZooKeeper 会话和动态连接维护任务。等待首次连接门槛 `FirstLinks`（`Ready` 由同一完成状态派生），发布地址后才记录 `PROCESS_READY`。
 
 ## WebApplication 和监听
 
@@ -27,4 +27,4 @@
 
 ## 阅读关联
 
-配合 `ServerServices.cs` 查看单例注册，配合 `ServerNode` 理解首次连接与持续健康的区别，配合 `ServerRunFiles` 理解身份记录和停止文件。配置加载完成日志仅代表配置校验通过，不代表进程已经可发现或业务已可用。
+配合 `ServerServices.cs` 查看单例注册，配合 `ServerNode` 理解首次就绪与运行期连接可用性的区别，配合 `ServerRunFiles` 理解身份记录和停止文件。配置加载完成日志仅代表配置校验通过，不代表进程已经可发现或业务已可用。

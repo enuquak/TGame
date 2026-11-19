@@ -68,17 +68,17 @@ internal sealed class DiscoveryLinkChecks(TestServices services)
             await replacement.Handshaken.Task.WaitAsync(stop);
             changes.Writer.TryWrite([]);
             await replacement.Closed.Task.WaitAsync(stop);
-            while (node.Ready)
+            if (!node.Ready)
             {
-                await Task.Delay(1, stop);
+                throw new Exception("Removing all discovered peers revoked completed startup readiness.");
             }
 
             changes.Writer.TryWrite([router1]);
             var restored = await first.Connections.Reader.ReadAsync(stop);
             await restored.Handshaken.Task.WaitAsync(stop);
-            while (!node.Ready)
+            if (!node.Ready)
             {
-                await Task.Delay(1, stop);
+                throw new Exception("Reconnecting a Router revoked readiness.");
             }
 
             changes.Writer.TryComplete(new InvalidDataException("Discovery failed."));
@@ -91,9 +91,13 @@ internal sealed class DiscoveryLinkChecks(TestServices services)
             {
             }
 
-            if (node.Ready)
+            try
             {
+                await node.CallPeerAsync<Empty>(router1.Process.Name, new Empty(), stop);
                 throw new Exception("Discovery ended before its active connections were cleaned up.");
+            }
+            catch (RpcException error) when (error.StatusCode == StatusCode.Unavailable)
+            {
             }
 
             Console.WriteLine("PASS real gRPC startup minimum=2, late joins, removal below minimum, replacement, recovery and cleanup.");
