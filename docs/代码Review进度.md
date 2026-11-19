@@ -1,23 +1,33 @@
 # 代码 Review 进度
 
-更新时间：2026-11-18（Asia/Shanghai）。
+更新时间：2026-11-20（Asia/Shanghai）。
 
 ## 当前入口
 
-当前在 `review-1118` 分支阅读，阅读顺序见[代码 Review 路径](代码Review路径.md)。当前服务器收敛为进程基础框架，移除了实体和业务生命周期，并将进程服务改为 IoC 组装与构造函数注入；既有阅读确认保留为当时的记录，本次改变的调用与职责仍需核对。
+本轮以 `review-1119` 的当前源码整理，用户要求完成文档后推送该分支并合并到 main。逐文件阅读顺序见[详解首页](代码详解/README.md#当前-review-进度与下一步)，按主题的问题清单见[代码 Review 路径](代码Review路径.md)。当前服务器只运行进程基础框架，由 App 的单个 IoC 根容器组装。
 
 ## 本轮确认记录
 
-- [x] 第一节「工程边界和进程配置」：用户于 2026-11-17 明确确认已读完。
-- [ ] 第二节「进程身份与 ID」：保留待确认状态，尚未逐项确认完成。
-- [x] 第三节的 `Program.cs`：用户于 2026-11-18 表示已理解实现。已讲解启动组装、并发任务、初始化等待、`Task.WhenAll`、停止文件与 ZooKeeper 会话监控、异常监督、取消和资源释放；已区分普通对端断线重连与本进程退出。
-- [ ] 第三节的启动变更：核对日志 → 配置 → 构建 IoC 根容器 → ZooKeeper 会话和占号 → ID → 监听与依赖连接 → 地址发布 → `PROCESS_READY`，以及停止后台工作、异步释放容器、最后释放日志的顺序。启动仍不初始化业务服务。
-- [ ] 第三节的 `ServerNode.cs`：已结合宿主讨论初始化、就绪和断线行为，尚未单独确认读完。下一步核对其构造函数注入、`FirstLinks` 和 `Ready`，确认就绪只依赖每种主动目标至少一条握手连接，再进入第四节的拓扑、服务发现与连接细节。
-- [ ] IoC 迁移：用户已接受迁移建议；实现后的服务注册、实例调用、配置加载、资源归属和隔离检查仍待阅读确认。
+- [x] [code/server/app/Program.cs](../code/server/app/Program.cs)：用户于 2026-11-20 明确确认当前文件已读完。启动顺序为日志 → 配置 → IoC → ZooKeeper 会话与占号 → ID → 监听与首次连接 → 地址发布 → `PROCESS_READY`；退出先停止后台任务和监听，随后释放容器，最后释放日志。
+- [x] [ServerNode.Discovery.cs](../code/server/engine/ServerNode.Discovery.cs)：用户于 2026-11-20 明确确认已读完，包括发现快照、目标筛选、任务替换、失败传播与取消清理。
+- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：下一步。已经讨论入口拆分、Hello、RunLinkAsync、RunTransportAsync、ReadAsync 和 ServeAsync，尚未明确确认整份文件已读完。
+- [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：已讨论 CallAsync、写锁和 waiting 的登记时机，尚未明确确认整份文件已读完。
+- [ ] ZooKeeperProxy / ZooKeeperSession：已解释临时占号与 `ephemeralOwner`，仍需完整阅读初始化、发现、会话失效和释放。
+- [ ] ServerServices / ServerConfiguration / ServerGroup：按详解首页顺序补看依赖注册、统一配置加载、拓扑与数量来源；Program 已读不代表这些文件内部实现也已读完。
+- [ ] ID、日志、运行文件和相应测试：保留待确认状态，控制台与独立存储按需继续。
 
 只有用户明确确认完成阅读后才勾选；自动化测试和代码审查不能替代用户的阅读确认。历史测试结果与适用版本见路径文档第 7 节。
 
+## 本轮已确定的行为
+
+- `ConnectAsync` 和 `AcceptConnectAsync` 分别承担主动和入站入口校验；RunLinkAsync 管理 Hello、连接登记和退出，任务持续到连接结束。
+- FirstLinks 首次按主动目标类型达到配置数量后完成一次，Ready 直接从其完成状态派生；运行期依赖全部断开也不撤销就绪，发现和重连继续。未连接的 RPC 返回 Unavailable，断线使待处理 RPC 失败。
+- 两端都运行 ReadAsync 和 ServeAsync。接收 Request 进入本地请求队列，再由 ServeAsync 回复；接收 Reply 直接按请求 ID 完成本机等待项。
+- waiting 属于主动发起 RPC 的本机 PeerLink，在 CallAsync 写出 Request 前登记，在 finally 移除；不是 ServeAsync 的请求队列。
+
 ## 上一轮确认记录
+
+2026-11-17 用户确认当时的「工程边界和进程配置」已读完；2026-11-18 确认当时的 Program.cs 已理解。之后的配置合并与文件职责调整以当前源码和本轮确认为准。
 
 用户于 2026-11-14 确认读完当时推荐的启动、SinglePoint 初始化、拓扑、服务发现和连接管理代码，包括 Program、ServerSinglePoint、DBMgrServerSinglePoint、SinglePointRegistry、Topology、ServiceRegistry 和 ServerNode。
 
@@ -26,12 +36,12 @@
 ## 阅读方式
 
 - 用户有其他语言基础，C# 从接近零开始；采用逐段解释、对应代码示例、说明类型与执行顺序的方式。
-- 已解释过 `Task` / `await`、`using` / `await using`、取消令牌、Lambda、`Task.WhenAll`、进程独立内存，以及首次连接与当前就绪的区别；复读时结合新路径核对实际实现。
-- 旧 `codex/server-review-snapshot` 和 `review-1117` 的阅读记录属于历史。当前在 `review-1118` 分支继续阅读与开发，按该分支整体安排整合，不因更新阅读文档切回 `main`。
+- 已解释过 `Task` / `await`、`using` / `await using`、取消令牌、Lambda、WhenAny / WhenAll、进程独立内存，以及首次启动完成与当前连接可用性的区别；复读时结合调用链核对实际实现。
+- 旧 `codex/server-review-snapshot`、`review-1117` 和 `review-1118` 的阅读记录属于历史。合并后继续沿同一详解入口阅读，不因分支变化重置已经确认的进度。
 
 ## 开始阅读前
 
-在当前 `review-1118` 工作区打开 [TGame.slnx](../TGame.slnx)，需要 IDE 工程支持时安装 [global.json](../global.json) 指定的 SDK。仅阅读源码不需要构建、启动服务器或连接外部服务；需要验证代码时按项目规范选择必要的小范围检查。
+在工作区打开 [TGame.slnx](../TGame.slnx)，需要 IDE 工程支持时安装 [global.json](../global.json) 指定的 SDK。仅阅读源码不需要构建、启动服务器或连接外部服务；需要验证代码时按项目规范选择必要的小范围检查。
 
 实际起服或联调需要 PowerShell 7、SSH 隧道及本机凭据，见 [README](../README.md) 和[服务器连接说明](服务器连接.md)。构建产物、日志和 `.local/secrets/` 不属于 Git 交接内容。
 

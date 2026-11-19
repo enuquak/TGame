@@ -23,3 +23,11 @@
 局部 `RunAsync` 调用主文件的 `MaintainLinkAsync`。常见可恢复断线由后者内部重试；本任务取消时异常被视作正常收尾；其他异常完成 `failure`，使主循环即使正等下一次发现事件也能退出。
 
 `finally` 先取消整个生命周期，再等待尚未完成的 `MoveNextAsync`，最后等待所有连接任务并释放其取消源。等待枚举移动完成后再异步释放枚举器，避免仍在进行中的订阅操作与释放冲突。共享 ZooKeeper 和日志的最终释放仍由宿主管理；本文件只负责自己建立的任务和取消源。
+
+## 已读后的衔接点
+
+下一步进入 [ServerNode.cs](ServerNode.cs.md) 的 `MaintainLinkAsync`：它调用主动入口 `ConnectAsync`，后者进入 `RunLinkAsync` 和 `RunTransportAsync`。发现层决定“要维护哪些目标”，连接层决定“一次连接怎样握手、通信和退出”。
+
+`workers` 是主动连接维护任务，`sessions` 是主文件的同名连接占位，`links` 是可用于 RPC 的已握手连接。发现一个目标、创建 worker 都不表示握手已经成功；FirstLinks 只统计 links 中符合主动目标类型的实例。
+
+首次达标后即使快照为空，也只是取消并清理相应 worker，Ready 仍保持为真。发现循环继续等待新快照，成员重现后重新建连；ZooKeeper 会话失效或不可恢复的 worker 异常仍会向宿主传播，不属于普通断线重试。

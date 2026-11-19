@@ -81,6 +81,7 @@ async Task RunServerAsync(ProcessType processType, GameLog log)
 
         workers.Add(SuperviseAsync(node.MaintainConnectionsAsync(stop), lifetime));
         log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "动态发现与连接维护已启动");
+
         await node.FirstLinks.WaitAsync(stop);
         log.Info(ServerLogEvents.InitStepCompleted, process.Role, detail: "引擎层初始化完成");
 

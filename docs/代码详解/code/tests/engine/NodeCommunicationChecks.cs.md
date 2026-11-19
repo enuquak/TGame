@@ -4,13 +4,19 @@
 
 ## 职责与运行方式
 
-`RunAsync(stop)` 顺序验证节点层的直接对端 RPC、入站请求和身份握手失败。所有连接由 `FrameStream` 模拟，使用真实 `ServerNode` 和实际连接配置，但不启动 gRPC 监听或 ZooKeeper 会话。`TestServices` 必须已初始化 ID 服务。
+`RunAsync(stop)` 顺序验证主动/入站入口的静态检查、节点层直接对端 RPC、入站请求和身份握手失败；可通过独立的 `--node` 模式运行。所有连接由 `FrameStream` 模拟，使用真实 `ServerNode` 和实际连接配置，但不启动 gRPC 监听或 ZooKeeper 会话。`TestServices` 必须已初始化 ID 服务。
+
+## 入口检查必须早于外部操作
+
+`CheckOutgoingValidationAsync` 用反射取得私有 `ConnectAsync` 的委托。传入不带编号的实例名或不允许的主动连接方向，同时使用非法地址，要求先得到 `InvalidArgument`，而不是进入地址解析或网络建连。反射仅存在于测试，不为测试新增生产公开入口。
+
+`CheckIncomingValidationAsync` 在 ZooKeeper 未初始化时调用 `AcceptConnectAsync`，分别给出非法连接 ID、无编号名称和错误方向。都必须返回 `InvalidArgument`，且没有写出 Hello，证明静态检查早于占号查询与握手。
 
 ## `CheckPeerCallsAsync`
 
 构造 `Login1` 并与 Router1 完成内存握手，等待当前就绪后调用 `CallPeerAsync<StringValue>`。检查输出请求有规范 ID，`Any` 解包后的负载等于原对象；注入匹配应答后调用者得到字符串结果。
 
-随后检查远端 `Unimplemented` 错误会变成对应 `RpcException`；调用没有连接的 Profile1 返回 `Unavailable`，且 Router 的输出流没有新增帧，证明缺失直接对端时不会偷偷转发给其他进程。预取消令牌必须取消调用。再发送一个待完成请求，关闭输入流并等待链路退出，要求请求收到 `IOException`、节点失去就绪、后续对同一已断开对端的调用返回 `Unavailable`。
+随后检查远端 `Unimplemented` 错误会变成对应 `RpcException`；调用没有连接的 Profile1 返回 `Unavailable`，且 Router 的输出流没有新增帧，证明缺失直接对端时不会偷偷转发给其他进程。预取消令牌必须取消调用。再发送一个待完成请求，关闭输入流并等待链路退出，要求请求收到 `IOException`、节点仍保持首次就绪、后续对同一已断开对端的调用返回 `Unavailable`。
 
 ## 入站与错误握手
 

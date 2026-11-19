@@ -1,3 +1,4 @@
+using System.Reflection;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using TGame;
@@ -8,10 +9,42 @@ internal sealed class NodeCommunicationChecks(TestServices services)
 {
     internal async Task RunAsync(CancellationToken stop)
     {
+        await CheckOutgoingValidationAsync(stop);
+        await CheckIncomingValidationAsync(stop);
         await CheckPeerCallsAsync(stop);
         await CheckIncomingRequestsAsync(stop);
         await CheckRejectedHandshakeAsync(stop);
         Console.WriteLine("PASS direct peer RPC payloads, errors, cancellation, disconnect and unsupported requests.");
+    }
+
+    private async Task CheckOutgoingValidationAsync(CancellationToken stop)
+    {
+        var node = services.CreateNode(new ServerProcess(ProcessType.Router, 1), TestNodes.LoadConfiguration());
+        var method = typeof(ServerNode).GetMethod("ConnectAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var connect = method.CreateDelegate<Func<string, string, CancellationToken, Task>>(node);
+
+        // 非法名称和反向连接都应先被拒绝，不能开始解析地址或建立网络连接。
+        await ExpectStatusAsync(StatusCode.InvalidArgument, () => connect(nameof(ProcessType.Scene), "invalid-address", stop));
+        var peer = ServerProcess.FormatName(nameof(ProcessType.Scene), 1);
+        await ExpectStatusAsync(StatusCode.InvalidArgument, () => connect(peer, "invalid-address", stop));
+    }
+
+    private async Task CheckIncomingValidationAsync(CancellationToken stop)
+    {
+        var node = services.CreateNode(new ServerProcess(ProcessType.Login, 1), TestNodes.LoadConfiguration());
+        var stream = new FrameStream();
+        var id = services.Ids.GenId();
+        var gate = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);
+        var router = ServerProcess.FormatName(nameof(ProcessType.Router), 1);
+
+        // 测试 ZooKeeper 未初始化，静态参数必须在查询占号和读取 Hello 前拒绝。
+        await ExpectStatusAsync(StatusCode.InvalidArgument,
+            () => node.AcceptConnectAsync(gate, "invalid-id", stream, stream, stop));
+        await ExpectStatusAsync(StatusCode.InvalidArgument,
+            () => node.AcceptConnectAsync(nameof(ProcessType.Gate), id, stream, stream, stop));
+        await ExpectStatusAsync(StatusCode.InvalidArgument,
+            () => node.AcceptConnectAsync(router, id, stream, stream, stop));
+        Check(!stream.Output.Reader.TryPeek(out _), "An invalid incoming connection received a Hello.");
     }
 
     private async Task CheckPeerCallsAsync(CancellationToken stop)
@@ -76,7 +109,7 @@ internal sealed class NodeCommunicationChecks(TestServices services)
             {
             }
 
-            Check(!node.Ready, "A disconnected dependency left the node ready.");
+            Check(node.Ready, "A disconnected dependency revoked completed startup readiness.");
             await ExpectStatusAsync(StatusCode.Unavailable, () => node.CallPeerAsync<Empty>(peer, new Empty(), stop));
         }
         finally

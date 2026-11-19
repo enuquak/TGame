@@ -11,7 +11,7 @@ internal sealed class StartupReadinessChecks(TestServices services)
         await CheckPublicationWaitAsync(stop);
         await CheckWithoutDependenciesAsync(stop);
         await CheckDelayedHelloAsync(stop);
-        Console.WriteLine("PASS startup minimums, zero minimum, current readiness, cancellation and delayed handshake rejection.");
+        Console.WriteLine("PASS startup minimums, stable readiness after disconnect, cancellation and incoming handshakes.");
     }
 
     private async Task CheckStartupMinimumAsync(CancellationToken stop)
@@ -23,9 +23,10 @@ internal sealed class StartupReadinessChecks(TestServices services)
             startup, services.ZooKeeper, services.Ids, services.Log);
         var router1Stream = new FrameStream();
         var router2Stream = new FrameStream();
+        var databaseStream = new FrameStream();
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
         var router1 = Open(node, ProcessType.Router, router1Stream, lifetime.Token);
-        var database = Open(node, ProcessType.DBMgr, new FrameStream(), lifetime.Token);
+        var database = Open(node, ProcessType.DBMgr, databaseStream, lifetime.Token);
         var router2Name = ServerProcess.FormatName(nameof(ProcessType.Router), 2);
         var router2 = node.RunLinkAsync(router2Name, services.Ids.GenId(), router2Stream, router2Stream, lifetime.Token);
         Task recovered = Task.CompletedTask;
@@ -56,11 +57,15 @@ internal sealed class StartupReadinessChecks(TestServices services)
             Check(node.Ready, "The startup minimum was reapplied after one Router disconnected.");
             router2Stream.Input.Writer.Complete();
             await router2.WaitAsync(stop);
-            Check(!node.Ready && node.FirstLinks.IsCompletedSuccessfully,
-                "Losing all Routers must report disconnection without erasing completed startup.");
+            Check(node.Ready && node.FirstLinks.IsCompletedSuccessfully,
+                "Losing all Routers must preserve completed startup readiness.");
+            databaseStream.Input.Writer.Complete();
+            await database.WaitAsync(stop);
+            Check(node.Ready, "Losing every dependency revoked completed startup readiness.");
+            await node.WaitUntilReadyAsync(stop);
             recovered = Open(node, ProcessType.Router, new FrameStream(), lifetime.Token);
             await node.WaitUntilReadyAsync(stop);
-            Check(node.Ready, "Recovery incorrectly required two Routers again.");
+            Check(node.Ready, "Reconnection incorrectly required the startup minimum again.");
         }
         finally
         {
@@ -105,27 +110,12 @@ internal sealed class StartupReadinessChecks(TestServices services)
             await node.FirstLinks.WaitAsync(stop);
             loginStream.Input.Writer.Complete();
             await login.WaitAsync(stop);
-            Check(!node.Ready, "The missing Login dependency did not revoke readiness.");
+            baseStream.Input.Writer.Complete();
+            await baseLink.WaitAsync(stop);
+            Check(node.Ready, "Dependency loss after startup blocked publication readiness.");
             var ready = node.WaitUntilReadyAsync(lifetime.Token);
-            Check(!ready.IsCompleted, "Initial publication reused the first-link milestone after dependency loss.");
-
-            using (var cancelled = CancellationTokenSource.CreateLinkedTokenSource(stop))
-            {
-                var pending = node.WaitUntilReadyAsync(cancelled.Token);
-                cancelled.Cancel();
-                try
-                {
-                    await pending;
-                    throw new Exception("Waiting for current readiness ignored cancellation.");
-                }
-                catch (OperationCanceledException) when (cancelled.IsCancellationRequested)
-                {
-                }
-            }
-
-            login = Open(node, ProcessType.Login, new FrameStream(), lifetime.Token);
+            Check(ready.IsCompletedSuccessfully, "Completed startup waited for disconnected peers again.");
             await ready.WaitAsync(stop);
-            Check(node.Ready, "Readiness wait completed without dependency recovery.");
         }
         finally
         {
@@ -149,6 +139,19 @@ internal sealed class StartupReadinessChecks(TestServices services)
         var configuration = TestNodes.LoadConfiguration();
         var node = services.CreateNode(new ServerProcess(ProcessType.Login, 1), configuration);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        var peer = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);
+        var unreadyStream = new FrameStream();
+        unreadyStream.Input.Writer.TryWrite(TestNodes.Hello(peer));
+        try
+        {
+            await node.RunLinkAsync(peer, services.Ids.GenId(), unreadyStream, unreadyStream, stop, requireReady: true);
+            throw new Exception("An initializing receiver accepted an incoming Hello.");
+        }
+        catch (RpcException error) when (error.StatusCode == StatusCode.Unavailable)
+        {
+        }
+
+        Check(!unreadyStream.Output.Reader.TryPeek(out _), "An initializing receiver acknowledged an incoming Hello.");
         var routerStream = new FrameStream();
         var router = Open(node, ProcessType.Router, routerStream, lifetime.Token);
         Task incoming = Task.CompletedTask;
@@ -157,25 +160,23 @@ internal sealed class StartupReadinessChecks(TestServices services)
             await node.FirstLinks.WaitAsync(stop);
             Check(node.Ready, "Login did not become ready before the incoming handshake.");
 
-            var peer = ServerProcess.FormatName(nameof(ProcessType.Gate), 1);
             var stream = new FrameStream();
             incoming = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, lifetime.Token, requireReady: true);
             routerStream.Input.Writer.Complete();
             await router.WaitAsync(stop);
-            Check(!node.Ready, "Losing Router did not revoke Login readiness.");
+            Check(node.Ready, "Losing Router revoked Login startup readiness.");
 
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-            var hello = stream.Output.Reader.ReadAsync(lifetime.Token).AsTask();
-            Check(await Task.WhenAny(incoming, hello) == incoming, "An unready receiver acknowledged a delayed Hello.");
-            try
-            {
-                await incoming;
-                throw new Exception("An unready receiver accepted a delayed Hello.");
-            }
-            catch (RpcException error) when (error.StatusCode == StatusCode.Unavailable)
-            {
-                incoming = Task.CompletedTask;
-            }
+            var hello = await stream.Output.Reader.ReadAsync(stop);
+            Check(hello.Hello == node.Name, "Dependency loss rejected a delayed incoming Hello.");
+            stream.Input.Writer.Complete();
+            await incoming.WaitAsync(stop);
+
+            var nextStream = new FrameStream();
+            nextStream.Input.Writer.TryWrite(TestNodes.Hello(peer));
+            incoming = node.RunLinkAsync(peer, services.Ids.GenId(), nextStream, nextStream, lifetime.Token, requireReady: true);
+            var nextHello = await nextStream.Output.Reader.ReadAsync(stop);
+            Check(nextHello.Hello == node.Name, "A new incoming connection was rejected after all dependencies disconnected.");
         }
         finally
         {

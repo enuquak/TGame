@@ -4,7 +4,7 @@
 
 ## 职责与入口
 
-`LoadOptions()` 从宿主当前选中配置提取 ZooKeeper 设置。`CheckSessionAsync(log)` 检查本地初始化保护与会话状态，不需要真实 ZooKeeper；`RunAsync(log)` 则是需要显式执行的真实 ZooKeeper 集成检查。两者不能混为同一种环境检查。
+`LoadOptions()` 通过 Engine 的 `ServerConfiguration.LoadSelected()` 加载当前选中入口并提取 `ZooKeeperSettings`，不依赖旧宿主配置类型。`CheckSessionAsync(log)` 检查本地初始化保护与会话状态，不需要真实 ZooKeeper；`RunAsync(log)` 则是需要显式执行的真实 ZooKeeper 集成检查。两者不能混为同一种环境检查。
 
 ## 本地初始化和会话检查
 

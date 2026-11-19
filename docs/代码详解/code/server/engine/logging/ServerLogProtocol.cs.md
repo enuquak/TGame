@@ -17,11 +17,11 @@
 | `ZkRegister` | `ZK_REGISTER` | 已认领身份发布地址 |
 | `ZkDiscover` | `ZK_DISCOVER` | 发现目标快照或发现记录问题 |
 | `LinkUp` | `LINK_UP` | 对端流完成握手并进入连接集合 |
-| `LinksReady` | `LINKS_READY` | 依赖连接从不满足变为满足 |
-| `LinksLost` | `LINKS_LOST` | 当前依赖连接健康条件不再满足 |
+| `LinksReady` | `LINKS_READY` | 首次连接门槛达标，只记录一次 |
+| `LinksLost` | `LINKS_LOST` | 旧日志的连接健康事件；当前节点不再因断线输出，现有控制台读取代码仍使用该常量 |
 | `UnmatchedReply` | `UNMATCHED_REPLY` | 回复到达时找不到待完成请求 |
 
-`LINKS_READY` 与 `PROCESS_READY` 不相同：前者是节点连接状态变化，后者由宿主在整体启动完成后记录。`ZK_DISCOVER` 可用于调试快照，也可用于错误记录，事件名本身不决定严重级别。
+`LINKS_READY` 与 `PROCESS_READY` 不相同：前者是节点首次连接达标，后者由宿主在整体启动完成后记录。`ZK_DISCOVER` 可用于调试快照，也可用于错误记录，事件名本身不决定严重级别。
 
 ## 字段协议
 

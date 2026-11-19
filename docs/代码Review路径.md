@@ -1,10 +1,10 @@
 # 代码 Review 路径
 
-更新时间：2026-11-19（Asia/Shanghai）。当前分支为 `review-1118`，服务器已收敛为进程基础框架：ZooKeeper、进程连接、基础 RPC、日志和 ID。进程服务由 App 的单个 IoC 根容器组装，使用方通过构造函数接收依赖；`process.yaml` 的 `processes` 同时提供控制台初始启动数量和运行时首次连接门槛。独立存储工具与业务共享协议保留，启动不再创建实体或初始化业务服务。
+更新时间：2026-11-20（Asia/Shanghai），按 `review-1119` 本轮代码核对。服务器已收敛为进程基础框架：ZooKeeper、进程连接、基础 RPC、日志和 ID。进程服务由 App 的单个 IoC 根容器组装，使用方通过构造函数接收依赖；`process.yaml` 的 `processes` 同时提供控制台初始启动数量和运行时首次连接门槛。独立存储工具与业务共享协议保留，启动不再创建实体或初始化业务服务。
 
-用户此前确认第一节已读完（2026-11-17）、第三节的 `Program.cs` 已理解（2026-11-18）。这些记录保留，但本次启动流程和测试入口的变化仍需核对，不自动计为已读；详细记录见[代码 Review 进度](代码Review进度.md)。
+用户于 2026-11-20 明确确认已读完当前 `code/server/app/Program.cs` 与 `code/server/engine/ServerNode.Discovery.cs`。此前的确认保留为历史；讨论过的 `ServerNode.cs`、`PeerLink.cs`、ZooKeeper 占号等内容尚未自动勾选。详细记录见[代码 Review 进度](代码Review进度.md)。
 
-**下一步核对第三节的 `Program.cs` 与 `ServerNode.cs`。** 先看容器注册、显式异步初始化和构造函数依赖，再看 `FirstLinks`、`Ready`，然后跟踪第四节的拓扑、服务发现与连接。阅读源码无需启动服务；测试入口与历史范围放在第 7 节。
+**下一步读 `ServerNode.cs`，再读 `PeerLink.cs`。** 建议顺序为：连接与传输 → 请求/响应匹配 → ZooKeeper → IoC 与统一配置 → ID → 日志和运行文件 → 对应测试，控制台和独立存储按需阅读。可点击的逐文件顺序集中在[详解首页](代码详解/README.md#当前-review-进度与下一步)；下面保留按主题组织的问题清单，不要求从第一节重读。阅读源码无需启动服务，测试入口与历史范围放在第 7 节。
 
 ## 1. 工程边界和进程配置
 
@@ -28,11 +28,11 @@
 
 ## 3. 沿启动流程读一遍
 
-- [x] [Program.cs](../code/server/app/Program.cs)：用户已理解此前的宿主组装、并发任务、`Task.WhenAll`、停止文件与会话监控、异常监督、取消和释放。
-- [ ] 核对本次 IoC 组装后的 `Program.cs`：日志创建 → 配置加载 → 构建根容器 → ZooKeeper 会话及空地址临时占号 → ID 初始化 → 解析节点和启动监听 → 首次连接数量达标 → 发布服务地址 → `PROCESS_READY`。跟踪连接配置、`ServerGroup`、ZK、ID、身份和节点的注册与解析时机，并核对 App 输出中的 `config/server.yaml`；`WriteProcessIdentity` 单独负责通过临时文件发布本机身份记录。当前不扫描业务类型，也不初始化 DBMgr/Profile 存储；配置包含环境名、运行目录、进程数量/拓扑与完整 ZooKeeper 参数，存储字段由独立工具使用时校验。
+- [x] [Program.cs](../code/server/app/Program.cs)：用户于 2026-11-20 确认读完当前实现，包括宿主组装、并发任务、停止文件与会话监控、异常监督、取消和释放。
+- [x] 当前 `Program.cs` 启动主线：日志创建 → 配置加载 → 构建根容器 → ZooKeeper 会话及空地址临时占号 → ID 初始化 → 解析节点和启动监听 → 首次连接数量达标 → 发布服务地址 → `PROCESS_READY`。`WriteProcessIdentity` 单独通过临时文件发布本机身份记录；不扫描业务类型，也不初始化 DBMgr/Profile 存储。配置解析和服务注册内部实现仍按独立文件继续阅读。
 - [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：构造函数接收进程身份、连接配置、`ServerGroup`、ZK、ID 和日志；名称和角色从身份对象派生，所需连接类型直接查询配置。核对 `FirstLinks`、`Ready`：首次按主动目标类型统计已握手的不同实例，达到各自门槛；门槛为 `0` 的类型不阻塞，无主动依赖可直接就绪，不等待入站。
 
-`FirstLinks` 只完成一次；完成后，`Ready` 只要求每种正门槛类型至少一条握手连接。例如 `Router: 2` 首次需两个 Router，之后降到一个仍就绪，全部断开会报告连接不全并撤销当前就绪，恢复一个即可恢复；不撤销 `FirstLinks`，也不重新要求两个。门槛为 `0` 的类型不影响健康状态。入站连接不替代主动依赖，达到首次门槛后的额外实例不阻塞启动。
+`FirstLinks` 只完成一次，`Ready` 从其完成状态派生。例如 `Router: 2` 首次需两个 Router，达标后即使全部断开也保持就绪，继续接受入站并持续发现、重连；不重新要求首次数量。未连接 RPC 返回 `Unavailable`，断线待处理请求失败。门槛为 `0` 的类型不阻塞首次启动。入站连接不替代主动依赖，达到首次门槛后的额外实例不阻塞启动。
 
 宿主监督停止请求与 ZooKeeper 会话。会话失效意味着进程实例身份和 worker 租约均不可继续使用，必须退出；普通对端断线由引擎持续重连，不等于本进程立即退出。退出时先取消并等待后台工作、停止监听，再异步释放容器；ID 先于 ZK 释放。日志由 App 提前创建并注册为已有共享实例，最后显式释放，以便记录容器构建、初始化或清理阶段的失败。
 
@@ -42,17 +42,18 @@
 
 - [ ] [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)：通过实例方法 `GetDialTargets`、`Dials` 和 `ArePeers` 按类型连接规则匹配动态成员，区分主动目标与入站邻居；`ValidateAcyclic` 独立负责启动依赖的无环检查。
 - [ ] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs)、[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：跟踪空地址占号、地址发布、成员快照和 Watch、身份校验、`SessionLost` 与释放。空地址节点不参与拨号，但可证明主动方持有实例身份。`EnsurePathAsync` 负责公共根目录，`TryCreateEphemeralAsync` 复用抢占步骤，`ReadDiscoveredProcessAsync` 处理单条发现记录；进程编号与 worker 编号仍各自管理申请范围和时序。
-- [ ] [DiscoveredProcess.cs](../code/server/engine/DiscoveredProcess.cs)、[ServerNode.Discovery.cs](../code/server/engine/ServerNode.Discovery.cs)：成员新增、离开、地址变化和同名重建如何取消旧连接并按快照收敛。首次达标后 Watch 与连接维护仍持续运行，后续新增实例和门槛为 `0` 的目标类型也继续连接，不因数量达标停止拨号。
-- [ ] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[LinkService.cs](../code/server/engine/LinkService.cs)：检查 `peer`、`link` 元数据、来源占号身份、本地就绪与连接交接。
-- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：沿连接维护、拨号、握手和读循环看成功与失败分支；`RunLinkAsync` 管理握手与连接登记/注销，`RunTransportAsync` 管理收发与取消协调；断线时撤销连接状态、结束等待项，重新连接后更新就绪。
+- [x] [ServerNode.Discovery.cs](../code/server/engine/ServerNode.Discovery.cs)：用户于 2026-11-20 确认读完。成员新增、离开、地址变化和同名重建会取消旧任务并按快照收敛；首次达标后仍持续发现和维护全部匹配实例，门槛为 `0` 的目标也参与连接。
+- [ ] [DiscoveredProcess.cs](../code/server/engine/DiscoveredProcess.cs)：补看值比较与 `Generation` 的来源，关联 ZooKeeper 节点 `czxid` 和发现层的任务替换。
+- [ ] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[LinkService.cs](../code/server/engine/LinkService.cs)：LinkService 只读取 `peer`、`link` 元数据并交接；静态方向、占号与就绪校验在 `AcceptConnectAsync`，主动入口在 `ConnectAsync`。
+- [ ] 回到 [ServerNode.cs](../code/server/engine/ServerNode.cs)：沿连接维护、拨号、握手和读循环看成功与失败分支；`RunLinkAsync` 管理握手与连接登记/注销，`RunTransportAsync` 管理收发与取消协调；断线时清理连接、结束等待项，首次完成的就绪状态保持不变；重新连接后恢复对应通信。
 
-读完应能回答：为什么依赖关系不能成环？Router 为何可以先发布地址？Base 为何分别按 Router 与 DBMgr 的数量等待而不等 Gate？`Router: 2` 达标后为何剩一个仍就绪、全部断开后恢复一个即可？首次达标后为何仍会连接新增 Router？
+读完应能回答：为什么依赖关系不能成环？Router 为何可以先发布地址？Base 为何分别按 Router 与 DBMgr 的数量等待而不等 Gate？`Router: 2` 达标后为何全部断开仍保持就绪，但相关 RPC 仍可能失败？首次达标后为何仍会连接新增 Router？
 
 ## 5. 基础 RPC：信封、请求关联与错误
 
 - [ ] [transport.proto](../code/server/engine/protocols/transport.proto)：`Frame` 分为 `Hello`、`Request` 和 `Reply`；请求用 `RequestId` 关联响应，响应中的 `Payload` 与 `Error` 二选一。`Any` 不依赖业务协议；已移除的实体、来源及转发字段保留字段号和名称。
-- [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：按信封校验、`CallAsync`、写出、接收响应、读取结果和关闭顺序跟踪请求关联、超时、取消及断线。
-- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：看 `CallPeerAsync` 如何选择指定的已连接实例，读循环如何关联响应、处理请求，以及当前没有业务处理入口时如何返回 `Unimplemented`。
+- [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：按信封校验、`CallAsync`、写出、接收响应、读取结果和关闭顺序跟踪请求关联、超时、取消及断线。`waiting.TryAdd` 在本机发送 Request 之前执行；同一写锁同时串行化主动请求与响应写入，不持有到收到响应。
+- [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：`CallPeerAsync` 选择已连接实例；`ReadAsync` 把 Request 放入本地队列、把 Reply 交给 `Receive`；`ServeAsync` 逐个取请求并回复，目前返回 `Unimplemented`。两端都运行这两个循环，ServeAsync 不为回复登记 waiting。
 
 ```mermaid
 sequenceDiagram
@@ -85,8 +86,8 @@ sequenceDiagram
 
 | 阅读内容 | 检查入口 |
 | --- | --- |
-| 进程握手、当前就绪与基础 RPC | `--engine`；`--node` 为同义入口，无参数也只运行 engine |
-| 首次连接数量门槛、零门槛及达标后的连接健康 | `--connection-readiness` |
+| 进程握手与基础 RPC | `--node` 为节点通信专项；`--engine` 或无参数运行引擎检查集合 |
+| 首次连接数量门槛、零门槛及断线后保持就绪 | `--connection-readiness` |
 | 动态成员、后续新增实例及冗余连接 | `--dynamic-topology`、`--discovery-links` |
 | IoC 共享、容器隔离与释放 | `--ioc`，不连接外部服务 |
 | 配置、日志和本地会话生命周期守卫 | `--configuration`、`--logging`、`--zookeeper-session`，不连接外部服务 |
