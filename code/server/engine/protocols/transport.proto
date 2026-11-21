@@ -6,9 +6,9 @@ option csharp_namespace = "TGame.Transport";
 // Each pair of server processes shares one bidirectional stream.
 message Frame {
   oneof body {
-    string hello = 3;     // 握手只交换进程实例名。
-    RpcRequest request = 6;
-    RpcReply reply = 7;
+    string hello = 1;     // 握手只交换进程实例名。
+    RpcRequest request = 2;
+    RpcReply reply = 3;
   }
 }
 
