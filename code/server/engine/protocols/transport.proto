@@ -5,9 +5,6 @@ option csharp_namespace = "TGame.Transport";
 
 // Each pair of server processes shares one bidirectional stream.
 message Frame {
-  reserved 1, 2, 4, 5, 8;
-  reserved "ping", "pong", "profile_request", "profile_reply", "single_point_id";
-
   oneof body {
     string hello = 3;     // 握手只交换进程实例名。
     RpcRequest request = 6;
@@ -16,9 +13,6 @@ message Frame {
 }
 
 message RpcRequest {
-  reserved 3, 4, 5, 6;
-  reserved "entity_id", "single_point_type", "source_process", "deadline_unix_ms";
-
   string request_id = 1;
   google.protobuf.Any payload = 2;
 }

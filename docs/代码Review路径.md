@@ -51,7 +51,7 @@
 
 ## 5. 基础 RPC：信封、请求关联与错误
 
-- [ ] [transport.proto](../code/server/engine/protocols/transport.proto)：`Frame` 分为 `Hello`、`Request` 和 `Reply`；请求用 `RequestId` 关联响应，响应中的 `Payload` 与 `Error` 二选一。`Any` 不依赖业务协议；已移除的实体、来源及转发字段保留字段号和名称。
+- [ ] [transport.proto](../code/server/engine/protocols/transport.proto)：`Frame` 分为 `Hello`、`Request` 和 `Reply`；请求用 `RequestId` 关联响应，响应中的 `Payload` 与 `Error` 二选一。`Any` 不依赖业务协议。
 - [ ] [PeerLink.cs](../code/server/engine/PeerLink.cs)：按信封校验、`CallAsync`、写出、接收响应、读取结果和关闭顺序跟踪请求关联、超时、取消及断线。`waiting.TryAdd` 在本机发送 Request 之前执行；同一写锁同时串行化主动请求与响应写入，不持有到收到响应。
 - [ ] [ServerNode.cs](../code/server/engine/ServerNode.cs)：`CallPeerAsync` 选择已连接实例；`ReadAsync` 把 Request 放入本地队列、把 Reply 交给 `Receive`；`ServeAsync` 逐个取请求并回复，目前返回 `Unimplemented`。两端都运行这两个循环，ServeAsync 不为回复登记 waiting。
 

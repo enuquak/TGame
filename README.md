@@ -107,7 +107,7 @@ dotnet build/bin/TGame.Server/debug/TGame.Server.dll Router
 
 独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现、基础 RPC、日志与 ID；可以单独构建，不引用宿主或业务 Shared。宿主 [TGame.Server.csproj](code/server/app/TGame.Server.csproj) 显式引用 Engine 与 Shared，使用 .NET 内置 IoC 容器组装进程服务；ZK、ID 和节点使用共享实例，使用方通过构造函数接收依赖。配置显式加载并注入；日志在配置加载前创建，注册到容器共享，由宿主最后释放以记录启动与清理失败。
 
-基础 RPC 通过 `ServerNode.CallPeerAsync<TReply>` 直接向已连接的进程实例发送请求，支持请求关联、错误、超时、取消和断线。当前没有业务处理入口，收到请求返回 `Unimplemented`；Router 不转发请求到第三个进程。连接服务和信封定义见 [transport.proto](code/server/engine/protocols/transport.proto)，通过 `Any` 承载负载；旧实体和转发字段已保留字段号与名称。引擎协议生成到 `code/server/engine/generated/protocols/`，业务 [profile.proto](code/shared/protocols/profile.proto) 生成到 `code/shared/generated/protocols/`；控制台导出命令同时处理两者。
+基础 RPC 通过 `ServerNode.CallPeerAsync<TReply>` 直接向已连接的进程实例发送请求，支持请求关联、错误、超时、取消和断线。当前没有业务处理入口，收到请求返回 `Unimplemented`；Router 不转发请求到第三个进程。连接服务和信封定义见 [transport.proto](code/server/engine/protocols/transport.proto)，通过 `Any` 承载负载。引擎协议生成到 `code/server/engine/generated/protocols/`，业务 [profile.proto](code/shared/protocols/profile.proto) 生成到 `code/shared/generated/protocols/`；控制台导出命令同时处理两者。
 
 唯一 ID 通过注入的 `IdGenerator` 实例调用 `ids.GenId()` 生成，宿主显式初始化容器中的共享实例，通过同一 ZooKeeper 代理申请雪花 worker 编号；worker 编号与进程实例编号独立。基础框架用于请求和连接 ID，保留的存储工具用于缓存占用标记，详见[统一 ID 生成](docs/雪花ID.md)。各进程需统一重新构建并重启，不能混用旧实体协议与当前基础协议。
 
