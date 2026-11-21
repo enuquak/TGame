@@ -19,8 +19,8 @@ message RpcRequest {
 
 message RpcReply {
   string request_id = 1;
-  google.protobuf.Any payload = 2;
-  RpcError error = 3; // Exactly one of payload/error must be present.
+  RpcError error = 2; // payload 和 error 必须且只能设置一个。
+  google.protobuf.Any payload = 3;
 }
 
 message RpcError {
