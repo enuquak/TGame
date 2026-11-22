@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Globalization;
 using System.Linq;
-using YamlDotNet.RepresentationModel;
 
 namespace TGame;
 
@@ -119,17 +118,6 @@ public sealed class ServerGroup
         : this((counts ?? throw new InvalidDataException("Missing processes configuration."))
             .ToDictionary(pair => ServerProcess.ParseType(pair.Key), pair => pair.Value))
     {
-    }
-
-    public void Save(string path)
-    {
-        var values = new YamlMappingNode();
-        foreach (var pair in configuredCounts)
-        {
-            values.Add(pair.Key, pair.Value.ToString(CultureInfo.InvariantCulture));
-        }
-
-        new ServerConfiguration(path).SaveSection(path, SectionName, values);
     }
 
     public static ServerGroup Read(ServerConfiguration configuration) => configuration.Group;

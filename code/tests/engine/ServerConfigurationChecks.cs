@@ -1,4 +1,4 @@
-using YamlDotNet.RepresentationModel;
+using YamlDotNet.Serialization;
 using TGame;
 using TGame.Server.Engine;
 
@@ -9,21 +9,18 @@ internal static class ServerConfigurationChecks
         var path = Path.GetTempFileName();
         var defaults = Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName);
         var baseline = ServerConfiguration.Load(defaults);
-        void SaveConnections(IReadOnlyDictionary<string, string[]> configured)
+        var document = baseline.Read<Dictionary<string, object>>();
+        void WriteConnections(IReadOnlyDictionary<string, string[]> configured)
         {
-            var targets = new YamlMappingNode();
-            foreach (var pair in configured)
-            {
-                targets.Add(pair.Key, new YamlSequenceNode(pair.Value.Select(value => new YamlScalarNode(value))));
-            }
-
-            baseline.SaveSection(path, ServerConfiguration.SectionName, targets);
+            document[ServerConfiguration.SectionName] = configured;
+            File.WriteAllText(path, new SerializerBuilder().Build().Serialize(document));
         }
+
         try
         {
-            SaveConnections(new Dictionary<string, string[]>());
+            WriteConnections(new Dictionary<string, string[]>());
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
-            SaveConnections(baseline.Read<Dictionary<string, string[]>>(ServerConfiguration.SectionName));
+            WriteConnections(baseline.Read<Dictionary<string, string[]>>(ServerConfiguration.SectionName));
             var configuration = ServerConfiguration.Load(path);
 
             File.WriteAllText(path, "{}");
@@ -37,20 +34,20 @@ internal static class ServerConfigurationChecks
 
             var invalid = new ServerConfiguration(defaults).Read<Dictionary<string, string[]>>(ServerConfiguration.SectionName);
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Base)];
-            SaveConnections(invalid);
+            WriteConnections(invalid);
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Router)];
-            SaveConnections(invalid);
+            WriteConnections(invalid);
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Gate)];
-            SaveConnections(invalid);
+            WriteConnections(invalid);
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
 
             var cycle = Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => Array.Empty<ProcessType>());
             cycle[ProcessType.Login] = [ProcessType.Base];
             cycle[ProcessType.Base] = [ProcessType.Scene];
             cycle[ProcessType.Scene] = [ProcessType.Login];
-            SaveConnections(cycle.ToDictionary(pair => pair.Key.ToString(), pair => pair.Value.Select(type => type.ToString()).ToArray()));
+            WriteConnections(cycle.ToDictionary(pair => pair.Key.ToString(), pair => pair.Value.Select(type => type.ToString()).ToArray()));
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
 
             foreach (var name in new[] { "Router", "Router0", "Router01", "router1", "Unknown1", "1", "Router2147483648", "Router-1" })
@@ -62,7 +59,7 @@ internal static class ServerConfigurationChecks
             Expect<InvalidDataException>(() => ServerProcess.ParseType("Router1"));
             Expect<InvalidDataException>(() => ServerProcess.ParseType("0"));
             var isolatedTargets = Enum.GetValues<ProcessType>().ToDictionary(type => type.ToString(), _ => Array.Empty<string>());
-            SaveConnections(isolatedTargets);
+            WriteConnections(isolatedTargets);
             var isolated = ServerConfiguration.Load(path);
             var next = ServerConfiguration.Load(defaults);
             Check(!isolated.Dials(ProcessType.Scene, ProcessType.Router) && next.Dials(ProcessType.Scene, ProcessType.Router),

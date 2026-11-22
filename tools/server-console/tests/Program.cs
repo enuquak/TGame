@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using TGame;
 using TGame.ServerConsole;
+using YamlDotNet.Serialization;
 
 if (args is ["--identity-only"] or ["--state-only"])
 {
@@ -141,10 +142,13 @@ try
         throw new InvalidOperationException("A failed build disrupted the running group.");
     }
 
-    var counts = new ServerConfiguration(configuration).Read<Dictionary<string, int>>(ServerGroup.SectionName);
+    var loaded = new ServerConfiguration(configuration);
+    var counts = loaded.Read<Dictionary<string, int>>(ServerGroup.SectionName);
+    var document = loaded.Read<Dictionary<string, object>>();
     int expectedInstances = session.Instances.Count + 1;
     counts[nameof(ProcessType.Login)]++;
-    new ServerGroup(counts).Save(configuration);
+    document[ServerGroup.SectionName] = counts;
+    File.WriteAllText(configuration, new SerializerBuilder().Build().Serialize(document));
     bool instancesChanged = false;
     session.InstancesChanged += () => instancesChanged = true;
 

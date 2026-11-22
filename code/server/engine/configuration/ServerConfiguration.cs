@@ -116,13 +116,6 @@ public sealed class ServerConfiguration
         return Path.GetFullPath(RunDirectory, Path.GetFullPath(workingDirectory));
     }
 
-    internal void SaveSection(string path, string section, YamlNode value)
-    {
-        var snapshot = new YamlMappingNode(root.Children);
-        snapshot.Children[new YamlScalarNode(section)] = value;
-        File.WriteAllText(path, Serialize(snapshot));
-    }
-
     internal static void ValidateRunDirectory(string relative)
     {
         if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative))

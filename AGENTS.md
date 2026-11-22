@@ -14,7 +14,7 @@
 
 进程级服务由 App 的单个 IoC 根容器组装，通过构造函数接收依赖并调用实例方法，例如 `zooKeeper.RegisterProcessAsync(...)`、`ids.GenId()`；不保留静态服务入口或全局服务定位器，遵循[单例调用](code/agents/项目协作规范.md#单例调用)约定。日志在配置加载前创建并注册为共享实例，由 App 最后释放。
 
-配置统一由 Engine 的 `ServerConfiguration` 加载 `server.yaml` 及其 include 文件，同一实例持有配置值、数量计划和类型连接规则；App 将该实例及其持有的类型选项注册为根容器单例，运行期间不重复加载；启动器直接传递源配置路径，不保存配置快照，本轮运行目录通过 `EngineEnvironment.RunDirectory` 传递。纯存储配置类型归属 Engine，数据库驱动与存储实现仍归属 logic。
+配置统一由 Engine 的 `ServerConfiguration` 加载 `server.yaml` 及其 include 文件，同一实例持有配置值、数量计划和类型连接规则；App 将该实例及其持有的类型选项注册为根容器单例，运行期间不重复加载，配置只从 YAML 加载到内存，不提供文件写回接口；启动器直接传递源配置路径，不保存配置快照，本轮运行目录通过 `EngineEnvironment.RunDirectory` 传递。纯存储配置类型归属 Engine，数据库驱动与存储实现仍归属 logic。
 
 进程拓扑、连接管理、服务发现、基础通信、日志和 ID 放在 `code/server/engine/`；独立存储与业务逻辑放在 `code/server/logic/`。当前服务器只运行进程基础框架，不创建实体、不注册实体归属、不执行实体路由，也不在启动时初始化 DBMgr/Profile 业务。`code/shared/` 仅承载业务共享协议、类型与数据；引擎协议和基础类型归属 Engine，引擎不得引用业务 Shared、宿主或业务实现。`app` 显式引用 Engine 与 Shared，负责启动与组装。
 
