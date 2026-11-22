@@ -8,7 +8,7 @@
 
 ## 配置与输出场景
 
-`CheckSettings(root)` 通过 `ServerConfiguration` 读取输出的完整配置，要求测试环境默认 Debug；保存独立 YAML 快照后移除 `loggingMinimumLevel`，要求缺省为 Info。逐一写入 Debug、Info、Error 的大写文本并要求正确解析；TRACE、WARNING、999 都必须以配置或 YAML 异常拒绝。
+`CheckSettings(root)` 通过 `ServerConfiguration` 读取输出的完整配置，要求测试环境默认 Debug；将测试配置序列化到临时 YAML 后移除 `loggingMinimumLevel`，要求缺省为 Info。逐一写入 Debug、Info、Error 的大写文本并要求正确解析；TRACE、WARNING、999 都必须以配置或 YAML 异常拒绝。
 
 `WriteSamples` 固定写出发现 Debug、监听 Info、进程失败 Error 三条日志。主流程对每种最低级别分别检查尚未打开日志文件时的终端输出，随后检查显式错误镜像只写标准错误，不在标准输出重复。
 

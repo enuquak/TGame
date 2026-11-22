@@ -9,17 +9,17 @@ internal static class GroupConfigChecks
         var original = Environment.GetEnvironmentVariable(EngineEnvironment.Config);
         try
         {
-            CheckSnapshot(checkout);
+            CheckSelectedConfiguration(checkout);
         }
         finally
         {
             Environment.SetEnvironmentVariable(EngineEnvironment.Config, original);
         }
 
-        Console.WriteLine("PASS selected YAML, expanded snapshots, startup counts and restored group isolation.");
+        Console.WriteLine("PASS selected YAML, direct configuration paths, runtime directories and startup counts.");
     }
 
-    private static void CheckSnapshot(string checkout)
+    private static void CheckSelectedConfiguration(string checkout)
     {
         var root = Path.Combine(checkout, "build", "group-config-check", Guid.NewGuid().ToString("N"));
         var configDirectory = Directory.CreateDirectory(Path.Combine(root, "code/server/config")).FullName;
@@ -68,33 +68,10 @@ internal static class GroupConfigChecks
         File.WriteAllText(Path.Combine(build, "config", ServerConfiguration.FileName), "stale: build output");
         var snapshot = Path.Combine(root, "build", "server-console", "runs", sessionName);
         var apphosts = group.Processes.Select(process => Path.Combine(snapshot, process.Name + "Server.exe")).ToArray();
-        ConsoleSession.PrepareSnapshot(build, snapshot, configuration, run, root, apphosts);
-        var snapshotFile = Path.Combine(snapshot, "config", ServerConfiguration.FileName);
-        var savedFile = Path.Combine(run, ServerConfiguration.FileName);
-        File.Copy(snapshotFile, savedFile);
-
-        // 源文件变更或删除后，本轮两个快照仍须独立包含同一份完整配置。
-        counts[nameof(ProcessType.Login)] = 1;
-        counts[nameof(ProcessType.Base)] = 1;
-        WriteConfiguration(defaultConfiguration, counts);
-        File.Delete(selected);
-        File.Delete(Path.Combine(selectedDirectory, "ops.yaml"));
-        File.Delete(Path.Combine(selectedDirectory, "process.yaml"));
-        foreach (var file in new[] { snapshotFile, savedFile })
+        ConsoleSession.PrepareSnapshot(build, snapshot, apphosts);
+        if (Directory.Exists(Path.Combine(snapshot, "config")) || File.Exists(Path.Combine(run, ServerConfiguration.FileName)))
         {
-            var saved = new ServerConfiguration(file);
-            var startup = saved.Group;
-            var connections = saved.Read<Dictionary<string, string[]>>("connections");
-            if (startup.GetStartupMinimum(ProcessType.Login) != 2 ||
-                startup.GetStartupMinimum(ProcessType.Base) != 3 ||
-                saved.Environment != "snapshot-check" ||
-                saved.Mongo?.Endpoint != "snapshot-host:27017" ||
-                !connections[nameof(ProcessType.Base)].SequenceEqual([nameof(ProcessType.Router)]) ||
-                saved.ResolveRunDirectory(root) != run ||
-                File.ReadAllText(file).Contains("include:"))
-            {
-                throw new Exception("The saved YAML lost counts, included settings, connections or its run directory.");
-            }
+            throw new Exception("Executable copies must not save configuration snapshots.");
         }
 
         if (apphosts.Any(path => File.ReadAllText(path) != "apphost"))
@@ -102,31 +79,26 @@ internal static class GroupConfigChecks
             throw new Exception("The snapshot did not create all planned process apphosts.");
         }
 
-        Environment.SetEnvironmentVariable(EngineEnvironment.Config, Path.Combine(root, "missing-environment.yaml"));
         using var restored = new ConsoleSession(root);
         if (restored.Instances.Count != 11)
         {
-            throw new Exception("Restoring a running group used current source counts instead of its snapshot.");
+            throw new Exception("Reopening the console did not read the selected configuration.");
         }
 
         var startInfo = typeof(ConsoleSession).GetMethod("StartInfo", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var start = (System.Diagnostics.ProcessStartInfo)startInfo.Invoke(restored, [restored.Instances[0], sessionName])!;
         if (start.ArgumentList.Count != 1 ||
             start.ArgumentList[0] != restored.Instances[0].Role ||
-            start.Environment[EngineEnvironment.Config] != savedFile)
+            start.Environment[EngineEnvironment.Config] != selected ||
+            start.Environment[EngineEnvironment.RunDirectory] != run)
         {
-            throw new Exception("Restoring a process must pass only its type and the saved configuration.");
+            throw new Exception("A process must receive its type, the selected source configuration and its runtime directory.");
         }
 
-        File.Delete(snapshotFile);
-        try
+        if (!File.ReadAllText(selected).Contains("include: [ops, process]") ||
+            new ServerConfiguration(selected).RunDirectory != "logs/server-runs")
         {
-            startInfo.Invoke(restored, [restored.Instances[0], sessionName]);
-            throw new Exception("An incomplete binary snapshot must require build and restart.");
-        }
-        catch (TargetInvocationException error) when (
-            error.InnerException is InvalidOperationException inner && inner.Message.Contains("编译并重启"))
-        {
+            throw new Exception("Starting a run changed the source configuration.");
         }
 
         var validEntry = File.ReadAllText(defaultConfiguration).Replace("include: [ops, process]", "include: [ops]");

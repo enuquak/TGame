@@ -4,7 +4,6 @@ namespace TGame;
 
 public static class ServerRunFiles
 {
-    public const string GroupConfiguration = ServerConfiguration.FileName;
     public const string StopGroup = "stop";
     public const string StopRolePrefix = "stop-";
     public const string StopProcessPrefix = "stop-process-";

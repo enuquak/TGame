@@ -11,7 +11,7 @@
 - [x] [TGame.slnx](../TGame.slnx)、[宿主工程](../code/server/app/TGame.Server.csproj)、[引擎工程](../code/server/engine/TGame.Server.Engine.csproj)、[业务共享工程](../code/shared/TGame.Shared.csproj)：用户已确认工程边界。宿主分别引用 Engine 和 Shared；Engine 只引用第三方包，两套协议各自在所属项目生成。
 - [x] [ProcessType.cs](../code/server/engine/configuration/ProcessType.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)：用户已确认角色、实例名称与数量的区别；实例统一使用 `Router1`、`Base1` 等带编号名称。
 - [x] [EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs)、[ServerEnvironment.cs](../code/shared/csharp/ServerEnvironment.cs)：用户已确认引擎运行标记与宿主、存储环境变量的边界。
-- [x] [server.yaml](../code/server/config/server.yaml)：用户曾确认环境选择、配置快照、凭据变量名与配置校验；原宿主配置类型已合并，新实现仍须按下一项复核。
+- [x] [server.yaml](../code/server/config/server.yaml)：环境选择、凭据变量名与配置校验；已按当前要求移除落盘配置快照，新实现仍须按下一项复核。
 - [ ] 核对本次配置合并：[ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs) 一次加载总入口与 include、展开文件内别名、严格绑定并校验核心配置、拓扑和数量。它持有配置值与类型连接图，私有 DTO 只用于绑定；App 仅注册这一配置实例及其持有的数量和选项对象，运行期间读取快照，不使用静态全局配置。
 - [ ] 核对当前 [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)、[process.yaml 的 connections](../code/server/config/process.yaml) 与 [process.yaml 的 processes](../code/server/config/process.yaml)：连接规则必须无环；数量同时决定控制台初始启动次数和运行时首次连接门槛，通过 `GetStartupMinimum(ProcessType)` 查询。实际实例仍由 ZooKeeper 动态发现，数量不是连接上限或合法编号范围。
 
@@ -73,7 +73,7 @@ sequenceDiagram
 
 - [ ] [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs)、[GameLog.cs](../code/server/engine/GameLog.cs)：从 `ServerConfiguration.LoggingMinimumLevel` 追到日志实例创建、注入、级别过滤、文件开启与释放。理解 App 提前创建且最后释放日志的原因。缺省为 `Info`，当前本地配置为 `DEBUG`。
 - [ ] [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs)、[LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)：看事件、实例、连接、请求及等级如何写入 JSON；`ProcessReady` 的事件值为 `PROCESS_READY`。
-- [ ] [控制台工程](../tools/server-console/TGame.ServerConsole.csproj)、[ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)：控制台分别引用 Engine 与业务 Shared，将同一启动计划保存到运行目录与可执行快照的 `config/server.yaml`，保证起服数量和首次连接门槛一致；按启动计划起服、获配实例名和 `ProcessReady` 更新状态，再看精确停止、恢复和编译重启。
+- [ ] [控制台工程](../tools/server-console/TGame.ServerConsole.csproj)、[ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)：控制台分别引用 Engine 与业务 Shared，直接传递源配置路径和本轮运行目录，起服数量和首次连接门槛读取同一配置；按启动计划起服、获配实例名和 `ProcessReady` 更新状态，再看精确停止、恢复和编译重启。
 - [ ] [Import-ServerTypes.ps1](../tools/scripts/powershell/Import-ServerTypes.ps1)、[Read-ServerGroup.ps1](../tools/scripts/powershell/Read-ServerGroup.ps1)：脚本从引擎唯一声明加载基础类型，按需加载业务环境变量，不复制常量。
 - [ ] [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs)、[StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs)、[MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs)、[MongoStorageSettings.cs](../code/server/engine/configuration/MongoStorageSettings.cs)：`MongoStorageSettings` 是 Engine 中的纯配置，其余是 logic 中的独立存储实现。按需阅读，不把它们理解为当前启动阶段；存储实现未通过进程 RPC 暴露。
 - [ ] [profile.proto](../code/shared/protocols/profile.proto)、[ProfileLogEvents.cs](../code/shared/csharp/ProfileLogEvents.cs)：业务协议和事件仍由 Shared 持有，不进入引擎传输层。

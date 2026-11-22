@@ -8,7 +8,6 @@
 
 | 成员 | 含义 |
 | --- | --- |
-| `GroupConfiguration` | 引用 `ServerConfiguration.FileName`，即统一入口 `server.yaml`，不另存一份文件名常量 |
 | `StopGroup` | `stop`，运行组停止标记 |
 | `StopRolePrefix` | `stop-` 前缀；实际作用对象取决于调用方拼接的名称，当前 App 拼接进程实例名 |
 | `StopProcessPrefix` | `stop-process-`，与操作系统进程启动身份组合的停止标记前缀 |

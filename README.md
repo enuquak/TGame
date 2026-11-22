@@ -26,11 +26,11 @@
 .\tools\scripts\KillAll.bat                  # 强制结束脚本管理的当前进程组
 ```
 
-每种类型都有独立入口：`StartGate`、`StartLogin`、`StartBase`、`StartScene`、`StartRouter`、`StartDBMgr`、`StartProfile`、`StartGM`。各 BAT 调用同名 PowerShell 脚本；`StartAll.ps1` 的共用实现读取 [server.yaml](code/server/config/server.yaml) 及 include 的 `processes`，按数量逐个调用这些类型脚本。新运行组默认只编译服务器 App；`-NoBuild` 使用已有产物。已有进程组继续使用本轮快照，重复 `StartAll` 只补齐缺失槽位，单类型入口每次新增一个实例。
+每种类型都有独立入口：`StartGate`、`StartLogin`、`StartBase`、`StartScene`、`StartRouter`、`StartDBMgr`、`StartProfile`、`StartGM`。各 BAT 调用同名 PowerShell 脚本；`StartAll.ps1` 的共用实现读取 [server.yaml](code/server/config/server.yaml) 及 include 的 `processes`，按数量逐个调用这些类型脚本。新运行组默认只编译服务器 App；`-NoBuild` 使用已有产物。已有进程组继续使用本轮可执行文件，重复 `StartAll` 只补齐缺失槽位，单类型入口每次新增一个实例。
 
-[server.yaml](code/server/config/server.yaml) 的 `runDirectory` 配置运行记录根目录，必须是相对仓库根目录的路径，默认 `logs/server-runs`。脚本固定工作目录、创建本轮子目录，并把相对路径写入本轮可执行快照的 `config/server.yaml`。服务器只读取这份配置，不创建运行目录。固定管理指针及互斥锁保存在 `logs/tools/server-scripts/`，指针记录本轮相对运行目录；补起和停止先定位原组，不依赖源配置继续有效。修改源 runDirectory 在创建新组时生效。
+[server.yaml](code/server/config/server.yaml) 的 `runDirectory` 配置运行记录根目录，必须是相对仓库根目录的路径，默认 `logs/server-runs`。脚本固定工作目录并创建本轮子目录，通过 `TGAME_SERVER_RUN_DIRECTORY` 传给服务器；`TGAME_SERVER_CONFIG` 直接指向源配置。服务器不创建运行目录。固定管理指针及互斥锁保存在 `logs/tools/server-scripts/`，指针记录本轮相对运行目录；补起和停止先定位原组；补起读取源配置，停止不依赖配置。修改源 runDirectory 在创建新组时生效。
 
-每轮构建快照保存在 `build/server-runs/`，环境 YAML 和启动数量同时留存。服务器在后台运行，真正就绪以 `logs/server/` 中的 `PROCESS_READY` 为准。脚本进程组与控制台进程组分别管理，`StopAll` 和 `KillAll` 仅操作脚本组。正常停止超时返回非零退出码，不自动强退；可用 `-TimeoutSeconds 30` 调整等待时间。自动化建议直接调用 `pwsh -NoProfile -File tools/scripts/powershell/StartAll.ps1`；调用 BAT 时设置 `TGAME_NONINTERACTIVE=1` 可避免失败后等待按键。
+每轮可执行文件副本保存在 `build/server-runs/`，不复制或保存环境 YAML。服务器在后台运行，真正就绪以 `logs/server/` 中的 `PROCESS_READY` 为准。脚本进程组与控制台进程组分别管理，`StopAll` 和 `KillAll` 仅操作脚本组。正常停止超时返回非零退出码，不自动强退；可用 `-TimeoutSeconds 30` 调整等待时间。自动化建议直接调用 `pwsh -NoProfile -File tools/scripts/powershell/StartAll.ps1`；调用 BAT 时设置 `TGAME_NONINTERACTIVE=1` 可避免失败后等待按键。
 
 不连接外部服务的脚本检查：`pwsh -NoProfile -File tools/scripts/powershell/Test-ServerScripts.ps1`，使用隔离假进程验证起停、退出码和进程识别。
 
@@ -38,7 +38,7 @@
 
 Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目录运行它。进程基础框架使用本机游戏进程及下文的 ZooKeeper 隧道。打开窗口和查看已有日志可以离线进行。使用 `-Check` 可验证控制台能否加载。
 
-- **启动服务器** 按 [进程数量配置](code/server/config/process.yaml) 拉起各类型的全部实例。再次执行会按本组配置快照补起缺少的进程。配置格式、实例命名与就绪条件见 [服务器组配置](docs/服务器组配置.md)。双击 **关闭服务器** 后勾选本次要关闭的实例。关闭控制台窗口后服务器继续运行，下次打开可继续管理。
+- **启动服务器** 按 [进程数量配置](code/server/config/process.yaml) 拉起各类型的全部实例。再次执行会补起缺少的进程，并直接读取源配置。配置格式、实例命名与就绪条件见 [服务器组配置](docs/服务器组配置.md)。双击 **关闭服务器** 后勾选本次要关闭的实例。关闭控制台窗口后服务器继续运行，下次打开可继续管理。
 - **导出 Protobuf** 生成协议 C# 源码。**编译服务器 C#** 构建服务端工程。**编译并重启** 在构建成功后切换到新一轮进程，编译失败时可在命令输出中查看原因。
 - 右栏为每个配置实例创建独立页签。可以滚动或搜索进程名、PID 切换实例。绿点表示已收到当前实例的 `PROCESS_READY`，且每种主动依赖类型至少有一条握手连接。失去冗余实例时保持就绪；失去某类最后一条依赖连接时显示连接不全，重连后恢复绿色。
 - 各页签保留最近 1000 行。按 `Ctrl+F` 搜索，`F3` 和 `Shift+F3` 跳到下一条、上一条匹配日志，也可勾选“仅匹配行”来过滤显示。清空显示后继续接收新日志，磁盘上的滚动日志可用于复盘。
@@ -48,7 +48,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 | 范围 | 保存位置 | 内容 |
 | --- | --- | --- |
 | 项目 | [控制台配置](tools/server-console/project.json) | `environmentName` 是左栏显示的环境名称。`commands` 决定可用命令和显示顺序。可选值为 `Start`、`Stop`、`ExportProtobuf`、`Build`、`BuildAndRestart`。 |
-| 项目 | [服务端进程数量](code/server/config/process.yaml) | 决定脚本及控制台初始启动数量，并作为服务器首次连接门槛；新运行组保存配置快照。 |
+| 项目 | [服务端进程数量](code/server/config/process.yaml) | 决定脚本及控制台初始启动数量，并作为服务器首次连接门槛。 |
 | 用户 | `%LOCALAPPDATA%\TGame\ServerConsole\<工作目录标识>\user.json` | 关闭窗口时保存尺寸、最大化状态、当前页签，以及各进程的搜索词、仅匹配行和跟踪最新选项。每个 Windows 账户和工作目录分别保存。 |
 
 项目配置随 Git 提交，下次打开控制台时生效。个人设置在本机自动生成。实际进程状态由控制台从运行实例和日志重新读取；独立存储联调所需凭据取自环境变量或本机秘密配置，不写入仓库。
@@ -59,7 +59,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 服务端通过 `TGAME_SERVER_CONFIG` 显式选择 YAML 文件；未选择或基础配置不完整时拒绝启动。进程基础框架要求环境名、相对运行目录、进程数量与拓扑以及完整 `zooKeeperOptions` 配置，`loggingMinimumLevel` 可选，默认 `INFO`。启动不要求数据库地址、账号或密码；独立存储工具使用时自行校验所需配置与凭据。
 
-[server.yaml](code/server/config/server.yaml) 是本地默认入口，脚本与控制台优先使用 `TGAME_SERVER_CONFIG` 指定的入口。它通过 `include: [ops, process]` 引用同目录的两个文件；各文件独立解析后合并顶层字段，重名直接失败，YAML 锚点和别名只在单文件内有效。Engine 的 `ServerConfiguration` 一次解析、严格绑定并校验核心配置、数量和拓扑；宿主将该实例及其持有的 `Group`、ZooKeeper/ID 选项注册为 IoC 单例，不另建宿主配置对象，也不自动热重载。新运行组把展开后的完整配置保存到运行目录和可执行快照中，重新接管或补起继续使用它。
+[server.yaml](code/server/config/server.yaml) 是本地默认入口，脚本与控制台优先使用 `TGAME_SERVER_CONFIG` 指定的入口。它通过 `include: [ops, process]` 引用同目录的两个文件；各文件独立解析后合并顶层字段，重名直接失败，YAML 锚点和别名只在单文件内有效。Engine 的 `ServerConfiguration` 一次解析、严格绑定并校验核心配置、数量和拓扑；宿主将该实例及其持有的 `Group`、ZooKeeper/ID 选项注册为 IoC 单例，不另建宿主配置对象，也不自动热重载。启动器直接传递源配置路径，重新接管和补起也读取源配置，不保存独立 YAML 快照。
 
 总入口示例（其引用文件也必须存在）：
 
@@ -92,7 +92,7 @@ dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- --
 
 宿主启动依次完成日志 → 配置 → 构建 IoC 根容器 → ZooKeeper 会话与空地址临时占号 → ID → 监听及主动依赖连接 → 地址发布 → `PROCESS_READY`。首次启动要求每种主动目标类型达到配置数量，首次达标后只要求每种正门槛类型至少保留一条完成握手的连接，`ServerNode.Ready` 才为真；无主动依赖的 Router 可直接就绪，不等入站。`FirstLinks` 只记录首次连接齐备，当前就绪随依赖断线与重连变化。连接握手只交换进程身份。
 
-服务端入口 [Program.cs](code/server/app/Program.cs) 只接受 `<进程类型>`，例如 `Scene`；运行目录从 `TGAME_SERVER_CONFIG` 指向的 `server.yaml` 快照读取，相对进程工作目录解析。脚本与控制台均把工作目录设为仓库根目录，并通过脚本预先创建运行目录。类型启动后通过 ZooKeeper 自动抢占从 1 开始的空闲实例编号，统一生成为 `Scene1`、`Scene2` 等名称。空地址节点不参与服务发现，但可证明尚未发布地址的主动连接方持有合法身份。强制终止后，旧节点在会话过期时删除；期间新进程可抢占其他空闲编号。
+服务端入口 [Program.cs](code/server/app/Program.cs) 只接受 `<进程类型>`，例如 `Scene`；运行目录优先读取 `TGAME_SERVER_RUN_DIRECTORY`，未设置时使用源配置的 `runDirectory`，相对进程工作目录解析。脚本与控制台均把工作目录设为仓库根目录，并预先创建本轮运行目录。类型启动后通过 ZooKeeper 自动抢占从 1 开始的空闲实例编号，统一生成为 `Scene1`、`Scene2` 等名称。空地址节点不参与服务发现，但可证明尚未发布地址的主动连接方持有合法身份。强制终止后，旧节点在会话过期时删除；期间新进程可抢占其他空闲编号。
 
 手动起服从仓库根目录执行；依赖类型应分别启动，例子和默认连接关系见[服务器启动与动态发现](docs/服务器组配置.md)：
 
@@ -156,7 +156,7 @@ pwsh -NoProfile -File .\tools\scripts\powershell\Connect-Server.ps1 -RemoteComma
 
 ## 配置数据的组织与格式约定
 
-服务器运行 YAML 已使用统一加载、校验和运行快照机制；其余配置类别的加载与热重载机制按各自后续设计确定。
+服务器运行 YAML 已使用统一加载和校验机制；其余配置类别的加载与热重载机制按各自后续设计确定。
 
 | 配置类别 | 维护方式 | 产物格式 |
 | --- | --- | --- |

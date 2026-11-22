@@ -23,7 +23,7 @@ internal static class ServerConfigurationChecks
         {
             SaveConnections(new Dictionary<string, string[]>());
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
-            new ServerConfiguration(defaults).SaveSnapshot(path);
+            SaveConnections(baseline.Read<Dictionary<string, string[]>>(ServerConfiguration.SectionName));
             var configuration = ServerConfiguration.Load(path);
 
             File.WriteAllText(path, "{}");

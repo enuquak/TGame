@@ -3,6 +3,7 @@ using TGame;
 using TGame.Server;
 using TGame.Server.Engine;
 using YamlDotNet.Core;
+using YamlDotNet.Serialization;
 
 internal static class LogLevelChecks
 {
@@ -151,8 +152,8 @@ internal static class LogLevelChecks
         }
 
         var path = Path.Combine(root, "server.yaml");
-        new ServerConfiguration(source).SaveSnapshot(path);
-        var yaml = File.ReadAllText(path).Replace("loggingMinimumLevel: DEBUG", "");
+        var values = new ServerConfiguration(source).Read<Dictionary<string, object>>();
+        var yaml = new SerializerBuilder().Build().Serialize(values).Replace("loggingMinimumLevel: DEBUG", "");
         File.WriteAllText(path, yaml);
         if (ServerConfiguration.Load(path).LoggingMinimumLevel != ServerLogLevel.Info)
         {

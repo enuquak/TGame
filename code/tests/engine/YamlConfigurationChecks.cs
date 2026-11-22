@@ -34,14 +34,9 @@ internal static class YamlConfigurationChecks
             Check(configuration.Redis!.UserName == "beta", "Anchor names leaked across files.");
             Check(configuration.ResolveRunDirectory(directory) == Path.Combine(directory, "logs", "original"), "Relative runtime path changed.");
 
-            var snapshot = Path.Combine(directory, "snapshot.yaml");
-            configuration.SaveSnapshot(snapshot, "logs/current");
             File.Delete(first);
             File.Delete(second);
-            var saved = new ServerConfiguration(snapshot);
-            Check(saved.Redis!.UserName == "beta", "Snapshot still depends on source include files.");
-            Check(saved.Read<string>(ServerConfiguration.RunDirectoryKey) == "logs/current", "Snapshot runtime directory was not updated.");
-            Check(configuration.Read<string>(ServerConfiguration.RunDirectoryKey) == "logs/original", "Saving a snapshot mutated its source instance.");
+            Check(configuration.Redis!.UserName == "beta", "Loaded settings still depend on source include files.");
             Expect<FileNotFoundException>(() => new ServerConfiguration(entry));
 
             File.WriteAllText(first, "shared: first\n");
@@ -72,7 +67,7 @@ internal static class YamlConfigurationChecks
             Directory.Delete(directory, recursive: true);
         }
 
-        Console.WriteLine("PASS unified YAML, independent anchors, strict includes/duplicates, invalid documents and standalone immutable snapshots.");
+        Console.WriteLine("PASS unified YAML, independent anchors, strict includes/duplicates, invalid documents and immutable loaded settings.");
     }
 
     private static void Check(bool condition, string message)

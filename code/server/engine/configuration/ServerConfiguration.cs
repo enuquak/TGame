@@ -116,19 +116,6 @@ public sealed class ServerConfiguration
         return Path.GetFullPath(RunDirectory, Path.GetFullPath(workingDirectory));
     }
 
-    public void SaveSnapshot(string path, string? runDirectory = null)
-    {
-        // 只修改本次输出的顶层映射，已加载实例和其他运行组的快照保持不变。
-        var snapshot = new YamlMappingNode(root.Children);
-        if (runDirectory is not null)
-        {
-            ValidateRunDirectory(runDirectory);
-            snapshot.Children[new YamlScalarNode(RunDirectoryKey)] = new YamlScalarNode(runDirectory);
-        }
-
-        File.WriteAllText(path, Serialize(snapshot));
-    }
-
     internal void SaveSection(string path, string section, YamlNode value)
     {
         var snapshot = new YamlMappingNode(root.Children);
@@ -393,7 +380,7 @@ public sealed class ServerConfiguration
         return result;
     }
 
-    // 只用于一次性严格绑定 YAML，加载完成后仅保留经过校验的配置值与快照。
+    // 只用于一次性严格绑定 YAML，加载完成后仅保留经过校验的配置值与原始映射。
     private sealed class ConfigurationDocument
     {
         public ConfigurationDocument()

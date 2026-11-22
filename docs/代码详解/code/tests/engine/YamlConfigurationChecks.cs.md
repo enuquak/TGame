@@ -4,13 +4,13 @@
 
 ## 职责与执行条件
 
-`Run()` 检查统一 YAML 配置入口的展开、别名隔离、严格校验和独立快照。首先读取构建输出 `config/server.yaml`，确认日志级别为 Debug、数据库为 `tgame_test`，Mongo 与 Redis 用户名一致，Mongo 认证库与数据库一致。这一步依赖随测试输出复制的实际配置及其 YAML 别名。
+`Run()` 检查统一 YAML 配置入口的展开、别名隔离、严格校验和已加载值的独立性。首先读取构建输出 `config/server.yaml`，确认日志级别为 Debug、数据库为 `tgame_test`，Mongo 与 Redis 用户名一致，Mongo 认证库与数据库一致。这一步依赖随测试输出复制的实际配置及其 YAML 别名。
 
-## 包含文件与快照
+## 包含文件与已加载配置
 
 测试在 GUID 临时目录内创建入口及 `first.yaml`、`second.yaml`。入口以默认完整配置为基础，移除原 Mongo/Redis 节，再让 include 提供这两节，保留核心字段、数量和拓扑以通过统一校验。两份包含文件都使用名为 `shared` 的锚点，但值分别为 alpha 与 beta；读取后要求各自别名保持所属文件的值，证明锚点不会跨文件串用。相对运行目录应以指定基目录解析。
 
-`SaveSnapshot(snapshot, "logs/current")` 输出展开后的配置。删除两份源包含文件后，快照仍能独立加载；其运行目录被覆盖为新值，而原 `ServerConfiguration` 对象仍保留 `logs/original`，说明保存快照没有修改源实例。反过来再加载原入口应因包含文件已删除而抛 `FileNotFoundException`。
+删除两份源包含文件后，已加载的 `ServerConfiguration` 仍保留原配置值；再次加载原入口则因包含文件已删除而抛 `FileNotFoundException`。此检查验证单个进程的配置只加载一次，不生成落盘快照。
 
 ## 拒绝的输入
 

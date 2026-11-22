@@ -55,13 +55,24 @@ function Get-ServerRunProcesses([string]$Snapshot)
 
 function Open-ServerRun([string]$Root, [bool]$Starting, [bool]$NoBuild)
 {
-    # 管理记录使用固定位置；源配置损坏或环境变量变化不能妨碍接管已有组。
+    # 管理记录使用固定位置，停止进程不依赖源配置。
     $management = [IO.Directory]::CreateDirectory((Join-Path $Root 'logs/tools/server-scripts')).FullName
     $lock = [IO.File]::Open((Join-Path $management 'manage.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     try
     {
         $currentFile = Join-Path $management 'current'
-        $context = @{ Root = $Root; Lock = $lock; RunDirectory = $null; Snapshot = $null; Group = $null }
+        $context = @{ Root = $Root; Lock = $lock; RunDirectory = $null; Snapshot = $null; Group = $null; ConfigurationPath = $null }
+        if ($Starting)
+        {
+            $selected = [Environment]::GetEnvironmentVariable([TGame.EngineEnvironment]::Config)
+            if ([string]::IsNullOrWhiteSpace($selected))
+            {
+                $selected = [TGame.ServerConfiguration]::ConfigurationPath
+            }
+            $configuration = [TGame.ServerConfiguration]::new([IO.Path]::GetFullPath($selected, $Root))
+            $context.Group = $configuration.Group
+            $context.ConfigurationPath = $configuration.SourcePath
+        }
         if (Test-Path -LiteralPath $currentFile)
         {
             $relativeRun = [IO.File]::ReadAllText($currentFile).Trim()
@@ -86,10 +97,6 @@ function Open-ServerRun([string]$Root, [bool]$Starting, [bool]$NoBuild)
 
             if (!$Starting -or $alive)
             {
-                if ($Starting)
-                {
-                    $context.Group = [TGame.ServerGroup]::Load((Join-Path $context.RunDirectory ([TGame.ServerGroup]::FileName)))
-                }
                 return $context
             }
         }
@@ -99,14 +106,7 @@ function Open-ServerRun([string]$Root, [bool]$Starting, [bool]$NoBuild)
             return $context
         }
 
-        $selected = [Environment]::GetEnvironmentVariable([TGame.EngineEnvironment]::Config)
-        if ([string]::IsNullOrWhiteSpace($selected))
-        {
-            $selected = [TGame.ServerConfiguration]::ConfigurationPath
-        }
-        $configuration = [TGame.ServerConfiguration]::new([IO.Path]::GetFullPath($selected, $Root))
         $runs = $configuration.ResolveRunDirectory($Root)
-        $group = $configuration.Group
 
         if (!$NoBuild)
         {
@@ -129,23 +129,21 @@ function Open-ServerRun([string]$Root, [bool]$Starting, [bool]$NoBuild)
         $null = New-Item -ItemType Directory -Path $snapshot
         foreach ($file in Get-ChildItem -LiteralPath $source)
         {
+            if ($file.Name -eq 'config')
+            {
+                continue
+            }
             Copy-Item -LiteralPath $file.FullName -Destination $snapshot -Recurse
         }
 
-        $snapshotConfig = Join-Path $snapshot 'config'
-        $null = New-Item -ItemType Directory -Path $snapshotConfig -Force
-        $runtimeConfig = Join-Path $snapshotConfig ([TGame.ServerRuntime]::FileName)
         $relativeRunDirectory = [IO.Path]::GetRelativePath($Root, $runDirectory)
-        $configuration.SaveSnapshot($runtimeConfig, $relativeRunDirectory)
-        $null = & (Join-Path $PSScriptRoot 'New-ServerRunDirectory.ps1') -Configuration $runtimeConfig
-        $configuration.SaveSnapshot((Join-Path $runDirectory ([TGame.ServerConfiguration]::FileName)), $relativeRunDirectory)
+        $null = [IO.Directory]::CreateDirectory($runDirectory)
 
         # 先发布当前组，再启动子进程；即使脚本中断，下次仍可接管。
         [IO.File]::WriteAllText($currentFile + '.tmp', $relativeRunDirectory)
         [IO.File]::Move($currentFile + '.tmp', $currentFile, $true)
         $context.RunDirectory = $runDirectory
         $context.Snapshot = $snapshot
-        $context.Group = $group
         return $context
     }
     catch
@@ -192,12 +190,15 @@ function Start-ServerProcess([hashtable]$Context, [TGame.ProcessType]$Type, [int
     }
 
     $configKey = [TGame.EngineEnvironment]::Config
+    $runKey = [TGame.EngineEnvironment]::RunDirectory
     $logKey = [TGame.EngineEnvironment]::LogRoot
     $previousConfig = [Environment]::GetEnvironmentVariable($configKey)
+    $previousRun = [Environment]::GetEnvironmentVariable($runKey)
     $previousLog = [Environment]::GetEnvironmentVariable($logKey)
     try
     {
-        [Environment]::SetEnvironmentVariable($configKey, (Join-Path $Context.RunDirectory ([TGame.ServerConfiguration]::FileName)))
+        [Environment]::SetEnvironmentVariable($configKey, $Context.ConfigurationPath)
+        [Environment]::SetEnvironmentVariable($runKey, $Context.RunDirectory)
         [Environment]::SetEnvironmentVariable($logKey, (Join-Path $Context.Root 'logs/server'))
         # ShellExecute 启动独立隐藏进程，避免服务器继承调用者的输出管道。
         $child = Start-Process -FilePath $exe -ArgumentList $Type.ToString() -WorkingDirectory $Context.Root -WindowStyle Hidden -PassThru
@@ -217,6 +218,7 @@ function Start-ServerProcess([hashtable]$Context, [TGame.ProcessType]$Type, [int
     finally
     {
         [Environment]::SetEnvironmentVariable($configKey, $previousConfig)
+        [Environment]::SetEnvironmentVariable($runKey, $previousRun)
         [Environment]::SetEnvironmentVariable($logKey, $previousLog)
     }
 }

@@ -43,7 +43,13 @@ async Task RunServerAsync(ProcessType processType, GameLog log)
     var role = processType.ToString();
     var configuration = ServerConfiguration.LoadSelected();
     log.SetMinimumLevel(configuration.LoggingMinimumLevel);
-    var runDir = configuration.ResolveRunDirectory(Directory.GetCurrentDirectory());
+    var runDirectory = Environment.GetEnvironmentVariable(EngineEnvironment.RunDirectory);
+    if (string.IsNullOrWhiteSpace(runDirectory))
+    {
+        runDirectory = configuration.RunDirectory;
+    }
+
+    var runDir = Path.GetFullPath(runDirectory, Directory.GetCurrentDirectory());
     if (!Directory.Exists(runDir))
     {
         throw new DirectoryNotFoundException($"Runtime directory does not exist. Prepare it with the server scripts: {runDir}");

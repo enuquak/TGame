@@ -34,12 +34,12 @@ Mongo/Redis 对象仅包含纯配置数据，属于 Engine，不引用数据库�
 
 `targets` 保存复制后的只读字典和只读目标列表，`DialTargets` 暴露该视图。`GetDialTargets(type)` 返回主动目标；`Dials(source, target)` 查询有向边；`ArePeers(first, second)` 检查任一方向是否有边。它们服务于发现过滤与握手校验。数量门槛由 [ServerGroup.cs](ServerGroup.cs.md) 提供，实时连接和就绪状态由 [ServerNode.cs](../ServerNode.cs.md) 管理，不属于配置状态。
 
-## 快照读取、路径与保存
+## 配置读取、路径与保存
 
 `Read<T>(section)` 从已加载的 `root` 读取整个文档或一个顶层节，先序列化再严格反序列化为调用方类型；缺失或空节失败，不访问源文件。该泛型入口仍可用于工具读取原始配置数据，不建立另一份运行期配置服务。
 
 `ResolveRunDirectory(workingDirectory)` 以调用方给出的工作目录解析 `RunDirectory`，基准不是 YAML 所在目录；合法相对路径可以含 `..`。它不创建目录。
 
-`SaveSnapshot(path, runDirectory)` 复制顶层映射，可只在本次输出中覆盖运行目录。内部 `SaveSection` 同样复制后替换指定节，供数量保存及针对性检查使用。两者不修改已加载的配置值和 `root`，输出不再依赖 include 或锚点文件。
+内部 `SaveSection` 复制顶层映射后替换指定节，供数量保存及针对性检查使用。它不修改已加载的配置值和 `root`。启动器直接使用源配置，不调用配置保存方法。
 
-写出直接覆盖目标文件，不创建父目录，也不执行临时文件替换。YAML 解析错误被包装为配置错误，文件缺失和权限等 I/O 错误继续传播。快照保存不意味着外部服务已就绪。
+写出直接覆盖目标文件，不创建父目录，也不执行临时文件替换。YAML 解析错误被包装为配置错误，文件缺失和权限等 I/O 错误继续传播。配置加载成功不意味着外部服务已就绪。
