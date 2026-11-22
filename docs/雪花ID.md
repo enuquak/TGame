@@ -41,7 +41,7 @@ await ids.InitializeAsync(stop);
 
 ## 配置与调用点
 
-[ops.yaml](../code/server/config/ops.yaml) 的 `zooKeeper` 统一声明地址、发现根路径、`workerRootPath`、连接及会话超时，由 [server.yaml](../code/server/config/server.yaml) include 加载。App 从同一次加载结果创建 `ZooKeeperOptions` 与 `IdGeneratorOptions`；ID 和服务发现共用代理会话。独立 ID 检查也传入总入口路径。
+[ops.yaml](../code/server/config/ops.yaml) 的 `zooKeeperOptions` 统一声明地址、发现根路径、`workerRootPath`、连接及会话超时，由 [server.yaml](../code/server/config/server.yaml) include 加载。App 从同一次加载结果创建 `ZooKeeperOptions` 与 `IdGeneratorOptions`；ID 和服务发现共用代理会话。独立 ID 检查也传入总入口路径。
 
 进程基础框架使用它生成 RPC 请求 ID 和连接 ID；保留的独立存储工具使用它生成 Redis 缓存占用标记。当前节点不创建实体身份，也没有实体注册或路由流程；存储协议中的业务实体 ID 由调用方提供。
 

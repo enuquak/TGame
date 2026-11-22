@@ -4,7 +4,7 @@
 
 ## 职责与生命周期
 
-`TGame.ServerConfiguration` 位于 Engine，统一承担 YAML 解析、配置值持有与校验、进程连接拓扑查询。它合并了原 `YamlConfiguration`、宿主 `ServerSettings` 和原连接图 `ServerConfiguration` 的职责。App 在日志创建后加载一个实例，随后将这个实例及其持有的 `Group`、`ZooKeeperSettings`、`Identifiers` 注册到根容器；运行期间不重新读文件，没有静态全局配置或热重载。
+`TGame.ServerConfiguration` 位于 Engine，统一承担 YAML 解析、配置值持有与校验、进程连接拓扑查询。它合并了原 `YamlConfiguration`、宿主 `ServerSettings` 和原连接图 `ServerConfiguration` 的职责。App 在日志创建后加载一个实例，随后将这个实例及其持有的 `Group`、`ZooKeeperOptions`、`Identifiers` 注册到根容器；运行期间不重新读文件，没有静态全局配置或热重载。
 
 `FileName` 为 `server.yaml`，`ConfigurationPath` 为仓库布局下的 `code/server/config/server.yaml`。`SourcePath` 保存入口绝对路径。`SelectedPath()` 读取 [EngineEnvironment.Config](EngineEnvironment.cs.md) 对应的 `TGAME_SERVER_CONFIG`，变量为空时明确失败；默认入口由启动器选择。`LoadSelected()` 与 `Load(path)` 每次显式创建独立实例。
 
@@ -20,9 +20,9 @@
 
 `Read<ConfigurationDocument>()` 使用 camelCase 命名约定和重复键检查严格绑定全部已知字段；未知字段、类型不符等 YAML 反序列化错误包装为 `InvalidDataException`，保留源路径及内部异常。私有 `ConfigurationDocument` 只用于构造期间绑定，加载后不保存该 DTO，也不再保留公开可写的 `Processes`、`Connections` 字典。
 
-配置直接持有 `Environment`、`RunDirectory`、`MinimumLogLevel`、可选 `Mongo` 和 `Redis`、`ZooKeeperSettings`、`Group`、`Identifiers`。`loggingMinimumLevel` 缺省为 `Info`；`ZooKeeper`、`DiscoveryRoot`、`MongoDatabase`、`ProfileRedis` 等便捷属性从嵌套对象计算。密码属性返回环境变量名，不读取密码。
+配置直接持有 `Environment`、`RunDirectory`、`LoggingMinimumLevel`、可选 `Mongo` 和 `Redis`、`ZooKeeperOptions`、`Group`、`Identifiers`。`loggingMinimumLevel` 缺省为 `Info`；`ZooKeeper`、`DiscoveryRoot`、`MongoDatabase`、`ProfileRedis` 等便捷属性从嵌套对象计算。密码属性返回环境变量名，不读取密码。
 
-构造期间要求环境名非空、日志级别有效、运行目录是非空相对路径。ZooKeeper 地址、发现根、会话/连接超时和 worker 根路径经过校验，参数错误包装为 `InvalidDataException`。`Identifiers` 从同一 `ZooKeeperSettings.WorkerRootPath` 生成；`Group` 校验每种类型的非负数量且至少启动一个进程。
+构造期间要求环境名非空、日志级别有效、运行目录是非空相对路径。ZooKeeper 地址、发现根、会话/连接超时和 worker 根路径经过校验，参数错误包装为 `InvalidDataException`。`Identifiers` 从同一 `ZooKeeperOptions.WorkerRootPath` 生成；`Group` 校验每种类型的非负数量且至少启动一个进程。
 
 Mongo/Redis 对象仅包含纯配置数据，属于 Engine，不引用数据库驱动。它们可缺省，基础框架启动不要求可用的业务存储。`ValidateProfileStorage()` 在独立存储入口使用时要求两份配置及 Profile 密码变量名存在，再调用各自 `Validate()`；加载成功不代表数据库已连接或存储语义已全部校验。
 

@@ -145,7 +145,7 @@ internal static class LogLevelChecks
     private static void CheckSettings(string root)
     {
         var source = Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName);
-        if (ServerConfiguration.Load(source).MinimumLogLevel != ServerLogLevel.Debug)
+        if (ServerConfiguration.Load(source).LoggingMinimumLevel != ServerLogLevel.Debug)
         {
             throw new Exception("The test environment must default to DEBUG.");
         }
@@ -154,7 +154,7 @@ internal static class LogLevelChecks
         new ServerConfiguration(source).SaveSnapshot(path);
         var yaml = File.ReadAllText(path).Replace("loggingMinimumLevel: DEBUG", "");
         File.WriteAllText(path, yaml);
-        if (ServerConfiguration.Load(path).MinimumLogLevel != ServerLogLevel.Info)
+        if (ServerConfiguration.Load(path).LoggingMinimumLevel != ServerLogLevel.Info)
         {
             throw new Exception("An unspecified minimum log level must default to INFO.");
         }
@@ -162,7 +162,7 @@ internal static class LogLevelChecks
         foreach (var minimum in Enum.GetValues<ServerLogLevel>())
         {
             File.WriteAllText(path, yaml.Replace("...", "") + $"\nloggingMinimumLevel: {minimum.ToString().ToUpperInvariant()}\n");
-            if (ServerConfiguration.Load(path).MinimumLogLevel != minimum)
+            if (ServerConfiguration.Load(path).LoggingMinimumLevel != minimum)
             {
                 throw new Exception($"Minimum log level {minimum} was not loaded.");
             }

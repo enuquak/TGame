@@ -8,7 +8,7 @@ internal static class YamlConfigurationChecks
     {
         var source = Path.Combine(AppContext.BaseDirectory, "config", "server.yaml");
         var settings = ServerConfiguration.Load(source);
-        if (settings.MinimumLogLevel != ServerLogLevel.Debug || settings.MongoDatabase != "tgame_test" ||
+        if (settings.LoggingMinimumLevel != ServerLogLevel.Debug || settings.MongoDatabase != "tgame_test" ||
             settings.MongoUser != settings.RedisUser || settings.Mongo!.AuthenticationDatabase != settings.MongoDatabase)
         {
             throw new Exception("The unified entry did not load nested settings and YAML aliases.");

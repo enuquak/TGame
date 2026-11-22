@@ -182,7 +182,7 @@ internal static class GroupConfigChecks
               authenticationDatabase: *database
               userName: snapshot-user
               serverSelectionTimeoutSeconds: 5
-            zooKeeper:
+            zooKeeperOptions:
               endpoint: 127.0.0.1:2181
               discoveryRoot: /snapshot-check
               workerRootPath: /snapshot-workers

@@ -57,7 +57,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 ## 服务器环境
 
-服务端通过 `TGAME_SERVER_CONFIG` 显式选择 YAML 文件；未选择或基础配置不完整时拒绝启动。进程基础框架要求环境名、相对运行目录、进程数量与拓扑以及完整 `zooKeeper` 配置，`loggingMinimumLevel` 可选，默认 `INFO`。启动不要求数据库地址、账号或密码；独立存储工具使用时自行校验所需配置与凭据。
+服务端通过 `TGAME_SERVER_CONFIG` 显式选择 YAML 文件；未选择或基础配置不完整时拒绝启动。进程基础框架要求环境名、相对运行目录、进程数量与拓扑以及完整 `zooKeeperOptions` 配置，`loggingMinimumLevel` 可选，默认 `INFO`。启动不要求数据库地址、账号或密码；独立存储工具使用时自行校验所需配置与凭据。
 
 [server.yaml](code/server/config/server.yaml) 是本地默认入口，脚本与控制台优先使用 `TGAME_SERVER_CONFIG` 指定的入口。它通过 `include: [ops, process]` 引用同目录的两个文件；各文件独立解析后合并顶层字段，重名直接失败，YAML 锚点和别名只在单文件内有效。Engine 的 `ServerConfiguration` 一次解析、严格绑定并校验核心配置、数量和拓扑；宿主将该实例及其持有的 `Group`、ZooKeeper/ID 选项注册为 IoC 单例，不另建宿主配置对象，也不自动热重载。新运行组把展开后的完整配置保存到运行目录和可执行快照中，重新接管或补起继续使用它。
 

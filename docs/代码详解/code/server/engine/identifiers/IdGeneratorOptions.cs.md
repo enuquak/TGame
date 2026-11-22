@@ -6,7 +6,7 @@
 
 `IdGeneratorOptions` 只保留 ID 生成器真正需要的配置：必填的 `WorkerRootPath`。该路径是 ZooKeeper 中用于争用 worker 编号的根节点，不是本地目录。
 
-`Load(path)` 创建完整 `ServerConfiguration` 并返回它持有的 `Identifiers`。统一配置加载期间从 `ZooKeeperSettings.WorkerRootPath` 创建并校验这份选项。`FileName` 也引用统一 `server.yaml`。因此配置文件只声明一份 worker 路径，不额外维护 ID 专用配置节。
+`Load(path)` 创建完整 `ServerConfiguration` 并返回它持有的 `Identifiers`。统一配置加载期间从 `ZooKeeperOptions.WorkerRootPath` 创建并校验这份选项。`FileName` 也引用统一 `server.yaml`。因此配置文件只声明一份 worker 路径，不额外维护 ID 专用配置节。
 
 ## 校验与依赖
 

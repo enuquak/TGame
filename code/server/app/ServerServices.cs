@@ -8,7 +8,7 @@ internal static class ServerServices
     {
         services.AddSingleton(configuration);
         services.AddSingleton(configuration.Group);
-        services.AddSingleton(configuration.ZooKeeperSettings);
+        services.AddSingleton(configuration.ZooKeeperOptions);
         services.AddSingleton(configuration.Identifiers);
 
         // 日志先于配置和容器创建，仍由 App 在所有资源退出后释放。

@@ -6,7 +6,7 @@
 
 ## 两类单例注册
 
-`ServerConfiguration` 只注册一次，`ServerGroup`、`ZooKeeperOptions`、`IdGeneratorOptions` 分别直接注册配置持有的 `Group`、`ZooKeeperSettings`、`Identifiers`，都使用 `AddSingleton(existingObject)`。同一配置对象完成解析、值持有和拓扑查询，注册入口不重新绑定或创建平行配置。不同容器可使用不同配置实例，不是全局单例。
+`ServerConfiguration` 只注册一次，`ServerGroup`、`ZooKeeperOptions`、`IdGeneratorOptions` 分别直接注册配置持有的 `Group`、`ZooKeeperOptions`、`Identifiers`，都使用 `AddSingleton(existingObject)`。同一配置对象完成解析、值持有和拓扑查询，注册入口不重新绑定或创建平行配置。不同容器可使用不同配置实例，不是全局单例。
 
 `ZooKeeperProxy`、`IdGenerator` 和 `ServerNode` 使用类型注册，首次解析时由容器调用构造函数，依赖也由容器提供。创建服务不等于已经完成异步初始化，实际顺序由 Program 控制。
 

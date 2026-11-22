@@ -42,7 +42,7 @@ async Task RunServerAsync(ProcessType processType, GameLog log)
 {
     var role = processType.ToString();
     var configuration = ServerConfiguration.LoadSelected();
-    log.SetMinimumLevel(configuration.MinimumLogLevel);
+    log.SetMinimumLevel(configuration.LoggingMinimumLevel);
     var runDir = configuration.ResolveRunDirectory(Directory.GetCurrentDirectory());
     if (!Directory.Exists(runDir))
     {
