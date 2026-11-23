@@ -18,10 +18,10 @@
 
 构造函数按枚举顺序、编号从 `1` 开始展开 `Processes`，并保存只读列表。`configuredCounts` 是按角色查询数量的索引，`GetStartupMinimum` 直接读取它。这份数量既是启动计划，又是 [ServerNode.cs](../ServerNode.cs.md) 首次握手连接的门槛，并不是运行时连接数上限。真实进程身份仍由 ZooKeeper 占号决定，计划条目不等于已认领身份。
 
-## 读写行为
+## 读取与持有行为
 
-`Read(configuration)` 直接返回 `configuration.Group`，不重新绑定或分配数量配置；`Load(path)` 创建完整 `ServerConfiguration` 后取得它的 `Group`。`Save(path)` 把数量写成 YAML 映射，先加载并校验目标已有的完整配置，再用 `SaveSection` 替换 `processes`，保存展开后的配置。
+`Read(configuration)` 直接返回 `configuration.Group`，不重新绑定或分配数量配置；`Load(path)` 创建完整 `ServerConfiguration` 后取得它的 `Group`。加载目标必须是有效的完整配置入口，可以通过 include 拆分内容，只有数量节的文件不能作为完整入口。
 
-目标缺失、只有数量节或包含其他无效配置时直接失败，不创建不完整文件。保存已有入口时会展开其 include，不保留原来的文件拆分形式。写入不修改当前 `ServerGroup`，也不会自动创建父目录。解析错误和文件 I/O 错误向调用方传播。
+本类型不提供配置文件写回接口，也不在运行期间重新加载数量。调整计划需要修改源 YAML，并由后续显式加载得到新对象；已经持有的 `ServerGroup` 保留原值。测试可以自行序列化临时配置，这不属于 `ServerGroup` 的职责。解析错误和文件 I/O 错误向调用方传播。
 
 相关实现：[ServerConfiguration.cs](ServerConfiguration.cs.md)、[ProcessType.cs](ProcessType.cs.md)、[ZooKeeperProxy.cs](../ZooKeeperProxy.cs.md)。

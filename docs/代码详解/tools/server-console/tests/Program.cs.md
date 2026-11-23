@@ -14,7 +14,7 @@
 
 随后关闭并重新打开控制台，从源配置恢复运行组，停止一个 Base，要求 Gate 保持就绪，再补起 Base，并检查补起没有扰动其他 PID。Router 的选择性停止/补起同样要求下游 Base 保持首次启动完成后的就绪状态；停止唯一 Base 或唯一 Router 都不再等待“连接不全”。补起后等待所有进程就绪并核对 Router 的新 PID；实际链路与 RPC 恢复另由引擎专项检查覆盖。
 
-测试接着写入带 #error 的临时源码，让 BuildAsync(restart:true) 编译失败。无论失败如何都删除该文件，然后检查旧组仍就绪且 PID 未变。最后通过 `ServerConfiguration.Read` 从完整 YAML 的 processes 节点读计数，增加一个 Login，用 ServerGroup.Save 更新完整入口，再编译重启，验证 InstancesChanged、新数量、新 PID 和再次附加。
+测试接着写入带 #error 的临时源码，让 BuildAsync(restart:true) 编译失败。无论失败如何都删除该文件，然后检查旧组仍就绪且 PID 未变。最后通过 `ServerConfiguration.Read` 分别取得数量字典与完整文档字典，增加一个 Login，替换文档的 `processes` 后用 `SerializerBuilder` 和 `File.WriteAllText` 写入临时 checkout 中选定的配置入口，再编译重启，验证 InstancesChanged、新数量、新 PID 和再次附加。这是测试自行准备输入，不是 `ServerGroup` 或 `ServerConfiguration` 的文件写回功能。
 
 ## 等待和动态注册
 

@@ -14,13 +14,13 @@
 
 `include` 必须是文件名列表。名称不能空白、带扩展名或路径分隔符，不能是 `.`、`..` 或重复项；每项解析为同目录的 `名称.yaml`。递归链中的路径再次出现即拒绝循环包含，Windows 比较路径时忽略大小写。
 
-`Merge` 只合并顶层键，所有键必须是非空标量。包含文件之间、入口与包含文件之间的任意重名都失败，不递归合并同名节，也没有后写覆盖前写。合并结果删除 `include`，保存在私有 `root` 中供后续读取和导出。
+`Merge` 只合并顶层键，所有键必须是非空标量。包含文件之间、入口与包含文件之间的任意重名都失败，不递归合并同名节，也没有后写覆盖前写。合并结果删除 `include`，保存在私有 `root` 中供一次性绑定和后续 `Read<T>` 读取，不写回文件。
 
 ## 一次性绑定与配置值
 
 `Read<ConfigurationDocument>()` 使用 camelCase 命名约定和重复键检查严格绑定全部已知字段；未知字段、类型不符等 YAML 反序列化错误包装为 `InvalidDataException`，保留源路径及内部异常。私有 `ConfigurationDocument` 只用于构造期间绑定，加载后不保存该 DTO，也不再保留公开可写的 `Processes`、`Connections` 字典。
 
-配置直接持有 `Environment`、`RunDirectory`、`LoggingMinimumLevel`、可选 `Mongo` 和 `Redis`、`ZooKeeperOptions`、`Group`、`Identifiers`。`loggingMinimumLevel` 缺省为 `Info`；`ZooKeeper`、`DiscoveryRoot`、`MongoDatabase`、`ProfileRedis` 等便捷属性从嵌套对象计算。密码属性返回环境变量名，不读取密码。
+配置直接持有 `Environment`、`RunDirectory`、`LoggingMinimumLevel`、可选 `Mongo` 和 `Redis`、`ZooKeeperOptions`、`Group`、`Identifiers`。YAML 使用对应的 camelCase 键，例如 `loggingMinimumLevel` 和 `zooKeeperOptions`；日志级别缺省为 `Info`。`ZooKeeper`、`DiscoveryRoot`、`MongoDatabase`、`ProfileRedis` 等便捷属性从嵌套对象计算。密码属性返回环境变量名，不读取密码。
 
 构造期间要求环境名非空、日志级别有效、运行目录是非空相对路径。ZooKeeper 地址、发现根、会话/连接超时和 worker 根路径经过校验，参数错误包装为 `InvalidDataException`。`Identifiers` 从同一 `ZooKeeperOptions.WorkerRootPath` 生成；`Group` 校验每种类型的非负数量且至少启动一个进程。
 
@@ -34,12 +34,12 @@ Mongo/Redis 对象仅包含纯配置数据，属于 Engine，不引用数据库�
 
 `targets` 保存复制后的只读字典和只读目标列表，`DialTargets` 暴露该视图。`GetDialTargets(type)` 返回主动目标；`Dials(source, target)` 查询有向边；`ArePeers(first, second)` 检查任一方向是否有边。它们服务于发现过滤与握手校验。数量门槛由 [ServerGroup.cs](ServerGroup.cs.md) 提供，实时连接和就绪状态由 [ServerNode.cs](../ServerNode.cs.md) 管理，不属于配置状态。
 
-## 配置读取、路径与保存
+## 配置读取与运行目录
 
 `Read<T>(section)` 从已加载的 `root` 读取整个文档或一个顶层节，先序列化再严格反序列化为调用方类型；缺失或空节失败，不访问源文件。该泛型入口仍可用于工具读取原始配置数据，不建立另一份运行期配置服务。
 
-`ResolveRunDirectory(workingDirectory)` 以调用方给出的工作目录解析 `RunDirectory`，基准不是 YAML 所在目录；合法相对路径可以含 `..`。它不创建目录。
+`ResolveRunDirectory(workingDirectory)` 以调用方给出的工作目录解析配置中的 `RunDirectory`，基准不是 YAML 所在目录；合法相对路径可以含 `..`。它不创建目录，也不读取环境变量。App 另行优先读取 `EngineEnvironment.RunDirectory`，为空时才使用配置值，随后相对进程工作目录解析；目录由启动器创建。
 
-内部 `SaveSection` 复制顶层映射后替换指定节，供数量保存及针对性检查使用。它不修改已加载的配置值和 `root`。启动器直接使用源配置，不调用配置保存方法。
+配置只从 YAML 加载到内存，本类型没有配置文件写回接口。启动器通过 `EngineEnvironment.Config` 直接传递源配置路径，启动和补起都读取该入口及其 include；本轮运行目录单独通过环境变量传递，不保存展开后的配置文件，也不改写源配置的 `runDirectory`。已有进程继续使用已经加载的值；修改源配置后再补起的进程会重新读取，当前不处理两者的一致性。
 
-写出直接覆盖目标文件，不创建父目录，也不执行临时文件替换。YAML 解析错误被包装为配置错误，文件缺失和权限等 I/O 错误继续传播。配置加载成功不意味着外部服务已就绪。
+测试需要构造变化后的配置时，由测试代码读取映射、修改并序列化到临时文件；这不是运行期配置服务的保存功能。文件缺失和权限等 I/O 错误继续传播，绑定时的 YAML 错误由 `Read<T>` 包装。配置加载成功不意味着外部服务已就绪。

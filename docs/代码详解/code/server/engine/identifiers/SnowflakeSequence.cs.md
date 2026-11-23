@@ -2,26 +2,44 @@
 
 源码：[code/server/engine/identifiers/SnowflakeSequence.cs](../../../../../../code/server/engine/identifiers/SnowflakeSequence.cs)
 
-## 职责与位布局
+## 输入和位布局
 
-`SnowflakeSequence` 只负责把相对毫秒时间戳、worker 编号及毫秒内序号组合为整数，不读系统时钟、不访问 ZooKeeper，也不主动等待。纪元固定为 UTC `2026-01-01 00:00:00`。
+`SnowflakeSequence` 接收一个固定 worker 编号，并在每次 `TryGenId(timestamp)` 时接收自纪元起的毫秒数。它保留该 worker 的发号进度。时钟读取、加锁、等待和字符串转换由调用它的生成器负责。见 [SnowflakeIdGenerator.cs](SnowflakeIdGenerator.cs.md)。
 
-| 部分 | 位数 | 合法范围 |
+`EpochMilliseconds` 把 `2026-01-01 00:00:00 UTC` 换算成 Unix 毫秒。外层先用当前 Unix 毫秒减掉它，这个差值才是传进方法的 `timestamp`。
+
+| 从高位到低位 | 位数 | 允许值 |
 | --- | --- | --- |
-| 相对毫秒时间戳 | 41 | `0..(2^41-1)` |
-| worker 编号 | 10 | `0..1023` |
-| 同毫秒序号 | 12 | `0..4095` |
+| 符号位 | 1 | 始终为 0 |
+| 纪元后的毫秒数 | 41 | `0..2^41-1` |
+| worker | 10 | `0..1023` |
+| 当前毫秒的序号 | 12 | `0..4095` |
 
-总计占用 63 位，保留 `long` 的符号位。构造函数检查 worker 范围，并预先计算 `workerId << 12`，后续发号只复用这个固定分量。
+`(1 << WorkerBits) - 1` 先把二进制的 `1` 左移 10 位，再减一，得到低 10 位全为 `1` 的值 `1023`。时间戳掩码使用 `1L << TimestampBits`，后缀 `L` 使左操作数为 64 位的 `long`，这样才能把 `1` 移到第 41 位。
 
-## TryGenId 的状态转换
+## 构造与状态
 
-`lastTimestamp` 初值为 `-1`。每次输入先检查纪元范围，再拒绝比上次更小的时间戳。时间前进时序号归零；时间相同时序号递增。若同一毫秒已经使用序号 `4095`，返回 `null`，不修改最后时间和序号，交给上层等待下一毫秒。
+构造函数拒绝负 worker 和大于 `MaxWorkerId` 的编号。`workerComponent = (long)workerId << SequenceBits` 把编号放到预定位置，给序号留出低 12 位。`readonly` 表明实例构造完成后保留这一分量。
 
-有效结果按 `(timestamp << 22) | workerComponent | sequence` 合成。这样同一 worker 在同一毫秒最多发出 4096 个不同值，不同 worker 占据独立的编号区间。
+`lastTimestamp = -1` 表示还没有成功发过 ID。`sequence` 是上次成功发号使用的序号，字段默认值为零，第一条 ID 会在时间前进分支明确把它设为零。
 
-## 错误与边界
+## 逐段读 TryGenId
 
-回拨错误会立即抛出，状态保留在上次成功时间；后续时钟追平后才可能继续。超出 41 位时间范围也会抛出，而不是截断位数。这个类本身不加锁，由 [SnowflakeIdGenerator.cs](SnowflakeIdGenerator.cs.md) 在外围串行调用。
+1. 先检查时间戳是否超出 `0..MaxTimestamp`，再检查它是否小于 `lastTimestamp`。任一条件成立都抛 `InvalidOperationException`，字段仍保留上次成功发号的状态。
+2. 时间戳与上一次相同就尝试递增 `sequence`。已经到 `MaxSequence` 时，先返回 `null`，把等待交给外层。时间戳更大时，开始新的一毫秒，将序号归零。
+3. 将本次时间存入 `lastTimestamp`，把时间左移 `10 + 12 = 22` 位，再合并三个分量。
 
-位拼装本身允许纪元零毫秒、worker `0`、序号 `0` 得到整数 `0`；它负责数值算法，文本正数规则由 [IdText.cs](IdText.cs.md) 规定。实际系统以当前时钟运行时已处于纪元之后。worker 唯一性与编号复用等待由 ZooKeeper 租约层保证，不由本序列类证明。
+```csharp
+long timestampComponent = timestamp << (WorkerBits + SequenceBits);
+return timestampComponent | workerComponent | (uint)sequence;
+```
+
+`|` 是按位或。三个分量各占一块互不重叠的位，所以也可以用普通加法手算结果。序号始终是非负数，`(uint)sequence` 把它作为无符号的低位分量参与拼装。方法返回 `long?`，调用方用空值区分同毫秒的暂时耗尽。
+
+以 worker `42` 为例，`42 << 12 = 172032`。时间戳 `100` 对应 `100 << 22 = 419430400`，首条 ID 为 `419602432`。同毫秒下一条加 `1`，末条加到 `4095`。若此后立即输入 `100`，结果为 `null`。到了 `101`，从 `423796736` 重新开始计数。若输入经历 `100 → 99 → 100`，中间抛异常，最后回到原毫秒时会从已经使用的序号继续。
+
+## 边界
+
+同一 worker 每毫秒最多有 `4096` 个序号。不同 worker 的编号落在中间 10 位，变化时数值也跟着变化。跨进程唯一性还依赖 worker 由 ZooKeeper 独占及其复用时机。见 [ZooKeeperProxy.cs](../ZooKeeperProxy.cs.md)。
+
+时间戳、worker、序号全为零时会合出整数 `0`。这是位布局的边界值，`IdText.IsValid("0")` 会按入站文本规则返回假。接近最大时间戳仍保留符号位，详见 [IdText.cs](IdText.cs.md)、[IdGeneratorChecks.cs](../../../tests/engine/IdGeneratorChecks.cs.md)。
