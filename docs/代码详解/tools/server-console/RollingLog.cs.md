@@ -1,29 +1,39 @@
 # RollingLog.cs 代码详解
 
-源码：[RollingLog.cs](../../../../tools/server-console/RollingLog.cs)
+[源码](../../../../tools/server-console/RollingLog.cs)
 
-## 职责和游标
+## 读什么文件
 
-RollingLog 增量读取某个进程生命期的 Serilog 文件分片。构造参数 directory 是实例日志目录，prefix 包含 PID 和启动时间；因此文件枚举不会把同名实例的其他运行历史混进来。
+`GameLog` 给同一进程生命期的日志固定 `<PID>-<UTC 启动 ticks>-` 前缀，再由 Serilog 按小时及文件大小滚动。 `ServerInstance` 为该生命期建立 `RollingLog(directory, prefix)`，每次刷新调用 `ReadAvailable(AddLine)`。传入的 `Action<string>` 表示每解析出一条非空完整行，就调用一次接收函数。读取器只处理字节、文件和行边界，JSON 与状态事件由槽位解释。 [GameLog 源码](../../../../code/server/engine/GameLog.cs) · [ServerInstance 详解](ServerInstance.cs.md)
 
-current 保存当前小时及数字分片编号，offset 保存字节偏移。partial 是跨读取保留的不完整行字节，buffer 为 16 KiB。每次 ReadAvailable 最多读 256 KiB，以限制 WPF 单次刷新花在历史回放上的时间。返回 true 表示当前可见分片已读尽；false 表示达到预算，需要下一次刷新继续。
+| 成员 | 本轮读取后如何保留 |
+| --- | --- |
+| `current` | 可空的元组 `(string Hour, int Part)?`，保存已读到的小时及数字分片。首次读取前没有值 |
+| `offset` | 当前文件已读字节数。下次用它设置 `stream.Position` |
+| `buffer` | 16 KiB 字节数组，可反复填充 |
+| `partial` | 可写内存流，暂存从最近一个换行符以来的字节。跨刷新保留 |
+| `budget` | 每次进入方法重新设为 256 KiB，由所有本轮读过的分片共用 |
 
-## 按时间和分片读取
+## `RollKey`、排序和打开文件
 
-ReadAvailable 先处理日志目录尚未创建的情况，此时返回 true。之后枚举 prefix*.log，RollKey 从文件名去掉前缀，再提取小时和下划线后的数字。排序先按小时字符串再按整数分片号，因此 _999 排在 _1000 前，不使用错误的字典序。
+1. `ReadAvailable` 检查目录，目录还没创建就返回 `true`。随后只枚举目录内匹配 `prefix + "*.log"` 的文件。
+2. `RollKey` 取得不含扩展名的文件名，用 `[prefix.Length..]` 切去固定前缀，再找第一个下划线。若下划线右边能按整数解析，就以左边为小时、整数为分片。找不到或解析失败时，以整个后缀作为小时、分片置 0。比如 `2026112413` 得到 `("2026112413", 0)`，`2026112413_1000` 得到 `("2026112413", 1000)`。
+3. LINQ 的 `Select` 为每个路径计算分片键，`OrderBy` 以序号比较排小时，`ThenBy` 同小时按整数排分片。这样 `_999` 先于 `_1000`，两者都早于下一小时开头的文件。已经比 `current` 更早的分片直接跳过。
+4. `Open` 用 `FileMode.Open`、`FileAccess.Read` 取得只读句柄。 `FileShare.ReadWrite | FileShare.Delete` 组合共享标志，让服务端还能写入或滚动删除。枚举后文件已消失时 `FileNotFoundException` 转成 `null`，继续下一个。其余异常继续传给上层。
+5. 文件发生切换，或当前文件长度小于已保存偏移时，重置 `offset` 及 `partial`。前一种情况避免把两个分片的行拼到一起，后一种从被截断文件的开头重新读。句柄由循环里的 `using var stream` 在离开本轮该文件的作用域时关闭。
 
-比 current 更早的分片跳过。Open 使用 FileShare.ReadWrite | FileShare.Delete，允许服务端追加、滚动和删除文件；如果枚举后文件已被删除，FileNotFoundException 转为 null 并继续。其他 I/O 异常由上层 ServerInstance 决定是否重试。
+## 如何逐段形成一行
 
-切换分片或发现文件长度小于 offset 时，游标回到 0，并清空 partial。后一种情况覆盖日志文件被截断的情形；前一分片末尾未完成的半行不会与下一文件拼接。
+每次读取的长度是 `Math.Min(buffer.Length, budget)`，实际可能因文件暂时读到末尾而少一些。当读到正数时，用实际字节数增加 `offset`、扣减 `budget`。循环只搜索 `buffer` 中本次填入的区段，用字节 `'\n'` 定位分隔符。
 
-## 字节边界与完整行
+- 每找到一个换行，先把之前外加这段字节收进 `partial`，再用 UTF-8 一次解码。 `TrimEnd('\r')` 去掉 Windows CRLF 的回车。清空 `partial` 后，把非空行交给 `accept`。
+- 一块数据可以包含多条记录，循环用 `start = end + 1` 继续找下一条分隔符。剩下没有换行的尾部保存在 `partial`。
+- 零字节表示这一刻已读到当前文件末尾。没有完整换行的部分仍留在 `partial`。如果本轮已用完 256 KiB，立即返回 `false`。否则遍历完可见文件返回 `true`。
 
-读取循环先更新 offset 和预算，再查找换行字节。换行之前的字节加入 partial 后一次性按 UTF-8 解码，去掉行尾回车，并把非空行交给 accept。剩余未换行的字节继续保存在 partial 中。
+例如服务端日志里有 `中文\r\n`，第一轮只读取到“中”的前两个 UTF-8 字节。第一轮将这两个字节留在 `partial`。第二轮读取后续字节和换行，拼齐后再解码，输出 `中文`。若在这两轮之间切到另一分片，读者清理旧分片的残缺尾部。
 
-这种顺序允许一个中文字符跨多次文件写入：只有完整一行到达后才解码，不会因为本轮只读到 UTF-8 前半个字符而生成替代字符。若本次恰好消耗完预算，返回 false，即便剩余内容很少；下一次读取会确认追平。
+## 返回值和限制
 
-## 上下游和生命周期
+`true` 表示这次读取已处理当前可见内容，服务端后续仍可能追加。 `false` 表示本轮字节预算耗尽，即使最后读到的字节恰好就是文件尾，也需要下一轮确认。单次读取字节预算有界，但分片枚举、排序和一条迟迟没有换行的记录另有成本。上层 `ServerInstance` 的 1000 行上限只控制可见历史量，长行仍可能使 `partial` 在多轮读取中增长。
 
-ServerInstance 持有本读取器，并在启动生命期变化或服务器实际身份确定后重新创建。MainWindow 不直接操作文件，只消费 ServerInstance 的有界行集合和累计行数。RollingLog 不保持打开的 FileStream，每个分片在本次枚举结束时由 using 释放；跨 tick 保存的是游标和未完成行。
-
-日志检查覆盖数字分片排序、跨小时、半行中文、截断与大积压重放。这里的预算限制单次读取工作量，而 ServerInstance 的 1000 行上限限制展示历史量，两者解决不同问题。
+重开控制台或切换实际身份时，`ServerInstance` 重新创建读取器，游标从头开始。读取器跨刷新持有数组和内存流，不保存打开的磁盘句柄。可以对照分片排序、半行 UTF-8、截断和积压回放的检查场景。 [日志检查详解](tests/LogChecks.cs.md)

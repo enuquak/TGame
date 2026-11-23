@@ -5,28 +5,22 @@ option csharp_namespace = "TGame.Transport";
 
 // Each pair of server processes shares one bidirectional stream.
 message Frame {
-  reserved 1, 2, 4, 5, 8;
-  reserved "ping", "pong", "profile_request", "profile_reply", "single_point_id";
-
   oneof body {
-    string hello = 3;     // 握手只交换进程实例名。
-    RpcRequest request = 6;
-    RpcReply reply = 7;
+    string hello = 1;     // 握手只交换进程实例名。
+    RpcRequest request = 2;
+    RpcReply reply = 3;
   }
 }
 
 message RpcRequest {
-  reserved 3, 4, 5, 6;
-  reserved "entity_id", "single_point_type", "source_process", "deadline_unix_ms";
-
   string request_id = 1;
   google.protobuf.Any payload = 2;
 }
 
 message RpcReply {
   string request_id = 1;
-  google.protobuf.Any payload = 2;
-  RpcError error = 3; // Exactly one of payload/error must be present.
+  RpcError error = 2; // payload 和 error 必须且只能设置一个。
+  google.protobuf.Any payload = 3;
 }
 
 message RpcError {

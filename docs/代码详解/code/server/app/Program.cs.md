@@ -7,7 +7,7 @@
 ## 启动主线
 
 1. 检查参数数量，打开 Serilog 自身诊断，再创建 `GameLog`，解析进程类型。日志在配置之前存在，因此加载配置或构建容器失败时仍能输出错误。
-2. `RunServerAsync` 调用 `ServerConfiguration.LoadSelected()`，根据 `EngineEnvironment.Config` 指定的入口一次加载、绑定并校验配置，再设置最低日志等级。运行目录必须由启动器提前创建，宿主只校验存在。
+2. `RunServerAsync` 调用 `ServerConfiguration.LoadSelected()`，根据 `EngineEnvironment.Config` 指定的源入口一次加载、绑定并校验配置，再设置最低日志等级。运行目录优先读取 `EngineEnvironment.RunDirectory`，未设置时使用配置的 `runDirectory`；目录必须由启动器提前创建，宿主只校验存在。
 3. 将同一个配置实例及其已持有的数量门槛和 ZooKeeper/ID 选项交给 `ServerServices` 注册，再构建 App。只读连接拓扑也由配置实例提供；宿主不重新绑定或复制配置，没有热重载。
 4. 从根容器取 ZooKeeper，连接后以空地址临时节点占用实例编号；随后 `log.OpenServer` 开启实例日志，并通过临时文件替换发布 PID/启动时间对应的身份记录。
 5. 初始化 ID 生成器，再解析节点并启动监听。节点构造依赖的进程身份此时才已确定。

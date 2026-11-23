@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using TGame;
 using TGame.ServerConsole;
+using YamlDotNet.Serialization;
 
 if (args is ["--identity-only"] or ["--state-only"])
 {
@@ -35,6 +36,20 @@ GroupConfigChecks.Run(checkout);
 if (args.Length == 2 && args[1] == "--config-only")
 {
     return 0;
+}
+
+var selectedConfiguration = Environment.GetEnvironmentVariable(EngineEnvironment.Config);
+if (string.IsNullOrWhiteSpace(selectedConfiguration))
+{
+    selectedConfiguration = ServerConfiguration.ConfigurationPath;
+}
+
+var fixtureRoot = Path.GetFullPath(checkout).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+var configuration = Path.GetFullPath(selectedConfiguration, fixtureRoot);
+if (!configuration.StartsWith(fixtureRoot, StringComparison.OrdinalIgnoreCase))
+{
+    Console.Error.WriteLine("The test configuration must be inside the disposable checkout.");
+    return 1;
 }
 
 LogChecks.Run(checkout);
@@ -73,25 +88,16 @@ try
     }
 
     var selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
-    var originalConfig = Environment.GetEnvironmentVariable(EngineEnvironment.Config);
-    try
-    {
-        Environment.SetEnvironmentVariable(EngineEnvironment.Config, Path.Combine(checkout, "missing-new-environment.yaml"));
-        session.Dispose();
-        session = new ConsoleSession(checkout);
-        session.Output += Console.WriteLine;
-        selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
-        await session.StopAsync([selected]);
-        await UntilAsync("Base stopped and Gate preserves startup readiness", () =>
-            selected.Status == ServerStatus.Stopped &&
-            session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.Gate), 1)).Status == ServerStatus.Ready);
-        await session.StartAsync();
-        await UntilAsync("Base rejoined with the original run configuration", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
-    }
-    finally
-    {
-        Environment.SetEnvironmentVariable(EngineEnvironment.Config, originalConfig);
-    }
+    session.Dispose();
+    session = new ConsoleSession(checkout);
+    session.Output += Console.WriteLine;
+    selected = session.Instances.Last(i => i.Role == nameof(ProcessType.Base));
+    await session.StopAsync([selected]);
+    await UntilAsync("Base stopped and Gate preserves startup readiness", () =>
+        selected.Status == ServerStatus.Stopped &&
+        session.Instances.Single(i => i.Name == ServerProcess.FormatName(nameof(ProcessType.Gate), 1)).Status == ServerStatus.Ready);
+    await session.StartAsync();
+    await UntilAsync("Base rejoined", () => session.Instances.All(i => i.Status == ServerStatus.Ready));
 
     if (selected.Pid == pids[selected.SlotName] || session.Instances.Any(i => i.Name != selected.Name && i.Pid != pids[i.SlotName]))
     {
@@ -136,11 +142,13 @@ try
         throw new InvalidOperationException("A failed build disrupted the running group.");
     }
 
-    var configuration = Path.Combine(checkout, ServerGroup.ConfigurationPath);
-    var counts = new ServerConfiguration(configuration).Read<Dictionary<string, int>>(ServerGroup.SectionName);
+    var loaded = new ServerConfiguration(configuration);
+    var counts = loaded.Read<Dictionary<string, int>>(ServerGroup.SectionName);
+    var document = loaded.Read<Dictionary<string, object>>();
     int expectedInstances = session.Instances.Count + 1;
     counts[nameof(ProcessType.Login)]++;
-    new ServerGroup(counts).Save(configuration);
+    document[ServerGroup.SectionName] = counts;
+    File.WriteAllText(configuration, new SerializerBuilder().Build().Serialize(document));
     bool instancesChanged = false;
     session.InstancesChanged += () => instancesChanged = true;
 
@@ -157,7 +165,7 @@ try
         reopened.Refresh();
         if (reopened.Instances.Count != expectedInstances || reopened.Instances.Any(i => i.Status != ServerStatus.Ready))
         {
-            throw new InvalidOperationException("Reopening lost the resized group's configuration snapshot.");
+            throw new InvalidOperationException("Reopening lost the resized group's process counts.");
         }
     }
 
@@ -210,8 +218,8 @@ async Task CheckDynamicRegistrationAsync()
     const int StartupTimeoutSeconds = 10;
     var router = session.Instances.First(instance => instance.Role == nameof(ProcessType.Router));
     using var original = Process.GetProcessById(router.Pid!.Value);
-    var runtimeConfig = Path.Combine(Path.GetDirectoryName(original.MainModule!.FileName)!, "config", ServerRuntime.FileName);
-    var directory = ServerRuntime.LoadDirectory(runtimeConfig, checkout);
+    var sessions = Path.Combine(checkout, "logs", "tools", "server-console");
+    var directory = Path.Combine(sessions, File.ReadAllText(Path.Combine(sessions, "current")).Trim());
     var info = new ProcessStartInfo(original.MainModule!.FileName)
     {
         WorkingDirectory = checkout,
@@ -220,7 +228,8 @@ async Task CheckDynamicRegistrationAsync()
     };
     info.ArgumentList.Add(nameof(ProcessType.Router));
     info.Environment[EngineEnvironment.LogRoot] = Path.Combine(checkout, "dynamic-registration", "logs");
-    info.Environment[EngineEnvironment.Config] = runtimeConfig;
+    info.Environment[EngineEnvironment.Config] = configuration;
+    info.Environment[EngineEnvironment.RunDirectory] = directory;
     using var extra = Process.Start(info)!;
     try
     {

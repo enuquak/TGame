@@ -42,9 +42,14 @@ try
     }
 
     $source = [IO.Path]::GetFullPath($selected, $root)
-    $snapshot = Join-Path $checkout ([TGame.ServerConfiguration]::ConfigurationPath)
-    [TGame.ServerConfiguration]::new($source).SaveSnapshot($snapshot)
-    [Environment]::SetEnvironmentVariable([TGame.EngineEnvironment]::Config, $snapshot)
+    # 测试只修改临时工作区中的源文件，保留 include 文件布局。
+    $configDirectory = [IO.Directory]::CreateDirectory((Join-Path $checkout 'selected-config')).FullName
+    foreach ($file in Get-ChildItem -LiteralPath (Split-Path $source) -Filter '*.yaml')
+    {
+        Copy-Item -LiteralPath $file.FullName -Destination $configDirectory
+    }
+    $selectedConfig = Join-Path $configDirectory ([IO.Path]::GetFileName($source))
+    [Environment]::SetEnvironmentVariable([TGame.EngineEnvironment]::Config, $selectedConfig)
 
     & $dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- $checkout
     if ($LASTEXITCODE -ne 0)

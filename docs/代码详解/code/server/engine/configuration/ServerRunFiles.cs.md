@@ -1,22 +1,30 @@
 # ServerRunFiles.cs 代码详解
 
-源码：[code/server/engine/configuration/ServerRunFiles.cs](../../../../../../code/server/engine/configuration/ServerRunFiles.cs)
+[源码 ServerRunFiles.cs](../../../../../../code/server/engine/configuration/ServerRunFiles.cs)
 
-## 职责与约定
+## 子进程与管理端约定的文件名
 
-`ServerRunFiles` 集中定义运行目录内的文件命名约定，让宿主与控制端共享同一协议。它只提供名称，不自行读写文件。
+`ServerRunFiles` 声明运行目录下的文件名和文件名前缀。App 读取停止文件，控制台和脚本负责给它发停止信号。程序组中每个 App 实例使用自己的 ZooKeeper 身份，同时也有一个由操作系统 PID 和启动时刻组成的启动标识。
 
-| 成员 | 含义 |
-| --- | --- |
-| `GroupConfiguration` | 引用 `ServerConfiguration.FileName`，即统一入口 `server.yaml`，不另存一份文件名常量 |
-| `StopGroup` | `stop`，运行组停止标记 |
-| `StopRolePrefix` | `stop-` 前缀；实际作用对象取决于调用方拼接的名称，当前 App 拼接进程实例名 |
-| `StopProcessPrefix` | `stop-process-`，与操作系统进程启动身份组合的停止标记前缀 |
-| `IdentityPrefix` | `instance-`，进程身份文件前缀 |
-| `DynamicDiscoveryMarker` | `dynamic-discovery`，动态发现模式标记名称 |
+| 成员 | 值 | 文件如何使用 |
+| --- | --- | --- |
+| `StopGroup` | `stop` | 某轮运行目录下出现该文件时，监控这一轮目录的 App 都能触发停止。 |
+| `StopRolePrefix` | `stop-` | App 拼接的是实例名，如 `stop-Router1`。尽管成员名带 `Role`，实际监听的是这个完整实例名。 |
+| `StopProcessPrefix` | `stop-process-` | 控制台和脚本拼接 `ProcessKey`，以操作系统进程的一次启动为目标。 |
+| `IdentityPrefix` | `instance-` | App 拼接 `ProcessKey`，文件正文写实际获分配的名字，如 `Router1`。 |
+| `DynamicDiscoveryMarker` | `dynamic-discovery` | 控制台创建空标记，打开既有会话时检查它，以判断该运行组是否支持动态身份。 |
 
-## ProcessKey 的作用
+## ProcessKey 用当前 PID 和启动时间区分一次启动
 
-`ProcessKey(pid, startedUtcTicks)` 用不受区域设置影响的格式生成 `PID-启动时间Ticks`。单独的 PID 可能被操作系统复用，加入启动时间后可以区分先后两次启动，避免旧停止文件命中新进程。
+```csharp
+public static string ProcessKey(int pid, long startedUtcTicks) =>
+    FormattableString.Invariant($"{pid}-{startedUtcTicks}");
+```
 
-这和 `ServerProcess.Name` 是两个层次：`Router1` 表示游戏进程实例，`ProcessKey` 表示某一次操作系统进程启动。创建、轮询、删除这些标记及清理陈旧文件由调用方负责，本文件没有并发状态或资源生命周期。
+`=>` 引出方法直接返回的表达式。`$"…"` 是插值字符串，花括号中的变量会进入结果。`FormattableString.Invariant` 用固定的区域格式生成文本，保证参与方得到一致的文件名。`pid` 是操作系统进程编号，`startedUtcTicks` 是该进程的启动时间转换成 UTC 后的 .NET ticks。假设分别是 `4020` 和 `639000000000000000`，计算结果就是 `4020-639000000000000000`。以后 PID 恰好再次为 `4020` 时，其启动时间通常不同，于是旧停止文件不会命中新启动。
+
+## 用一个 Router 实例走完读写
+
+1. App 得到 `Router1` 的 ZooKeeper 临时占号后，先向 `instance-4020-639000000000000000.tmp` 写入 `Router1`，再移动到去掉 `.tmp` 的正式路径。控制台用子进程的 PID 和启动时间算出同一路径，读取名字、校验类型，并据此选日志子目录。
+2. 控制台或脚本要停止这次启动时，创建空文件 `stop-process-4020-639000000000000000`。`WatchStopAsync` 每隔 100 毫秒检查三种停止路径，任一出现便取消 App 的运行令牌。随后由 App 的退出流程等待后台任务、停止监听并释放资源。
+3. 这些文件都位于这一轮运行目录中。创建、轮询和目录管理在各调用方完成。这个类型只负责命名约定和 `ProcessKey` 的格式化。 [App 写身份与读停止信号](../../app/Program.cs.md) · [控制台读取与停止](../../../../tools/server-console/ServerInstance.cs.md) · [控制台会话标记](../../../../tools/server-console/ConsoleSession.cs.md) · [运行目录传递](EngineEnvironment.cs.md)

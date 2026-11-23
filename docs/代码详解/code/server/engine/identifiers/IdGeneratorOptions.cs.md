@@ -2,14 +2,12 @@
 
 源码：[code/server/engine/identifiers/IdGeneratorOptions.cs](../../../../../../code/server/engine/identifiers/IdGeneratorOptions.cs)
 
-## 职责与配置来源
+`IdGeneratorOptions` 只有一个配置值 `WorkerRootPath`。例如配置为 ZooKeeper 路径 `/tgame/id-workers` 时，worker `0` 的临时节点是 `/tgame/id-workers/0`，由代理在申请租约时创建。文件本身只负责传递并校验根路径。
 
-`IdGeneratorOptions` 只保留 ID 生成器真正需要的配置：必填的 `WorkerRootPath`。该路径是 ZooKeeper 中用于争用 worker 编号的根节点，不是本地目录。
+```csharp
+public required string WorkerRootPath { get; init; }
+```
 
-`Load(path)` 创建完整 `ServerConfiguration` 并返回它持有的 `Identifiers`。统一配置加载期间从 `ZooKeeperSettings.WorkerRootPath` 创建并校验这份选项。`FileName` 也引用统一 `server.yaml`。因此配置文件只声明一份 worker 路径，不额外维护 ID 专用配置节。
+这里的 `record` 是 C# 支持值比较的类型声明形式。`required` 要求普通 C# 构造调用提供该属性，例如 `new IdGeneratorOptions { WorkerRootPath = "/tgame/id-workers" }`。`init` 让普通调用方在对象初始化时赋值，之后通过 `get` 读取。路径是否合法仍由 `Validate()` 决定。它调用共享的 `ZooKeeperOptions.ValidatePath`，例如 `/tgame/id-workers` 可以通过，`/tgame/../id-workers` 因 `..` 段被拒绝。见 [ZooKeeperOptions.cs](../ZooKeeperOptions.cs.md)。
 
-## 校验与依赖
-
-`Validate` 复用 `ZooKeeperOptions.ValidatePath`，要求绝对 ZooKeeper 路径、无末尾斜杠，也没有空段、`.` 或 `..`。本文件不申请编号，不决定雪花位宽或时间起点。
-
-运行时 [IdGenerator.cs](IdGenerator.cs.md) 接收该对象，[SnowflakeIdGenerator.cs](SnowflakeIdGenerator.cs.md) 再请求共享 ZooKeeper 代理申请租约。静态加载入口供独立调用方显式加载完整配置；宿主直接注册已加载 `ServerConfiguration.Identifiers`，不重新创建相同选项。
+统一配置加载器读取 `server.yaml` 及其 include，取 `zooKeeperOptions.workerRootPath` 创建并校验 `Identifiers`。公开静态 `Load(path)` 给独立调用方读取指定入口，内部创建完整的 `ServerConfiguration` 并返回它持有的 `Identifiers`，所以整份配置的其他校验也会执行。`FileName` 直接引用统一的文件名常量。生产 App 向容器注册已有的 `configuration.Identifiers`，供 `IdGenerator` 接收。读取方向是从 YAML 到内存。见 [ServerConfiguration.cs](../configuration/ServerConfiguration.cs.md)、[ServerServices.cs](../../app/ServerServices.cs.md)、[IdGenerator.cs](IdGenerator.cs.md)。

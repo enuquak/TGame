@@ -24,15 +24,15 @@ public sealed class ServerConfiguration
 
     public string Environment { get; }
     public string RunDirectory { get; }
-    public ServerLogLevel MinimumLogLevel { get; }
+    public ServerLogLevel LoggingMinimumLevel { get; }
     public MongoStorageSettings? Mongo { get; }
     public RedisStorageSettings? Redis { get; }
-    public ZooKeeperOptions ZooKeeperSettings { get; }
+    public ZooKeeperOptions ZooKeeperOptions { get; }
     public IdGeneratorOptions Identifiers { get; }
     public ServerGroup Group { get; }
 
-    public string ZooKeeper => ZooKeeperSettings.Endpoint;
-    public string DiscoveryRoot => ZooKeeperSettings.DiscoveryRoot;
+    public string ZooKeeper => ZooKeeperOptions.Endpoint;
+    public string DiscoveryRoot => ZooKeeperOptions.DiscoveryRoot;
     public string ProfileMongo => Mongo?.Endpoint ?? "";
     public string ProfileRedis => Redis?.Endpoint ?? "";
     public string MongoDatabase => Mongo?.DatabaseName ?? "";
@@ -53,31 +53,31 @@ public sealed class ServerConfiguration
         var document = Read<ConfigurationDocument>();
         Environment = document.Environment;
         RunDirectory = document.RunDirectory;
-        MinimumLogLevel = document.MinimumLogLevel;
+        LoggingMinimumLevel = document.LoggingMinimumLevel;
         Mongo = document.Mongo;
         Redis = document.Redis;
-        ZooKeeperSettings = document.ZooKeeperSettings;
+        ZooKeeperOptions = document.ZooKeeperOptions;
 
-        if (string.IsNullOrWhiteSpace(Environment) || !Enum.IsDefined(MinimumLogLevel))
+        if (string.IsNullOrWhiteSpace(Environment) || !Enum.IsDefined(LoggingMinimumLevel))
         {
             throw new InvalidDataException("Specify an environment and a loggingMinimumLevel of DEBUG, INFO or ERROR.");
         }
 
         ValidateRunDirectory(RunDirectory);
-        if (ZooKeeperSettings is null)
+        if (ZooKeeperOptions is null)
         {
-            throw new InvalidDataException("Missing zooKeeper configuration.");
+            throw new InvalidDataException("Missing zooKeeperOptions configuration.");
         }
 
-        Identifiers = new IdGeneratorOptions { WorkerRootPath = ZooKeeperSettings.WorkerRootPath };
+        Identifiers = new IdGeneratorOptions { WorkerRootPath = ZooKeeperOptions.WorkerRootPath };
         try
         {
-            ZooKeeperSettings.Validate();
+            ZooKeeperOptions.Validate();
             Identifiers.Validate();
         }
         catch (ArgumentException error)
         {
-            throw new InvalidDataException("Invalid zooKeeper configuration.", error);
+            throw new InvalidDataException("Invalid zooKeeperOptions configuration.", error);
         }
 
         Group = new ServerGroup(document.Processes);
@@ -114,26 +114,6 @@ public sealed class ServerConfiguration
     public string ResolveRunDirectory(string workingDirectory)
     {
         return Path.GetFullPath(RunDirectory, Path.GetFullPath(workingDirectory));
-    }
-
-    public void SaveSnapshot(string path, string? runDirectory = null)
-    {
-        // 只修改本次输出的顶层映射，已加载实例和其他运行组的快照保持不变。
-        var snapshot = new YamlMappingNode(root.Children);
-        if (runDirectory is not null)
-        {
-            ValidateRunDirectory(runDirectory);
-            snapshot.Children[new YamlScalarNode(RunDirectoryKey)] = new YamlScalarNode(runDirectory);
-        }
-
-        File.WriteAllText(path, Serialize(snapshot));
-    }
-
-    internal void SaveSection(string path, string section, YamlNode value)
-    {
-        var snapshot = new YamlMappingNode(root.Children);
-        snapshot.Children[new YamlScalarNode(section)] = value;
-        File.WriteAllText(path, Serialize(snapshot));
     }
 
     internal static void ValidateRunDirectory(string relative)
@@ -393,7 +373,7 @@ public sealed class ServerConfiguration
         return result;
     }
 
-    // 只用于一次性严格绑定 YAML，加载完成后仅保留经过校验的配置值与快照。
+    // 只用于一次性严格绑定 YAML，加载完成后仅保留经过校验的配置值与原始映射。
     private sealed class ConfigurationDocument
     {
         public ConfigurationDocument()
@@ -403,16 +383,14 @@ public sealed class ServerConfiguration
         public string Environment { get; init; } = "";
         public string RunDirectory { get; init; } = "";
 
-        [YamlMember(Alias = "loggingMinimumLevel")]
-        public ServerLogLevel MinimumLogLevel { get; init; } = ServerLogLevel.Info;
+        public ServerLogLevel LoggingMinimumLevel { get; init; } = ServerLogLevel.Info;
 
         public Dictionary<string, int> Processes { get; init; } = new(StringComparer.Ordinal);
         public Dictionary<string, string[]> Connections { get; init; } = new(StringComparer.Ordinal);
         public MongoStorageSettings? Mongo { get; init; }
         public RedisStorageSettings? Redis { get; init; }
 
-        [YamlMember(Alias = "zooKeeper")]
-        public ZooKeeperOptions ZooKeeperSettings { get; init; } = new()
+        public ZooKeeperOptions ZooKeeperOptions { get; init; } = new()
         {
             SessionTimeoutMilliseconds = 0,
             ConnectTimeoutMilliseconds = 0

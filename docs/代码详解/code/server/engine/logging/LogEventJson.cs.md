@@ -1,19 +1,30 @@
 # LogEventJson.cs 代码详解
 
-源码：[code/server/engine/logging/LogEventJson.cs](../../../../../../code/server/engine/logging/LogEventJson.cs)
+[源码 LogEventJson.cs](../../../../../../code/server/engine/logging/LogEventJson.cs)
 
-## 职责与字段组装
+## 从方法参数到 JSON
 
-`TGame.Logging.LogEventJson.Serialize` 将一次日志事件转换为 JSON 字符串，不负责选择输出目的地。字段名全部引用 [ServerLogProtocol.cs](ServerLogProtocol.cs.md) 的常量，避免日志生产者和消费者使用不同拼写。
+`LogEventJson.Serialize` 接收日志级别 `level`、事件名 `ev`、角色 `role`，以及可选的 `peer`、`id`、`entity`、`link`、`detail`、`instance`。每次调用建立 `Dictionary<string, object?>` 并交给 `System.Text.Json.JsonSerializer.Serialize` 返回字符串。字典键都是字符串，`object?` 使同一字典可以装入时间、整数、字符串和 `null`。
 
-它每次采集当前 UTC 时间和操作系统 PID，将 `ServerLogLevel` 转为大写文本，放入事件名、角色、实例及可选的关联信息。`instance` 参数未提供时使用 `role`：启动早期尚未认领实例仍能生成完整记录，打开实例日志后则由 `GameLog` 传入真实实例名。
+```csharp
+[ServerLogFields.Time] = DateTimeOffset.UtcNow,
+[ServerLogFields.Instance] = instance ?? role,
+[ServerLogFields.Pid] = Environment.ProcessId,
+[ServerLogFields.Peer] = peer,
+```
 
-## 输出语义
+这是字典的初始化写法，形如 `[键] = 值`。`??` 在左侧为 `null` 时取右侧，例如启动早期 `instance` 没传，就先填 `role`。传入空字符串时左侧仍有值，代码会保留空字符串。时间由每次调用采集，带 UTC 偏移信息。PID 来自当前操作系统进程，JSON 里是数值。`level.ToString().ToUpperInvariant()` 把枚举名称转成固定的大写拼写。
 
-`peer`、`id`、`entity`、`link`、`detail` 没有值时仍以 JSON `null` 出现，字段集合保持一致。使用 `System.Text.Json` 序列化字典，因此引号、换行等由序列化器转义，调用方无需手工拼接 JSON。
+## 一条示例记录
 
-字段用途不同：`role` 是类型名，`instance` 是进程实例名，`pid` 是本次操作系统进程；`id` 通常关联请求，`link` 关联一条连接。这里不推导这些关系，也不验证业务含义。
+假设 `GameLog` 已用 `Login1` 的身份打开日志文件，然后以 Info 级别写监听事件，将地址放进 `detail`。下面用示例时间和 PID 展示该调用生成的数据。
 
-## 使用边界
+```json
+{"time":"2026-11-24T08:00:00+00:00","level":"INFO","ev":"LISTEN","role":"Login","instance":"Login1","pid":4020,"peer":null,"id":null,"entity":null,"link":null,"detail":"http://127.0.0.1:5001"}
+```
 
-[GameLog.cs](../GameLog.cs.md) 先决定事件是否达到最低级别，再调用本方法并输出到文件或控制台。本文件没有级别过滤、文件句柄、缓冲队列或释放操作。日志虽然采用 JSON，服务器配置仍是统一 YAML，两者格式职责不同。
+可选参数没传时，其键仍在字典中，序列化结果保留 JSON `null`。关联字段有值时也按原样写入，例如 `UNMATCHED_REPLY` 会把对端、请求 ID、连接 ID 分别填入 `peer`、`id`、`link`。字符串里的引号和换行由序列化器转义，序列化结果中的 `\n` 是两个字符，读回 JSON 后恢复为一个换行。这样一条多行异常详情仍只占日志文件中的一条物理行。 [字段与事件约定](ServerLogProtocol.cs.md)
+
+## 调用方和读者
+
+`GameLog.Write` 先按级别决定是否调用本方法，再将返回的字符串传给文件或终端。标准错误镜像复用同一个字符串，因此一条镜像记录的时间、PID 和正文与文件中的记录匹配。控制台读到 JSON 后，用 `role`、`instance`、`pid`、`time` 核对记录归属，用 `ev` 更新进程状态。展示层可以把 UTC 时间换算成本地时间。 [写入路径](../GameLog.cs.md) · [控制台归属检查](../../../../tools/server-console/ServerInstance.cs.md) · [日志展示](../../../../tools/server-console/LogEntry.cs.md)

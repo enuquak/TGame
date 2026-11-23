@@ -2,26 +2,28 @@
 
 源码：[code/tests/engine/IdGeneratorChecks.cs](../../../../../code/tests/engine/IdGeneratorChecks.cs)
 
-## 职责与入口分工
+## 两个入口的准备条件
 
-此文件分别检查纯本地雪花 ID 规则和真实 ZooKeeper worker 分配。`RunAsync()` 不连接外部服务；`RunZooKeeperAsync(configPath, services)` 是需要显式启用的集成检查，读取 ID 配置并连接 ZooKeeper。两个入口都用异常报告断言失败。
+测试程序的默认模式和 `--engine` 会走 `RunAsync()`，使用手动时钟、系统时钟和手工注入的会话事件。`--id-zookeeper <配置路径>` 走 `RunZooKeeperAsync(configPath, services)`，需要实际可连接的 ZooKeeper。两个入口分别让位运算和租约行为可以独立检查。见 [测试入口](Program.cs.md)、[TestServices.cs](TestServices.cs.md)。
 
-## 本地算法检查
+## RunAsync 的算法和时钟场景
 
-固定 worker `42`、时间戳 `100`，遍历当前毫秒的全部序列槽，要求 ID 唯一且 worker 位正确。用尽槽位后 `TryGenId` 必须返回空值，不能回绕；下一毫秒重新生成的值应超过上一批最大值。随后覆盖时间回退、worker 越界、时间戳越界/负值，以及最大 worker 与最大时间戳仍产生正 `long`。
+1. **固定毫秒内的位布局。** 构造 worker `42` 的 `SnowflakeSequence`，把时间戳固定为 `100`。循环从 `0` 到 `MaxSequence`，共检查 `4096` 次。`TryGenId(Timestamp)!.Value` 的 `!` 抑制编译器的可空提示，随后 `.Value` 仍要求实际有值。`HashSet<long>.Add` 第一次添加某个 ID 才返回真。表达式 `id >> SequenceBits & MaxWorkerId` 先右移丢掉序号，再取低 10 位，要求提取到原 worker `42`。见 [SnowflakeSequence.cs](../../server/engine/identifiers/SnowflakeSequence.cs.md)。
+2. **本毫秒用尽和越界。** 第 `4097` 次传入 `100` 要返回 `null`；随后传入 `101` 要产生大于上一毫秒最大值的 ID。用过 `101` 再输入 `100` 必须报回拨。测试还用负 worker、超上限 worker、负时间戳和超上限时间戳检查拒绝路径，并组合最大 worker 与最大时间戳，断言结果仍然为正。
+3. **回拨期间状态保留。** `ManualClock(long timestamp) : TimeProvider` 用主构造函数参数初始化可修改的 `Timestamp`。它的 `GetUtcNow()` 把相对毫秒加到项目纪元上，生产生成器换算时再减回去。先生成一个 ID，把时钟减 `1` 并要求抛错，再把时钟拨回原毫秒。下一条必须恰好是首条加 `1`，证明回拨失败没有把序号重置成 `0`。
+4. **并发、释放和会话失效。** 以系统时钟构造本地生成器，用 `Parallel.For` 生成 `50000` 个 ID。所有线程写入同一 `ConcurrentDictionary<string, byte>`，只利用键的唯一性，值统一为 `0`。`TryAdd` 为假即表示重复。释放后再发号应抛 `ObjectDisposedException`。另外手工发送已连接、断开、再次连接事件，检查断开时失效任务完成，随后仍无法通过活动检查。
+5. **文本边界。** 空串、零、前导零、符号、前后空格、正向溢出和混合文本都应返回假；用固定时钟生成的实际文本应返回真。见 [IdText.cs](../../server/engine/identifiers/IdText.cs.md)。
 
-内部 `ManualClock` 将可修改毫秒数加到雪花纪元上，供 `SnowflakeIdGenerator` 模拟时钟回退。先生成一个 ID、回拨一毫秒并要求抛错，再把时钟调回，要求新 ID 恰为上个 ID 加一，避免回拨异常后序列被错误重置。
+`Check(condition, message)` 在断言为假时抛出带场景说明的异常。`Expect<T>(Action action) where T : Exception` 通过泛型约束要求 `T` 是异常类型，捕获匹配类型时结束；操作没有抛出匹配异常时，断言不会通过。可控的时钟使回拨检查无需依赖机器实际调整时间。
 
-真实系统时钟下并行生成 `50000` 个 ID，通过 `ConcurrentDictionary.TryAdd` 捕获重复。释放生成器后继续生成必须抛 `ObjectDisposedException`。本地构造 `ZooKeeperSession` 并注入连接、断开、重连事件，要求首次断开通知宿主且后续重连不能让已失效会话重新可用。最后检查规范十进制正整数 ID：空串、零、前导零、符号、空格、溢出和混合文本均被拒绝。
+## RunZooKeeperAsync 如何检查租约
 
-## ZooKeeper 集成流程
+方法从参数指定的完整配置读取 worker 根。实际 ZooKeeper 的连接选项由 `ZooKeeperProxyChecks.LoadOptions()` 从测试程序当前选中的配置读取。两者分别提供根路径和连接目标。用 `<worker 根>-checks/<测试 ID>` 隔离本轮分配。这里的测试 ID 来自 `services.Ids.GenId()`。代理负责创建 worker，另起一个原始客户端用于清理持久的测试根。`30` 秒令牌约束传入它的等待。
 
-从 ID 配置得到 worker 根路径，以 `-checks/` 和一个测试 ID 隔离本次分配。使用已初始化的 `ZooKeeperProxy` 并发创建四个生成器，要求 worker 不重复，且它们观察的是同一 `proxy.SessionLost` 任务。跨四个 worker 并行生成 `20000` 个 ID，检查跨 worker 唯一性。
+`Enumerable.Range(0, 4).Select(...).ToArray()` 创建四个申请任务。`await Task.WhenAll(tasks)` 等待这批任务完成，内部 `finally` 收集所有 `IsCompletedSuccessfully` 的任务结果，便于其中一个失败时仍有引用可释放。检查要求四个 worker 互不相同，并用 `ReferenceEquals` 确认四个生成器的 `LeaseLost` 正是代理的同一个任务。接着用 `i % generators.Count` 选生成器，并行生成 `20000` 个 ID 检查重复。
 
-释放 worker 为 `0` 的生成器后重新申请，要求复用同一编号且新 ID 不与历史样本重复；单个 worker 释放不能结束共享会话。随后主动释放代理，要求租约失效任务完成，继续生成 ID 抛出异常。
+测试找到 worker `0` 并释放，再申请一次，要求得到 `0` 且新 ID 可以加入前面的唯一性集合。此时 `proxy.SessionLost` 应仍未完成。显式关闭代理后，新生成器的租约失效任务应完成，调用 `GenId` 则抛 `InvalidOperationException`。这是单个 worker 的释放和整个会话关闭的两种结果。见 [ZooKeeperProxy.cs](../../server/engine/ZooKeeperProxy.cs.md)、[SnowflakeIdGenerator.cs](../../server/engine/identifiers/SnowflakeIdGenerator.cs.md)。
 
-## 依赖、清理与限制
+## 清理与检查范围
 
-集成分支有独立的 `30` 秒取消源，并另开原始 ZooKeeper 客户端用于删除测试根节点。即使并发创建部分失败，也会收集成功创建的生成器，在 `finally` 逐个释放、删除根节点并关闭原始客户端。清理仍使用同一个超时令牌，因此超时后清理本身也可能失败；这不是无限重试的环境恢复工具。
-
-这些有限样本验证实现约束，不是全分布式场景的数学证明或性能基准。`Check`、`Expect<T>` 只提供本项目控制台检查所需的断言；没有测试框架的自动隔离机制。
+外层 `finally` 尝试逐个释放已取得的生成器，有测试根时删除它，然后关闭原始客户端。根节点检查和删除仍使用原来令牌，因此取消也会影响清理。并发分配在同一代理会话的独立根下完成，样本用于检查重复和一次 worker 复用，未测量吞吐量或比对独立 ZooKeeper 会话间的系统时钟。

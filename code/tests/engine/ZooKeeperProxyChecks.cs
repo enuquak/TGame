@@ -19,7 +19,7 @@ internal static class ZooKeeperProxyChecks
     internal static ZooKeeperOptions LoadOptions()
     {
         var settings = ServerConfiguration.LoadSelected();
-        return settings.ZooKeeperSettings;
+        return settings.ZooKeeperOptions;
     }
 
     internal static async Task CheckSessionAsync(GameLog log)

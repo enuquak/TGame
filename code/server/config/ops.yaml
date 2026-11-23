@@ -19,7 +19,7 @@ redis:
   passwordVariable: TGAME_REDIS_PASSWORD
   profileCachePrefix: "tgame:test:profile:"
 
-zooKeeper:
+zooKeeperOptions:
   endpoint: "127.0.0.1:2181"
   discoveryRoot: /tgame/test
   # 保留原有 ID worker 租约路径及 ID 分配范围。

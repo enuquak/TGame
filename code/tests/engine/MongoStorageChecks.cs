@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using TGame;
 using TGame.Server.Storage;
-using YamlDotNet.RepresentationModel;
+using YamlDotNet.Serialization;
 
 internal static class MongoStorageChecks
 {
@@ -16,14 +16,15 @@ internal static class MongoStorageChecks
     public static async Task RunAsync()
     {
         var config = Path.GetTempFileName();
-        var baseline = ServerConfiguration.Load(Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName));
-        void SaveSettings(string yaml)
+        var defaults = Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName);
+        var document = ServerConfiguration.Load(defaults).Read<Dictionary<string, object>>();
+        void WriteSettings(string yaml)
         {
-            var stream = new YamlStream();
-            stream.Load(new StringReader(yaml));
-            var root = (YamlMappingNode)stream.Documents[0].RootNode;
-            baseline.SaveSection(config, MongoStorageSettings.SectionName, root.Children[new YamlScalarNode(MongoStorageSettings.SectionName)]);
+            var settings = new DeserializerBuilder().Build().Deserialize<Dictionary<string, object>>(yaml);
+            document[MongoStorageSettings.SectionName] = settings[MongoStorageSettings.SectionName];
+            File.WriteAllText(config, new SerializerBuilder().Build().Serialize(document));
         }
+
         var unavailableServer = new TcpListener(IPAddress.Loopback, 0);
         unavailableServer.Start();
         try
@@ -37,7 +38,7 @@ internal static class MongoStorageChecks
                   userName: "{{UserName}}"
                   serverSelectionTimeoutSeconds: {{SelectionTimeoutSeconds}}
                 """;
-            SaveSettings(yaml);
+            WriteSettings(yaml);
             var settings = MongoStorageSettings.Load(config);
             using (var client = MongoStorage.CreateClient(settings, TestPassword))
             {
@@ -61,9 +62,9 @@ internal static class MongoStorageChecks
             }
 
             await ExpectAsync<ArgumentException>(() => Task.FromResult(MongoStorage.CreateClient(settings, "")));
-            SaveSettings(yaml.Replace($"databaseName: \"{DatabaseName}\"", "databaseName: \"\""));
+            WriteSettings(yaml.Replace($"databaseName: \"{DatabaseName}\"", "databaseName: \"\""));
             await ExpectAsync<ArgumentException>(() => Task.FromResult(MongoStorageSettings.Load(config)));
-            SaveSettings(yaml.Replace($"serverSelectionTimeoutSeconds: {SelectionTimeoutSeconds}", "serverSelectionTimeoutSeconds: 0"));
+            WriteSettings(yaml.Replace($"serverSelectionTimeoutSeconds: {SelectionTimeoutSeconds}", "serverSelectionTimeoutSeconds: 0"));
             await ExpectAsync<ArgumentOutOfRangeException>(() => Task.FromResult(MongoStorageSettings.Load(config)));
             Console.WriteLine("PASS independent MongoDB configuration, credential validation, cancellation and connection failure.");
         }

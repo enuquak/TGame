@@ -12,7 +12,7 @@ internal static class SettingsChecks
             var core = """
                 environment: staging
                 runDirectory: logs/server-runs
-                zooKeeper:
+                zooKeeperOptions:
                   endpoint: zk-a:2181
                   discoveryRoot: /game/staging
                   workerRootPath: /game/workers

@@ -19,7 +19,7 @@ if (!(Test-Path -LiteralPath $yamlAssembly))
     throw '缺少 YAML 依赖，请先运行 dotnet restore code/server/engine/TGame.Server.Engine.csproj。'
 }
 Add-Type -Path $yamlAssembly
-$sources = @('ProcessType.cs', 'ServerGroup.cs', 'ServerRunFiles.cs', 'ServerRuntime.cs', 'ServerConfiguration.cs', 'EngineEnvironment.cs', 'MongoStorageSettings.cs', 'RedisStorageSettings.cs' | ForEach-Object {
+$sources = @('ProcessType.cs', 'ServerGroup.cs', 'ServerRunFiles.cs', 'ServerConfiguration.cs', 'EngineEnvironment.cs', 'MongoStorageSettings.cs', 'RedisStorageSettings.cs' | ForEach-Object {
     Join-Path $engineDirectory "configuration/$_"
 })
 $sources += Join-Path $engineDirectory 'identifiers/IdText.cs'

@@ -5,6 +5,6 @@ param([Parameter(Mandatory)][string]$Configuration)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Import-ServerTypes.ps1')
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
-$directory = [TGame.ServerRuntime]::LoadDirectory([IO.Path]::GetFullPath($Configuration), $root)
+$directory = [TGame.ServerConfiguration]::new([IO.Path]::GetFullPath($Configuration)).ResolveRunDirectory($root)
 $null = [IO.Directory]::CreateDirectory($directory)
 $directory

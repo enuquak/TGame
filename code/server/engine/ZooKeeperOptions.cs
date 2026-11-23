@@ -4,7 +4,7 @@ namespace TGame.Server.Engine;
 
 public sealed record ZooKeeperOptions
 {
-    public const string SectionName = "zooKeeper";
+    public const string SectionName = "zooKeeperOptions";
     public const string FileName = ServerConfiguration.FileName;
 
     public string Endpoint { get; init; } = "";
@@ -15,7 +15,7 @@ public sealed record ZooKeeperOptions
 
     public static ZooKeeperOptions Load(string path)
     {
-        return new ServerConfiguration(path).ZooKeeperSettings;
+        return new ServerConfiguration(path).ZooKeeperOptions;
     }
 
     public void Validate()

@@ -2,22 +2,27 @@
 
 源码：[code/server/engine/ZooKeeperSession.cs](../../../../../code/server/engine/ZooKeeperSession.cs)
 
-## 职责与状态
+## 客户端事件如何变成可等待的状态
 
-内部 `ZooKeeperSession` 继承 ZooKeeper 的 `Watcher`，把客户端状态事件转换成进程可等待的生命周期信号。它由 [ZooKeeperProxy.cs](ZooKeeperProxy.cs.md) 持有，同一会话同时支撑进程身份和 ID worker 租约。
+`ZooKeeperProxy` 构造时持有一个 `ZooKeeperSession`，建立客户端时把它交给 ZooKeeper 库作为 `Watcher`。库调用 `public override Task process(WatchedEvent evt)`，其中 `override` 表示实现基类的虚方法。这里同步把 `evt.getState()` 传给 `StateChanged`，随后返回已经完成的 `Task.CompletedTask`。状态回调只转换信号，网络关闭由代理负责。见 [ZooKeeperProxy.cs](ZooKeeperProxy.cs.md)。
 
-`connected` 表示当前已确认连接，`failed` 表示本会话已永久失效；两者使用 `volatile` 让其他线程及时观察变化。`Connected` 是初始化等待信号，`Lost` 是会话不可继续使用的信号，两者都异步运行任务续体。
+| 成员 | 此处表示的事实 |
+| --- | --- |
+| `connected` | 是否已收到成功连接事件，且尚未被失效逻辑清除 |
+| `failed` | 会话已永久失效，只会从假变真 |
+| `Connected` | 暂停初始化等待的条件已经解除，随后仍需检查会话 |
+| `Lost` | 旧会话已不可用于本进程的身份和 worker |
 
-## 事件转换
+两个布尔字段使用 `volatile`，用于其他线程观察状态写入。两个信号是无结果的 `TaskCompletionSource`，代理从它们读取 `.Task` 来等待，状态类通过 `TrySetResult()` 完成信号。任务只完成一次，重复通知可以安全尝试完成。`RunContinuationsAsynchronously` 让恢复的等待方不在当前状态切换回调里同步执行。
 
-`process(evt)` 只把 KeeperState 传给 `StateChanged`，不做阻塞 I/O。收到 `SyncConnected` 且尚未失败时，设置连接状态并完成 `Connected`。
+## 依次推演 StateChanged
 
-收到 `Expired`、`AuthFailed`，或者首次成功连接之后的 `Disconnected`，都会调用 `Invalidate`。首次连接之前的普通断开不立即宣布会话失效，可以继续等初始化超时或连接成功。
+1. 收到 `SyncConnected` 且 `!failed`，先设 `connected = true`，再完成 `Connected` 并返回。代理初始化醒来后检查取消和 `CheckActive()`，确认活动后才公布初始化成功。
+2. 收到 `Expired` 或 `AuthFailed`，直接 `Invalidate()`。`state is ... or ...` 把两个枚举值作为可选模式。另一条失效路径是 `state == Disconnected && connected`。C# 的 `&&` 优先级高于 `||`，因此只给断开分支加上曾经连通的条件。
+3. `Invalidate()` 先设置 `failed = true`，再清除 `connected`，然后完成 `Connected` 和 `Lost`。初始化阶段遇到鉴权失败也会被唤醒，此时 `CheckActive()` 会抛 `InvalidOperationException`。代理主动关闭同样走这个方法。
 
-`Invalidate` 将 `failed` 设为真、`connected` 设为假，并完成两个信号。这里完成 `Connected` 不表示连接成功，而是确保初始化等待者醒来；调用方随后必须执行 `CheckActive` 区分成功与失效。
+例如首次连接阶段收到 `Disconnected`，当时 `connected` 为假，两个任务都可继续等待。接着收到 `SyncConnected` 后，会话通过活动检查。若此后再收到 `Disconnected`，`Lost.Task` 立即完成。即使库接着报告 `SyncConnected`，`failed` 仍为真，旧会话保持失效。
 
-## 为什么失联后不自动恢复身份
+## 上层如何响应
 
-`CheckActive` 在未连接或已失败时抛出 `InvalidOperationException`，提示重启进程重新获取身份。一旦 `failed` 为真，即使之后再收到 `SyncConnected` 也不会恢复。这样进程不会在 ZooKeeper 租约可能变化后继续使用旧实例身份或旧 worker 编号生成 ID。
-
-此类型不自行关闭网络客户端，也不创建新会话；代理负责关闭，宿主负责响应 `SessionLost`。`SnowflakeIdGenerator` 每次发号前也调用这里的活动检查，把同一失效边界传到 ID 生成路径。
+代理在占号、发布和发现等操作调用 `CheckActive`。内部 ID 生成器在每次发号前也检查同一会话，并公开同一个 `Lost.Task` 作为 `LeaseLost`。App 通过代理的 `SessionLost` 监督后台工作，会话失效时触发宿主停止，重新启动后再获得身份和 worker。这与进程的 `Ready` 里程碑分别由各自状态决定。见 [SnowflakeIdGenerator.cs](identifiers/SnowflakeIdGenerator.cs.md)、[Program.cs](../app/Program.cs.md)、[ZooKeeperProxyChecks.cs](../../tests/engine/ZooKeeperProxyChecks.cs.md)。

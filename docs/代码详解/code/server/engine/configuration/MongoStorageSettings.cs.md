@@ -6,7 +6,7 @@
 
 `MongoPasswordVariables` 保存 `Profile` 和 `Dbmgr` 两个密码变量名，缺省为空字符串。配置不保存密码值，凭据读取由业务存储调用方负责。
 
-`Load(path)` 创建完整的 [ServerConfiguration](ServerConfiguration.cs.md)，取得其 `Mongo` 并调用 `Validate()`。因此输入必须是有效的服务器总配置或完整快照，只有 `mongo` 节的独立片段不能作为该入口。App 已加载配置时直接使用持有的 `Mongo`，不再调用此方法重复读文件。
+`Load(path)` 创建完整的 [ServerConfiguration](ServerConfiguration.cs.md)，取得其 `Mongo` 并调用 `Validate()`。因此输入必须是有效的服务器总配置，只有 `mongo` 节的独立片段不能作为该入口。App 已加载配置时直接使用持有的 `Mongo`，不再调用此方法重复读文件。
 
 `Validate()` 要求端点、数据库、认证库和用户名非空白，服务选择超时为正数。它不验证密码变量名或真实认证；Profile 存储额外通过 `ServerConfiguration.ValidateProfileStorage()` 检查自己的密码变量名。缺少 Mongo 节抛 `InvalidDataException`，字段参数错误保持对应的参数异常。
 

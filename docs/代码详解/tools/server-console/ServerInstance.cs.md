@@ -1,37 +1,65 @@
 # ServerInstance.cs 代码详解
 
-源码：[ServerInstance.cs](../../../../tools/server-console/ServerInstance.cs)
+[源码](../../../../tools/server-console/ServerInstance.cs)
 
-## 职责与身份模型
+## 一个对象如何表示一个槽位
 
-ServerInstance 表示控制台的一个启动槽位，并负责追踪实际启动出来的进程。ServerStatus 集中定义中文显示状态，从未启动、初始化中到就绪、连接不全、停止中和异常退出。
+`ServerInstance(string role, int channelId = 1)` 是 C# 主构造函数。参数直接写在类名后面，类里的属性初始化器可以用它们计算初值。 `Role` 是启动类型，`SlotName` 和 `Name` 初始都由 `ServerProcess.FormatName(role, channelId)` 生成，但在进程生命期中承担不同职责。
 
-SlotName 在构造时由 ServerProcess.FormatName 固定生成，决定 apphost 名称、槽位 JSON 和 starting 标记。Name 最初等于 SlotName，随后可被服务器认领到的身份替换，例如 Router1 槽位实际成为 Router7。Role 始终是进程类型；Pid 与 startedUtcTicks 共同标识一次进程生命期，不能只凭可复用的 PID 或实例编号停止进程。
+| 成员 | 例子和用途 |
+| --- | --- |
+| `Role` | `Router`。作为进程启动参数，认领结果也必须符合此类型 |
+| `SlotName` | `Router1`。控制台计划中的稳定名称，用于 `Router1Server.exe`、`Router1.json` 与 `starting-Router1` |
+| `Name` | 初始为 `Router1`，若服务器认领到 `Router7`，更新为 `Router7` 并切到 `Router7Server` 日志目录 |
+| `process`、`Pid`、`startedUtcTicks` | 系统进程对象、可空的进程 ID、UTC 启动时间。PID 与启动时间合起来标识一次进程生命期，避免误认复用的 PID |
+| `log`、`lines`、`LineCount` | 当前生命期的日志游标、最近 1000 条保留记录、该生命期累计接受条数 |
+| `initializing`、`initialized`、`connected`、`failed` | 已读到的日志事件状态。 `Status` 按它们、进程存活和停止标记综合决定 |
 
-Identity 记录保存 PID 和 UTC 启动 ticks。process 是附加的系统进程句柄；logRoot、logDir 与 RollingLog 确定日志来源。initializing、initialized、connected、failed 是从有序日志事件重放得到的历史状态，并非重复存储当前显示字符串。
+`Alive => process is { HasExited: false }` 用属性模式判断 `process` 存在且尚未退出。 `Pid` 有值只表示记录过某次进程启动，已退出的进程也能保留 PID，用于显示和追读日志。 `ServerStatus` 是中文界面状态字符串的集中定义。 [会话如何创建槽位](ConsoleSession.cs.md)
 
-## 打开与恢复
+## `Launch`、`Save` 与启动中断恢复
 
-Open 先 Reset，设置运行目录、日志根和快照路径，读取槽位 JSON，并检查 starting-<槽位> 标记。RestoreProcess 按槽位 apphost 的进程名枚举候选项；正常恢复要求 PID、启动时间和完整可执行路径都匹配。有 pending 标记时允许恢复已经启动但尚未存好 PID 的进程，仍要求 apphost 路径属于本快照。
+`Launch` 先写空标记 `starting-<SlotName>`，再用 `Reset` 释放旧句柄和清空旧状态。 `Process.Start(startInfo)` 创建子进程，读取 PID 与启动时间，建立本生命期的 `RollingLog`。 `Save` 将 `Identity(Pid, StartedUtcTicks)` 序列化成 JSON，先写 `.tmp` 再移动替换槽位文件。最后删除启动标记，界面状态进入“启动中”。
 
-恢复发现第二个匹配进程会抛 InvalidDataException，避免任意选择。候选进程在检查中退出属于正常竞态；未被采用的 Process 句柄在 finally 释放。恢复后的身份通过临时文件与移动写回，pending 标记随后删除。
+`Identity` 用 `record` 声明。恢复中把它与保存值用 `actual != saved` 比较时，比较的是 PID 和时间字段。当控制台恰好在子进程启动后、保存槽位文件前关闭时，空启动标记和独立 apphost 给下次恢复留下线索。
 
-Launch 先写启动标记，再清理旧句柄和日志状态，调用 Process.Start，保存 PID/时间及日志读取器，最后删除启动标记。这一顺序使界面在 Start 与保存 PID 之间退出时仍有恢复线索。
+1. `Open(directory, logRoot, snapshot)` 重置状态并设置目录，读取槽位 JSON 的 PID 和时间，再查启动标记。有任一记录才进入 `RestoreProcess`。
+2. `RestoreProcess` 用独立 apphost 的基础文件名枚举系统进程。正常恢复验证 PID、启动时间和候选的实际可执行文件全路径。存在启动标记时允许跳过原 PID 和时间的匹配，因为先前保存动作可能尚未完成。此时仍需匹配本轮快照中的完整 apphost 路径。
+3. 候选在检查时退出引发特定异常，用 `catch (...) when (candidate.HasExited)` 忽略。 `finally` 释放没有被采用的候选句柄。若第二个进程也匹配，抛 `InvalidDataException`。选中的进程保留句柄与真实启动资料，记录有变化时重新 `Save`。
+4. 返回 `Open` 后删除启动标记。有 PID 的槽位按照 `<PID>-<启动 ticks>-` 前缀建立日志读取器，再调用 `Refresh`。只剩旧 JSON 而找不到活进程时，仍可读取其日志并显示退出状态。
 
-## 身份与日志驱动的状态
+## `Refresh` 读取真实身份和日志
 
-Refresh 无 PID 时直接返回。身份尚未解析时，读取由 ProcessKey(PID, ticks) 定位的 identity 文件；通过 ServerProcess.Parse 校验名称并检查类型一致，随后切换 Name 和日志目录。它不会用新的真实编号覆盖稳定槽位。
+没有 PID 时 `Refresh` 直接返回。否则若本生命期尚未确认实际身份，就查运行目录中的 `instance-<ProcessKey>`。 `ServerRunFiles.ProcessKey` 将 PID 与启动 ticks 连成键。服务器在 ZooKeeper 认领身份并打开实例日志后，由 App 写入该文件。槽位用 `ServerProcess.Parse` 读出规范名称，类型匹配后才更新 `Name`、目录、读取器以及 `identityResolved`。这个转换只做一次。比如槽位文件仍叫 `Router1.json`，日志已从 `Router1Server` 切到 `Router7Server`。
 
-RollingLog.ReadAvailable 把完整记录交给 AddLine。只对日志滚动造成的目录消失和共享/锁冲突延迟重试；其他 I/O 异常继续上抛。内存保留最近 1000 行，而 LineCount 持续累计，供 UI 使用绝对行号定位。
+`log?.ReadAvailable(AddLine) ?? true` 会在读取器存在时逐行调用 `AddLine`，没有读取器时把本轮视为已读完。滚动期间目录消失，或 Windows I/O 错误码为共享冲突 32、锁冲突 33，会令 `caughtUp` 为假，下一轮继续。异常过滤器通过取 `HResult` 的低 16 位拿到错误码。其他 I/O 异常由窗口的刷新入口处理。
 
-AddLine 验证 role、pid、可选 instance 和时间戳，排除其他进程及早于本生命期的记录。合法事件驱动 ApplyEvent：LISTEN 表示初始化开始，PROCESS_READY 表示完成初始化，LINKS_READY/LOST 更新连接状态，PROCESS_FAILED 设置不可被后续连接事件清除的失败状态。损坏记录仍加入可见日志，但不能改变进程状态。
+`AddLine` 从一行 JSON 读取角色、PID、可选实例名与时间。角色或 PID 不合、实例名不合、有效时间戳早于本进程启动时间的行会提前返回。实例或时间字段缺失时按源码相应条件继续。有些 JSON 损坏、字段缺失或格式异常会命中捕获列表，原始行仍保留供诊断，但不改变状态。接受一行时增加 `LineCount`。一轮读取后裁剪 `lines` 的头部。例如累计接受 1150 行时，集合只保留最近 1000 行，界面仍可用累计值映射绝对行号。 [RollingLog 详解](RollingLog.cs.md)
 
-状态优先级是失败、已退出、停止标记、回放未追平、初始化已完成、其他启动态。回放没完成时即使读到历史 READY 也显示初始化中；若日志出现 LINKS_LOST，已初始化的进程显示连接不全，后续 LINKS_READY 可恢复显示。
+## `ApplyEvent` 与界面状态优先级
 
-上述 LINKS_LOST 分支用于既有日志事件的解析。当前 ServerNode 首次达标只记录一次 LINKS_READY，运行期依赖断线不再产生 LINKS_LOST，因此普通对端断线不会让当前进程退出就绪显示。不能把控制台的日志重放状态当成实时连接数量；进程自身退出、停止或失败仍按前面的优先级更新。
+| 日志事件 | 修改 |
+| --- | --- |
+| `LISTEN` | 将 `initializing` 置真 |
+| `LINKS_READY` | 将 `connected` 置真 |
+| `PROCESS_READY` | 将 `initialized` 置真 |
+| `LINKS_LOST` | 将 `connected` 置假 |
+| `PROCESS_FAILED` | 将 `failed` 置真，直到下次重置 |
 
-## 关闭与资源释放
+`Refresh` 还会查找本生命期的 `stop-process-<ProcessKey>`。它按下面的顺序选取第一个匹配的状态。
 
-StopAsync 只处理仍活着的当前 Process。它写 stop-process-<ProcessKey> 标记，让服务器按精确生命期自行退出，等待 10 秒后才强制 Kill，并再等待最多 5 秒。竞态中已经退出的进程不会当成 Kill 错误；结束后 Refresh 更新状态。
+1. 已读到 `PROCESS_FAILED` 时显示“异常退出”。
+2. 进程已退出时，有停止标记显示“已停止”，没有该标记显示“异常退出”。
+3. 进程仍活着且有停止标记时显示“停止中”。
+4. 日志尚未追平时显示“初始化中”。即使这一批已经读到就绪事件，也要等日志回放完成才能确定后面是否有较新的状态。
+5. 完成初始化时，`connected` 决定“就绪”或“连接不全”。其余情况按是否看到 `LISTEN` 决定“初始化中”或“启动中”。
 
-Reset 释放旧句柄并重置日志、身份和历史状态。Dispose 本身仅释放 Process 包装对象，不 Kill 进程，这支持关闭控制台后重新打开并附加。日志状态、磁盘标记和系统生命期信息共同决定显示，任何单一来源都不足以证明进程属于当前槽位。
+当前服务器达成首次连接门槛后发出一次 `LINKS_READY`，发布可发现地址后写 `PROCESS_READY`。普通运行期依赖断线不会撤销引擎 `Ready`，也没有对应的 `LINKS_LOST` 日志。控制台保留旧日志解析分支，当前连接数量需通过其他观测途径了解。若启动较早阶段失败，日志文件尚未打开，控制台仍可通过进程已退出这一事实更新状态。
+
+## `StopAsync`、`Reset` 与释放
+
+`if (process is not { HasExited: false } child)` 在没有活进程时提前返回，同时在匹配成功时把当前对象绑定为局部变量 `child`。方法以其 PID 和保存的启动时间写本生命期停止标记，服务器轮询标记后触发自己的取消和清理。界面先显示“停止中”。
+
+`WaitForExitAsync().WaitAsync(...)` 给等待加上 10 秒时限。超时只结束这次等待，若子进程仍活着，才记录提示并调用 `Kill`，随后再等最多 5 秒。 `Kill` 期间已退出的竞态由异常过滤器处理。强制终止后的等待超时、标记写入失败等会向上传递。完成后调用 `Refresh` 更新状态。
+
+`Reset` 在切换组或启动前调用，释放原先句柄，清掉 PID、恢复 `Name` 为 `SlotName`、重置日志读取器、行号和事件状态。 `Dispose` 仅调用 `process?.Dispose()` 释放包装对象。服务器终止由停止流程执行，因此退出控制台后还可以根据运行资料重新附加。
