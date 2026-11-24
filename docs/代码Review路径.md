@@ -1,10 +1,10 @@
 # 代码 Review 路径
 
-更新时间：2026-11-24（Asia/Shanghai），按 `review-1120` 当前源码核对。服务器已收敛为进程基础框架：ZooKeeper、进程连接、基础 RPC、日志和 ID。进程服务由 App 的单个 IoC 根容器组装，使用方通过构造函数接收依赖；`process.yaml` 的 `processes` 同时提供控制台初始启动数量和运行时首次连接门槛。独立存储工具与业务共享协议保留，启动不再创建实体或初始化业务服务。
+更新时间：2026-11-25（Asia/Shanghai），当前在 `review-1124` 继续阅读。服务器已收敛为进程基础框架：ZooKeeper、进程连接、基础 RPC、日志和 ID。进程服务由 App 的单个 IoC 根容器组装，使用方通过构造函数接收依赖；`process.yaml` 的 `processes` 同时提供控制台初始启动数量和运行时首次连接门槛。独立存储工具与业务共享协议保留，启动不再创建实体或初始化业务服务。
 
-用户已确认读完 Program、发现与连接主线、LinkService、PeerLink、transport.proto、三个通信/就绪测试，以及配置主线和 ServerServices。ID 初始化与 ZooKeeper 的若干片段只代表局部阅读。详细确认、历史范围和剩余量估算统一见[代码 Review 进度](代码Review进度.md)。
+用户已确认读完 Program、发现与连接主线、LinkService、PeerLink、transport.proto、三个通信/就绪测试，以及配置主线和 ServerServices；于 2026-11-25 确认 ID 模块已读完。ZooKeeper 的若干片段仍只代表局部阅读。详细确认、历史范围和剩余量估算统一见[代码 Review 进度](代码Review进度.md)。
 
-**下一步读 `SnowflakeIdGenerator.cs`，再读 `SnowflakeSequence.cs`。** 后续顺序为：ID 生成与测试 → ZooKeeper 会话和 worker 租约 → 日志 → 辅助类型与运行文件 → 其余配套测试，控制台和独立存储按需阅读。可点击的逐文件顺序集中在[详解首页](代码详解/README.md#当前-review-进度与下一步)；下面保留按主题组织的问题清单，不要求从第一节重读。阅读源码无需启动服务，测试入口与历史范围放在第 7 节。
+**下一步读 [ZooKeeperSession.cs 详解](代码详解/code/server/engine/ZooKeeperSession.cs.md)，对照[源码](../code/server/engine/ZooKeeperSession.cs)，再读 `ZooKeeperProxy` 的 worker 租约申请与释放。** 后续顺序为：ZooKeeper 会话和 worker 租约 → 日志 → 辅助类型与运行文件 → 其余配套测试，控制台和独立存储按需阅读。最新逐文件顺序见[后续阅读顺序](代码Review进度.md#下一步与后续阅读顺序)，其中全部 28 份详解已按新的逐段教学方式重写，入口见[详解首页](代码详解/README.md#当前-review-进度与下一步)；文档完成不改变用户已读记录。下面保留按主题组织的问题清单，不要求从第一节重读。阅读源码无需启动服务，测试入口与历史范围放在第 7 节。
 
 ## 1. 工程边界和进程配置
 
@@ -22,10 +22,11 @@
 
 ## 2. 进程身份与 ID
 
-- [ ] [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)：构造委托与 `InitializeAsync` 已讨论，完整生命周期仍待确认。结合下一项实际生成器，回看 `GenId` → `LeaseLost` → `DisposeAsync`，理解共享实例、重复初始化报错与释放顺序。
-- [ ] [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)、[server.yaml](../code/server/config/server.yaml)、[ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs)、[ops.yaml](../code/server/config/ops.yaml)：区分 worker 根路径与 ZooKeeper 连接、会话超时；ZooKeeper 地址及进程发现根路径来自统一 `ServerConfiguration`。
-- [ ] [IdText.cs](../code/server/engine/identifiers/IdText.cs)：校验无前导零的正 `long` 十进制文本，不负责生成 ID 或判断业务对象是否存在。
-- [ ] **当前下一步**：[SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs) 的 `CreateAsync` → `GenId` → `DisposeAsync`，然后进入 [SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs) 的 `TryGenId`。看时间戳、worker、序号组合、同毫秒序列耗尽、时钟回退、租约有效性与释放。
+- [x] [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)：用户于 2026-11-25 确认 ID 模块读完，覆盖工厂委托、初始化、共享实例、重复初始化报错及释放。
+- [x] [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)：ID 配置随模块完成，worker 根路径来自统一配置。
+- [x] [IdText.cs](../code/server/engine/identifiers/IdText.cs)：校验无前导零的正 `long` 十进制文本，不负责生成 ID 或判断业务对象是否存在。
+- [x] [SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)、[SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)：已完成实际生成器与算法阅读，包括时间戳、worker、序号组合、同毫秒序列耗尽、时钟回退及释放。
+- [ ] **当前下一步**：[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs) 的字段与通知任务 → `process` → `StateChanged` → `Invalidate` → `CheckActive`，再看 [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs) 的 `AcquireWorkerAsync` → `WorkerLease.DisposeAsync` → `ReleaseWorkerAsync` → `DisposeAsync` / `CloseAsync`。结合 [ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs)、[ops.yaml](../code/server/config/ops.yaml) 和 [ZooKeeperProxyChecks.cs](../code/tests/engine/ZooKeeperProxyChecks.cs) 理解连接、会话超时和租约失效。
 
 区分三种标识：进程实例名表示本次占号的进程，连接 ID 表示一次连接，RPC 请求 ID 关联一次请求与响应。进程实例编号与雪花 worker 编号独立；当前节点不生成实体身份。调用与限制见[统一 ID 生成](雪花ID.md)。
 
@@ -87,7 +88,7 @@ sequenceDiagram
 阅读测试不需要执行测试。优先关注准备状态、执行步骤与断言结果；完整、耗时或外部服务联调仍须按规范单独确认。
 
 - [x] 用户已确认读完 [RpcChecks.cs](../code/tests/engine/RpcChecks.cs)、[NodeCommunicationChecks.cs](../code/tests/engine/NodeCommunicationChecks.cs)、[StartupReadinessChecks.cs](../code/tests/engine/StartupReadinessChecks.cs)。
-- [ ] 其余测试按 ID、会话、日志、配置、动态发现及发布顺序选读，具体文件见[后续阅读顺序](代码Review进度.md#下一步与后续阅读顺序)。下列命令是入口索引，不是运行授权或本轮执行记录。
+- [ ] 后续测试按会话、日志、配置、动态发现及发布顺序选读，ID 测试按需回查，具体文件见[后续阅读顺序](代码Review进度.md#下一步与后续阅读顺序)。下列命令是入口索引，不是运行授权或本轮执行记录。
 
 当前检查项目为 [TGame.EngineTests.csproj](../code/tests/engine/TGame.EngineTests.csproj)，实际入口集中在 [Program.cs](../code/tests/engine/Program.cs)。按功能选择命令：
 

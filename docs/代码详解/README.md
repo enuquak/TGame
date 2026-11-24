@@ -1,33 +1,35 @@
-# 全项目手写源码详解
+# 全项目手写源码与配置详解
 
-按当前代码整理，共 **75 个源码文件、75 份独立详解**。覆盖 C#、XAML 和手写 Protobuf 定义，包括测试及桌面控制台；排除工具脚本、生成代码、构建产物、第三方工具二进制、项目构建文件和配置数据。当前客户端目录尚无手写源码。
+当前收录 **75 个源码文件和 1 个配置文件，共 76 份独立详解**。源码覆盖 C#、XAML 和手写 Protobuf 定义，包括测试及桌面控制台；配置详解目前收录本轮阅读计划中的 `ops.yaml`。排除工具脚本、生成代码、构建产物、第三方工具二进制和项目构建文件。当前客户端目录尚无手写源码。
 
 详解与源码目录对应，文件名保留原扩展名，例如 `Program.cs.md`。文档描述当前实现；测试入口说明不代表本次执行过完整测试或外部服务联调。
 
-本轮按未读计划扩写 ID、ZooKeeper 会话与租约、日志、辅助类型、配套测试及可选控制台/存储入口。阅读时先看职责和字段，再跟随方法的执行顺序，对照短代码片段、具体场景与失败清理；测试文档区分准备、动作、断言和未覆盖的范围。详解变详细不代表文件已经读完，阅读状态仍以用户确认为准。
+用户于 2026-11-25 明确了详解深度：面向有其他语言基础的 C# 初学者，结合实际代码逐段解释语法与类型、执行和等待时机、状态变化及设计原因，并展开取消、并发、异常与资源释放。测试还要说明每个场景如何准备、每个断言为何成立、失败意味着什么，以及用例的覆盖边界。具体要求见[阅读方式](../代码Review进度.md#阅读方式)，深度参照为 [IdGeneratorLifecycleChecks.cs](code/tests/engine/IdGeneratorLifecycleChecks.cs.md)。
+
+**本轮已按这一标准重新编写下表中的全部 28 份详解**：会话与租约 5 份、日志 5 份、辅助类型 5 份、配套测试 6 份、控制台 4 份、存储 3 份。包含按需阅读的文件和 `ops.yaml`；下方全量索引中的其余文档不计入本轮重写范围。文档重写不会改变用户已读状态。
 
 ## 当前 Review 进度与下一步
 
-更新于 2026-11-24（Asia/Shanghai），按 `review-1120` 当前源码核对。阅读确认集中维护在[代码 Review 进度](../代码Review进度.md)，这里提供摘要和详解入口。
+更新于 2026-11-25（Asia/Shanghai），当前在 `review-1124`。阅读确认集中维护在[代码 Review 进度](../代码Review进度.md)，这里提供摘要和详解入口。
 
 - 已读启动与通信：[Program.cs](code/server/app/Program.cs.md)、[ServerNode.Discovery.cs](code/server/engine/ServerNode.Discovery.cs.md)、[ServerNode.cs](code/server/engine/ServerNode.cs.md)、[LinkService.cs](code/server/engine/LinkService.cs.md)、[PeerLink.cs](code/server/engine/PeerLink.cs.md)。
 - 已读协议与测试：[transport.proto](code/server/engine/protocols/transport.proto.md)、[RpcChecks.cs](code/tests/engine/RpcChecks.cs.md)、[NodeCommunicationChecks.cs](code/tests/engine/NodeCommunicationChecks.cs.md)、[StartupReadinessChecks.cs](code/tests/engine/StartupReadinessChecks.cs.md)。
 - 已读配置与注册：[server.yaml](../../code/server/config/server.yaml)、[process.yaml](../../code/server/config/process.yaml)、[ServerConfiguration.cs](code/server/engine/configuration/ServerConfiguration.cs.md)、[ServerGroup.cs](code/server/engine/configuration/ServerGroup.cs.md)、[ServerServices.cs](code/server/app/ServerServices.cs.md)。
-- `IdGenerator` 的初始化、委托和锁，以及 ZooKeeper 的初始化、占号和发现片段已讨论；整个 ID 模块、会话与租约收尾尚未确认读完。
+- 已读 ID 模块：[IdGenerator.cs](code/server/engine/identifiers/IdGenerator.cs.md)、[SnowflakeIdGenerator.cs](code/server/engine/identifiers/SnowflakeIdGenerator.cs.md)、[SnowflakeSequence.cs](code/server/engine/identifiers/SnowflakeSequence.cs.md)、[IdText.cs](code/server/engine/identifiers/IdText.cs.md)、[IdGeneratorOptions.cs](code/server/engine/identifiers/IdGeneratorOptions.cs.md)。已结合生命周期测试讨论初始化、委托、取消和并发；算法与测试按需回查。
+- ZooKeeper 初始化、占号和发现片段已讨论；完整会话状态与租约释放尚未确认读完。
 
-**下一步先读 [SnowflakeIdGenerator.cs](code/server/engine/identifiers/SnowflakeIdGenerator.cs.md) 的 `CreateAsync` → `GenId` → `DisposeAsync`，再进入 `SnowflakeSequence.TryGenId`。** 以下按后续阅读顺序排列；表中链接进入详解，每份详解顶部可跳转源码。
+**下一步先读 [ZooKeeperSession.cs](code/server/engine/ZooKeeperSession.cs.md)：字段与通知任务 → `process` → `StateChanged` → `Invalidate` → `CheckActive`。** 再进入代理中的 worker 租约。以下链接均进入本轮重写后的详解，每份详解顶部可跳转源码。
 
 | 顺序 | 阅读文件 | 建议方法顺序与需要弄清的问题 |
 | --- | --- | --- |
-| 1：ID | [SnowflakeIdGenerator.cs](code/server/engine/identifiers/SnowflakeIdGenerator.cs.md) → [SnowflakeSequence.cs](code/server/engine/identifiers/SnowflakeSequence.cs.md)，补 [IdText.cs](code/server/engine/identifiers/IdText.cs.md)、[IdGeneratorOptions.cs](code/server/engine/identifiers/IdGeneratorOptions.cs.md)，回看 [IdGenerator.cs](code/server/engine/identifiers/IdGenerator.cs.md) | worker 租约、发号与释放 → 位布局、序列耗尽和时钟回退。对照 [IdGeneratorChecks.cs](code/tests/engine/IdGeneratorChecks.cs.md)、[IdGeneratorLifecycleChecks.cs](code/tests/engine/IdGeneratorLifecycleChecks.cs.md)。 |
-| 2：会话与租约 | [ZooKeeperSession.cs](code/server/engine/ZooKeeperSession.cs.md)，回看 [ZooKeeperProxy.cs](code/server/engine/ZooKeeperProxy.cs.md) 的 `AcquireWorkerAsync`、`WorkerLease` 和释放，补 [ZooKeeperOptions.cs](code/server/engine/ZooKeeperOptions.cs.md) 与 [ops.yaml](../../code/server/config/ops.yaml) | 会话失效怎样让身份与 worker 停止使用？租约如何释放？对照 [ZooKeeperProxyChecks.cs](code/tests/engine/ZooKeeperProxyChecks.cs.md)。 |
-| 3：日志 | [GameLog.cs](code/server/engine/GameLog.cs.md) → [ServerLogProtocol.cs](code/server/engine/logging/ServerLogProtocol.cs.md) → [ServerLogLevel.cs](code/server/engine/logging/ServerLogLevel.cs.md) → [LogEventJson.cs](code/server/engine/logging/LogEventJson.cs.md) | 日志何时创建和释放？事件、等级与输出目标如何配合？对照 [LogLevelChecks.cs](code/tests/engine/LogLevelChecks.cs.md)。 |
-| 4：辅助类型 | [ProcessType.cs](code/server/engine/configuration/ProcessType.cs.md)、[DiscoveredProcess.cs](code/server/engine/DiscoveredProcess.cs.md)、[TransportProtocol.cs](code/server/engine/TransportProtocol.cs.md)、[EngineEnvironment.cs](code/server/engine/configuration/EngineEnvironment.cs.md)、[ServerRunFiles.cs](code/server/engine/configuration/ServerRunFiles.cs.md) | 补齐类型标识、发现代次、元数据、源配置路径、本轮目录和精确停止标记；历史已读部分只复核变化。 |
-| 5：配套测试 | [IocChecks.cs](code/tests/engine/IocChecks.cs.md)、[ServerConfigurationChecks.cs](code/tests/engine/ServerConfigurationChecks.cs.md)、[YamlConfigurationChecks.cs](code/tests/engine/YamlConfigurationChecks.cs.md)、[DynamicTopologyChecks.cs](code/tests/engine/DynamicTopologyChecks.cs.md)、[DiscoveryLinkChecks.cs](code/tests/engine/DiscoveryLinkChecks.cs.md)、[StartupPublicationChecks.cs](code/tests/engine/StartupPublicationChecks.cs.md) | 按模块选读准备、动作和断言；已读的三个通信测试无需重读。测试辅助类按调用回查，不要求运行测试。 |
-| 6（按需）：控制台 | [ConsoleSession.cs](tools/server-console/ConsoleSession.cs.md) → [ServerInstance.cs](tools/server-console/ServerInstance.cs.md) → [RollingLog.cs](tools/server-console/RollingLog.cs.md) → [MainWindow.xaml.cs](tools/server-console/MainWindow.xaml.cs.md) | 准备可执行文件副本、直接传递源配置和本轮目录、起停进程、恢复身份、回放日志；可执行文件副本不包含配置快照。 |
-| 7（按需）：存储 | [StorageConnections.cs](code/server/logic/storage/StorageConnections.cs.md) → [MongoStorage.cs](code/server/logic/storage/MongoStorage.cs.md) → [ProfileStore.cs](code/server/logic/storage/ProfileStore.cs.md)，对照 [profile.proto](code/shared/protocols/profile.proto.md) | 独立存储与业务共享协议不在当前进程启动及基础 RPC 主线中，放在框架读通之后。 |
+| 1：会话与租约（5） | [ZooKeeperSession.cs](code/server/engine/ZooKeeperSession.cs.md) → [ZooKeeperProxy.cs](code/server/engine/ZooKeeperProxy.cs.md)，补 [ZooKeeperOptions.cs](code/server/engine/ZooKeeperOptions.cs.md)、[ops.yaml](code/server/config/ops.yaml.md)；对照 [ZooKeeperProxyChecks.cs](code/tests/engine/ZooKeeperProxyChecks.cs.md) | 从 `AcquireWorkerAsync` → `WorkerLease.DisposeAsync` → `ReleaseWorkerAsync` → `DisposeAsync` / `CloseAsync` 理解租约，再回查初始化、占号和发现。区分任务完成与连接成功、本地失效与服务端临时节点删除。 |
+| 2：日志（5） | [GameLog.cs](code/server/engine/GameLog.cs.md) → [ServerLogProtocol.cs](code/server/engine/logging/ServerLogProtocol.cs.md) → [ServerLogLevel.cs](code/server/engine/logging/ServerLogLevel.cs.md) → [LogEventJson.cs](code/server/engine/logging/LogEventJson.cs.md)；对照 [LogLevelChecks.cs](code/tests/engine/LogLevelChecks.cs.md) | 日志何时创建、绑定身份和释放？事件、等级、JSON 字段和输出目标如何配合？测试怎样验证过滤和格式？ |
+| 3：辅助类型（5） | [ProcessType.cs](code/server/engine/configuration/ProcessType.cs.md)、[DiscoveredProcess.cs](code/server/engine/DiscoveredProcess.cs.md)、[TransportProtocol.cs](code/server/engine/TransportProtocol.cs.md)、[EngineEnvironment.cs](code/server/engine/configuration/EngineEnvironment.cs.md)、[ServerRunFiles.cs](code/server/engine/configuration/ServerRunFiles.cs.md) | 补齐实例身份、发现代次、元数据键、源配置路径、本轮目录和精确停止标记；历史已读部分只复核变化。 |
+| 4：配套测试（6） | [IocChecks.cs](code/tests/engine/IocChecks.cs.md)、[ServerConfigurationChecks.cs](code/tests/engine/ServerConfigurationChecks.cs.md)、[YamlConfigurationChecks.cs](code/tests/engine/YamlConfigurationChecks.cs.md)、[DynamicTopologyChecks.cs](code/tests/engine/DynamicTopologyChecks.cs.md)、[DiscoveryLinkChecks.cs](code/tests/engine/DiscoveryLinkChecks.cs.md)、[StartupPublicationChecks.cs](code/tests/engine/StartupPublicationChecks.cs.md) | 按模块跟随对象准备、触发动作、逐项断言、辅助方法和清理；区分本地检查与依赖真实服务的检查。已读的三个通信测试无需重读。 |
+| 5（按需）：控制台（4） | [ConsoleSession.cs](tools/server-console/ConsoleSession.cs.md) → [ServerInstance.cs](tools/server-console/ServerInstance.cs.md) → [RollingLog.cs](tools/server-console/RollingLog.cs.md) → [MainWindow.xaml.cs](tools/server-console/MainWindow.xaml.cs.md) | 构建副本与源配置如何传递？如何恢复进程身份、精确停止、增量读取日志？UI 事件和后台任务怎样配合？ |
+| 6（按需）：存储（3） | [StorageConnections.cs](code/server/logic/storage/StorageConnections.cs.md) → [MongoStorage.cs](code/server/logic/storage/MongoStorage.cs.md) → [ProfileStore.cs](code/server/logic/storage/ProfileStore.cs.md) | 连接、凭据、Mongo 替换与 upsert、Redis 缓存及条件回填如何执行？理解异常和一致性边界；这些工具尚未接入当前进程启动主线。 |
 
-当前基础框架约剩 15 个源码文件的阅读或复核范围，另有十来个测试可按模块选读；这是范围估算，包含已讨论片段与历史已读的复核。控制台及独立存储另计，详见[剩余范围估算](../代码Review进度.md#剩余范围估算)。每读完一个文件再更新用户确认，不因文档修正自动勾选。当前协议字段编号、配置只读加载和运行期保持首次就绪的语义，以对应详解为准；按主题的问题清单见[代码 Review 路径](../代码Review路径.md)。
+ID 模块已完成，当前基础框架约剩 10 个源码文件的阅读或复核范围，另含已有 ZooKeeper 代理方法与选项回顾；配套测试、控制台和存储另计。这是阅读范围估算，与本轮重写的 28 份文档数量口径不同，详见[剩余范围估算](../代码Review进度.md#剩余范围估算)。每读完一个文件再更新用户确认，不因文档修正自动勾选。按主题的问题清单见[代码 Review 路径](../代码Review路径.md)。
 
 ## 服务器宿主（2）
 
@@ -35,6 +37,12 @@
 | --- | --- |
 | [code/server/app/Program.cs](../../code/server/app/Program.cs) | [阅读详解](code/server/app/Program.cs.md) |
 | [code/server/app/ServerServices.cs](../../code/server/app/ServerServices.cs) | [阅读详解](code/server/app/ServerServices.cs.md) |
+
+## 运维配置（1）
+
+| 配置 | 详解 |
+| --- | --- |
+| [code/server/config/ops.yaml](../../code/server/config/ops.yaml) | [阅读详解](code/server/config/ops.yaml.md) |
 
 ## 服务器引擎（26）
 
