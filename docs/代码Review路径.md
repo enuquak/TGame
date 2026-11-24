@@ -4,7 +4,7 @@
 
 用户已确认读完 Program、发现与连接主线、LinkService、PeerLink、transport.proto、三个通信/就绪测试，以及配置主线和 ServerServices；于 2026-11-25 确认 ID 模块已读完。ZooKeeper 的若干片段仍只代表局部阅读。详细确认、历史范围和剩余量估算统一见[代码 Review 进度](代码Review进度.md)。
 
-**下一步读 [ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)，再读 `ZooKeeperProxy` 的 worker 租约申请与释放。** 后续顺序为：ZooKeeper 会话和 worker 租约 → 日志 → 辅助类型与运行文件 → 其余配套测试，控制台和独立存储按需阅读。最新逐文件顺序见[后续阅读顺序](代码Review进度.md#下一步与后续阅读顺序)；下面保留按主题组织的问题清单，不要求从第一节重读。阅读源码无需启动服务，测试入口与历史范围放在第 7 节。
+**下一步读 [ZooKeeperSession.cs 详解](代码详解/code/server/engine/ZooKeeperSession.cs.md)，对照[源码](../code/server/engine/ZooKeeperSession.cs)，再读 `ZooKeeperProxy` 的 worker 租约申请与释放。** 后续顺序为：ZooKeeper 会话和 worker 租约 → 日志 → 辅助类型与运行文件 → 其余配套测试，控制台和独立存储按需阅读。最新逐文件顺序见[后续阅读顺序](代码Review进度.md#下一步与后续阅读顺序)，其中全部 28 份详解已按新的逐段教学方式重写，入口见[详解首页](代码详解/README.md#当前-review-进度与下一步)；文档完成不改变用户已读记录。下面保留按主题组织的问题清单，不要求从第一节重读。阅读源码无需启动服务，测试入口与历史范围放在第 7 节。
 
 ## 1. 工程边界和进程配置
 

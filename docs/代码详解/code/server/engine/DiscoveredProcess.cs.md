@@ -1,29 +1,93 @@
 # DiscoveredProcess.cs 代码详解
 
-[源码 DiscoveredProcess.cs](../../../../../code/server/engine/DiscoveredProcess.cs)
+源码：[code/server/engine/DiscoveredProcess.cs](../../../../../code/server/engine/DiscoveredProcess.cs)
 
-## 一条发现记录含有哪些值
+这份文件把一次发现得到的进程身份、地址和节点创建代次放在同一个值对象里。它很短，但记录相等比较直接决定连接维护器是否继续使用旧任务。
+
+## 1. 一行 record 声明生成了哪些成员
 
 ```csharp
+namespace TGame.Server.Engine;
+
 public sealed record DiscoveredProcess(ServerProcess Process, string Address, long Generation);
 ```
 
-这是 C# 的位置式 `record` 声明。圆括号列出构造参数，编译器生成同名的属性、构造函数和按值比较的逻辑。`sealed` 封住继承。`record` 在这里是引用类型，属性通过构造或初始化赋值，平常读取时保持不变。
+`public` 允许外部程序集使用；`sealed` 禁止派生类型；这里的 `record` 默认是引用类型，不是 `record struct`。它适合表达由若干值组成的数据记录。
 
-| 属性 | 来源 | 后续用途 |
-| --- | --- | --- |
-| `Process` | 从 ZooKeeper 子节点名解析出的 `ServerProcess`，如类型 `Router`、编号 `1`。 | 用 `Process.Type` 匹配拓扑，从 `Process.Name` 取得连接任务的键 `Router1`。 |
-| `Address` | 临时节点数据经 UTF-8 解码、验证后得到的 URI，例如 `http://127.0.0.1:5001`。 | 主动连接任务把它交给 `GrpcChannel.ForAddress`。 |
-| `Generation` | ZooKeeper 节点创建事务编号 `czxid`，由 `data.Stat.getCzxid()` 返回。 | 判定同名发现目标是否被新一代临时节点替换。 |
+括号里的三个位置参数同时定义构造函数参数和公开的初始化属性：`Process`、`Address`、`Generation`。调用时需要提供三个值，之后可以通过 `peer.Process` 等方式读取。
 
-## 谁生成记录，谁拿它拨号
+它们分别是：
 
-`ZooKeeperProxy.WatchProcessesAsync` 读取父目录里的子节点，给成员和其数据设置观察。对子节点 `server-Router1`，它解析前缀后的身份，等到数据非空后校验服务地址，并检查临时节点的 owner。认领阶段的数据为空，先跳过。地址发布后，代理将记录放进下一批 `IReadOnlyList<DiscoveredProcess>`。成员在读取期间消失时，这一条记录也会跳过，后续观察会驱动重新读取。 [发现与发布](ZooKeeperProxy.cs.md)
+- `ServerProcess Process`：类型和实例编号组成的身份，具体声明见 [ServerGroup.cs](configuration/ServerGroup.cs.md)。
+- `string Address`：可以拨号的地址。
+- `long Generation`：64 位整数，来源是 ZooKeeper 节点的创建事务 ID。
 
-`ServerNode.MaintainConnectionsAsync` 先按配置筛主动目标，再用实例名为键组成当前目标字典。随后逐个看旧的连接任务。如果字典里仍有该实例，且 `current == worker.Peer` 按值相等，就继续使用旧任务。目标消失或记录值改变时，先取消并等待旧任务，再清理其取消令牌源。有新目标时创建新的连接维护任务。记录传给 `MaintainLinkAsync` 时，实际拨号使用其名称和地址。 [发现快照驱动的任务](ServerNode.Discovery.cs.md) · [拨号与重连](ServerNode.cs.md)
+编译器还为 record 生成按成员比较的相等性、相应哈希、解构等支持。这里最值得关注的是 `==`：两个不同对象，只要三个成员的值相等，就可以比较为相等。
 
-## 同名同地址的重启如何看出来
+## 2. init 与“不可变”的准确含义
 
-假设原快照包含 `(Router1, http://127.0.0.1:5001, 100)`，随后带同样实例名的新进程重新创建临时节点，碰巧又监听相同端口。新快照若是 `(Router1, http://127.0.0.1:5001, 102)`，比较时 `Generation` 改变，发现层会重建该目标的连接任务。相反，一次刷新重新构造了记录，但三个成员值都相同，前后对象也会比较为相等。这里比较的是三项内容，`Process` 自身也是按类型和编号比较的记录。
+位置 record 的属性通常以 `get; init;` 的方式生成。普通创建完成后，不能再像可写属性那样执行 `peer.Address = ...`；要表达新发现结果，创建新记录。
 
-在同一个临时节点上更新地址，`czxid` 仍是其创建事务编号。此时只要 `Address` 改变，也会导致记录比较不相等。连接任务的取消和释放发生在消费快照的发现循环中，`DiscoveredProcess` 只持有值。
+这不代表深层对象自动冻结。record 的初始化限制是浅层的，成员对象内部能否变动取决于成员类型。本例持有的 `ServerProcess` 也使用 record 身份，地址是不可变字符串，因此适合作为发现快照数据。
+
+下面是概念例子，不是生产里直接构造发现数据的推荐入口：
+
+```csharp
+var first = new DiscoveredProcess(new ServerProcess(ProcessType.Login, 1), "http://127.0.0.1:5001", 100);
+var same = new DiscoveredProcess(new ServerProcess(ProcessType.Login, 1), "http://127.0.0.1:5001", 100);
+bool equal = first == same; // true
+```
+
+`first` 与 `same` 是两次创建，但 record 比较的是成员值。内部的 `ServerProcess` 同样有值相等语义，不要求是同一个引用。
+
+## 3. 真正的构造点先验证什么
+
+[ZooKeeperProxy.cs](ZooKeeperProxy.cs.md) 的 `ReadDiscoveredProcessAsync` 读取节点后，最终返回：
+
+```csharp
+return new DiscoveredProcess(process, address, data.Stat.getCzxid());
+```
+
+走到这里之前，代理已经检查节点名能否解析成进程身份，读取数据并跳过空地址，验证地址，还要求 `getEphemeralOwner()` 不为零，即节点确实属于一个临时会话。
+
+因此发现列表中的记录代表“当前读取到的、已发布有效地址的临时进程节点”。仅占号、地址尚为空的节点不会生成这条记录。
+
+`Generation` 取的是 `getCzxid()`，表示该节点创建时的 ZooKeeper 事务标识。它不是进程实例编号，不是配置版本，也不是读取发现列表的次数。这里不使用节点数据版本充当创建代次。
+
+## 4. 为什么有相同名称和地址还不够
+
+假设旧 `Login1` 退出，原临时节点删除；后来新进程再次认领 `Login1`，甚至使用同一地址。只比较名称和地址会把新进程当成旧进程继续维护。
+
+节点重建后，创建事务 ID 不同，于是新的 `DiscoveredProcess.Generation` 不同，整条记录也不同。这样连接维护器能够识别“名字一样但已经换了一代”。
+
+反过来，若同一个节点更新地址，`Generation` 可以不变，但 `Address` 变了，record 比较仍会发现差异。三个成员共同表达连接目标的身份，不应只保留其中一个。
+
+## 5. 相等比较怎样驱动工作任务替换
+
+[ServerNode.Discovery.cs](ServerNode.Discovery.cs.md) 按 `peer.Process.Name` 为目标建立字典，再与旧工作任务比较：
+
+```csharp
+if (targets.TryGetValue(name, out var current) && current == worker.Peer)
+{
+    continue;
+}
+
+worker.Stop.Cancel();
+await worker.Task;
+worker.Stop.Dispose();
+workers.Remove(name);
+```
+
+`TryGetValue` 尝试取出同名目标，`&&` 只在确实找到后才执行记录比较。找到且整条记录相等，就保留原任务；目标消失或内容改变，则取消旧任务，等待退出，释放其取消源，再移除登记。
+
+后续循环为仍需连接的目标创建新任务。于是“值比较”与“取消并等待旧连接维护任务”连在一起；record 不只是为了少写三个属性。
+
+这里等待和释放的是维护任务、取消源及其所管理的连接资源，不是释放 `DiscoveredProcess` 本身。记录没有 `Dispose`，也不拥有网络通道。
+
+## 6. 快照数据的边界
+
+记录创建后，对端可能立刻退出；发现快照不保证后续拨号必定成功。真实连接仍要校验占号、握手身份并处理断线重试。`Generation` 也不是认证凭据。
+
+这个类型不在构造函数里验证地址或枚举，测试可以直接构造它来模拟发现变化。生产安全边界在代理和连接入口，不能把 `public` 数据记录误读成完整校验器。
+
+发现更新、工作任务替换和当前连接可用性都不撤销已经完成的 `FirstLinks`。首次就绪的历史状态与这份当前发现快照属于不同事实。
