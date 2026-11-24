@@ -14,29 +14,27 @@
 - [x] 配置主线：[server.yaml](../code/server/config/server.yaml)、[process.yaml](../code/server/config/process.yaml)、[ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)。用户明确确认已读完所推荐的配置文件与实现。
 - [x] [ServerServices.cs](../code/server/app/ServerServices.cs)：用户明确确认已读完依赖注册。
 - [ ] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs) / [ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：发现主线已追到 `WatchProcessesAsync`，也讨论过初始化、占号、临时节点及 `ephemeralOwner`；完整会话状态和 worker 租约释放仍待确认，不把局部阅读等同于整份文件完成。
-- [ ] [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)：已解释构造函数委托、`InitializeAsync`、异步互斥和创建结果发布；没有明确确认整个 ID 模块已读完。
+- [x] **ID 模块**：用户于 2026-11-25 明确确认已读完，包括 [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)、[SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)、[SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)、[IdText.cs](../code/server/engine/identifiers/IdText.cs) 和 [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)。已结合 [IdGeneratorLifecycleChecks.cs](../code/tests/engine/IdGeneratorLifecycleChecks.cs) 讨论工厂委托、取消清理、并发发号、实例隔离和会话失效；接下来进入会话与租约。
 - [ ] 日志、辅助类型与其余测试：保留待确认或当前版本复核状态。控制台和独立存储按需继续。
 
-以上记录依据本会话截至 2026-11-24 的明确确认。已读表示用户读过当时的文件，不意味着自动确认之后的每项改动；本轮文档修正也不自动增加用户已读项。历史测试结果与适用版本见路径文档第 7 节。
+以上记录依据本会话截至 2026-11-25 的明确确认。已读表示用户读过当时的文件，不意味着自动确认之后的每项改动；本轮文档修正也不自动增加用户已读项。历史测试结果与适用版本见路径文档第 7 节。
 
 ## 下一步与后续阅读顺序
 
-**下一步先读 [SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)：`CreateAsync` → `GenId` → `DisposeAsync`。** 从已经讨论过的 `IdGenerator.InitializeAsync` 进入实际生成器，再下钻到算法；无需重新从 Program 开始。
+**下一步先读 [ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：字段与 `Connected` / `Lost` → `process` → `StateChanged` → `Invalidate` → `CheckActive`。** 先理解连接状态、不可恢复的失效标记以及通知任务，再回到代理中的 worker 租约申请与释放。ID 模块已完成，相关算法和测试按需要回查。
 
-1. **ID 模块**：[SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs) 的 `TryGenId`，再补 [IdText.cs](../code/server/engine/identifiers/IdText.cs)、[IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)，回看 [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs) 的生命周期。对照 [IdGeneratorChecks.cs](../code/tests/engine/IdGeneratorChecks.cs) 与 [IdGeneratorLifecycleChecks.cs](../code/tests/engine/IdGeneratorLifecycleChecks.cs)。重点是位布局、同毫秒序列、时钟回退、租约有效性及释放。
-2. **会话与租约**：[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)，回到 [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs) 的 `AcquireWorkerAsync`、`WorkerLease` 与释放路径，补看 [ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs) 和 [ops.yaml](../code/server/config/ops.yaml)。对照 [ZooKeeperProxyChecks.cs](../code/tests/engine/ZooKeeperProxyChecks.cs)，区分普通对端断线与本进程会话失效。
-3. **日志系统**：[GameLog.cs](../code/server/engine/GameLog.cs) → [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs) → [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs) → [LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)，对照 [LogLevelChecks.cs](../code/tests/engine/LogLevelChecks.cs)。
-4. **辅助类型与运行标记**：[ProcessType.cs](../code/server/engine/configuration/ProcessType.cs)、[DiscoveredProcess.cs](../code/server/engine/DiscoveredProcess.cs)、[TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs)。历史已读部分只复核变化，重点是实例身份、发现代次、元数据键和精确停止标记。
-5. **配套测试按模块补读**：[IocChecks.cs](../code/tests/engine/IocChecks.cs)、[ServerConfigurationChecks.cs](../code/tests/engine/ServerConfigurationChecks.cs)、[YamlConfigurationChecks.cs](../code/tests/engine/YamlConfigurationChecks.cs)、[DynamicTopologyChecks.cs](../code/tests/engine/DynamicTopologyChecks.cs)、[DiscoveryLinkChecks.cs](../code/tests/engine/DiscoveryLinkChecks.cs)、[StartupPublicationChecks.cs](../code/tests/engine/StartupPublicationChecks.cs)。已确认的三个通信测试不重新列为必读。
-6. **按需扩展**：控制台从 [ConsoleSession.cs](../tools/server-console/ConsoleSession.cs) → [ServerInstance.cs](../tools/server-console/ServerInstance.cs) → [RollingLog.cs](../tools/server-console/RollingLog.cs) → [MainWindow.xaml.cs](../tools/server-console/MainWindow.xaml.cs) 阅读；独立存储从 [StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs) → [MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs) → [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs) 阅读。
+1. **会话与租约**：[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)，再读 [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs) 的 `AcquireWorkerAsync` → `WorkerLease.DisposeAsync` → `ReleaseWorkerAsync` → `DisposeAsync` / `CloseAsync`，补看 [ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs) 和 [ops.yaml](../code/server/config/ops.yaml)。对照 [ZooKeeperProxyChecks.cs](../code/tests/engine/ZooKeeperProxyChecks.cs)，理解 worker 如何占用和释放，以及会话失效为什么同时影响发号和宿主退出。
+2. **日志系统**：[GameLog.cs](../code/server/engine/GameLog.cs) → [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs) → [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs) → [LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)，对照 [LogLevelChecks.cs](../code/tests/engine/LogLevelChecks.cs)。
+3. **辅助类型与运行标记**：[ProcessType.cs](../code/server/engine/configuration/ProcessType.cs)、[DiscoveredProcess.cs](../code/server/engine/DiscoveredProcess.cs)、[TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs)。历史已读部分只复核变化，重点是实例身份、发现代次、元数据键和精确停止标记。
+4. **配套测试按模块补读**：[IocChecks.cs](../code/tests/engine/IocChecks.cs)、[ServerConfigurationChecks.cs](../code/tests/engine/ServerConfigurationChecks.cs)、[YamlConfigurationChecks.cs](../code/tests/engine/YamlConfigurationChecks.cs)、[DynamicTopologyChecks.cs](../code/tests/engine/DynamicTopologyChecks.cs)、[DiscoveryLinkChecks.cs](../code/tests/engine/DiscoveryLinkChecks.cs)、[StartupPublicationChecks.cs](../code/tests/engine/StartupPublicationChecks.cs)。已确认的三个通信测试不重新列为必读。
+5. **按需扩展**：控制台从 [ConsoleSession.cs](../tools/server-console/ConsoleSession.cs) → [ServerInstance.cs](../tools/server-console/ServerInstance.cs) → [RollingLog.cs](../tools/server-console/RollingLog.cs) → [MainWindow.xaml.cs](../tools/server-console/MainWindow.xaml.cs) 阅读；独立存储从 [StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs) → [MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs) → [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs) 阅读。
 
 ## 剩余范围估算
 
-按当前服务器基础框架估算，还剩三个主要模块和一组辅助类型，约 **15 个源码文件的阅读或复核范围**，不是精确的未读文件计数；已讨论片段和历史已读内容可快速回顾。
+ID 模块已完成。按当前服务器基础框架估算，还剩会话与租约、日志两个主要模块和一组辅助类型，约 **10 个源码文件的阅读或复核范围**，另含已有 ZooKeeper 代理方法及选项回顾；不是精确的未读文件计数，已讨论片段和历史已读内容可快速回顾。
 
 | 内容 | 大致范围 |
 | --- | --- |
-| ID 生成 | 5 个源码文件 |
 | ZooKeeper 会话与租约 | 1 个会话文件，加已有代理方法及选项回顾 |
 | 日志系统 | 4 个源码文件 |
 | 基础辅助类型 | 约 5 个短文件，历史已读部分只核对变化 |
