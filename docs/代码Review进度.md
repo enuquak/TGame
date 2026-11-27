@@ -1,47 +1,52 @@
 # 代码 Review 进度
 
-更新时间：2026-11-25（Asia/Shanghai）。
+更新时间：2026-11-28（Asia/Shanghai）。
 
 ## 当前入口
 
-上一轮文档已在 `review-1120` 完成并推送，合入并推送 `main` 后创建了 `review-1124`；当前在 `review-1124` 继续阅读与文档维护。本文是阅读确认的记录入口；逐文件详解及下一步入口见[详解首页](代码详解/README.md#当前-review-进度与下一步)，按主题的问题清单见[代码 Review 路径](代码Review路径.md)。当前服务器只运行进程基础框架，由 App 的单个 IoC 根容器组装。
+当前工作分支为 `review-1128`。用户于 2026-11-28 确认：本计划中的内容除服务器控制台外基本读完；控制台只关注是否可用，考虑时间投入，不再安排实现细读。本轮阅读按“基本完成”记录，后续结合实际开发或具体问题回查。
+
+本文是阅读确认与后续安排的记录入口；逐文件详解可从[详解首页](代码详解/README.md)查阅，按主题的问题清单见[代码 Review 路径](代码Review路径.md)。阅读状态以本文最新确认为准。当前服务器只运行进程基础框架，由 App 的单个 IoC 根容器组装。
 
 ## 本轮确认记录
 
+- [x] **整体进度**：用户于 2026-11-28 表示“基本都看完了，除了服务器控制台部分”。以下新增完成记录依据这次整体确认，表示计划内容基本读完，不扩大为所有文件逐行精读或所有细节均已掌握。
 - [x] [code/server/app/Program.cs](../code/server/app/Program.cs)：用户于 2026-11-20 明确确认当前文件已读完。启动顺序为日志 → 配置 → IoC → ZooKeeper 会话与占号 → ID → 监听与首次连接 → 地址发布 → `PROCESS_READY`；退出先停止后台任务和监听，随后释放容器，最后释放日志。
 - [x] 发现与通信：[ServerNode.Discovery.cs](../code/server/engine/ServerNode.Discovery.cs)、[ServerNode.cs](../code/server/engine/ServerNode.cs)、[LinkService.cs](../code/server/engine/LinkService.cs)、[PeerLink.cs](../code/server/engine/PeerLink.cs)。在推荐发现、连接与收发主线后，用户确认“这几个文件我都看完了”。
 - [x] 协议与三个测试：[transport.proto](../code/server/engine/protocols/transport.proto)、[RpcChecks.cs](../code/tests/engine/RpcChecks.cs)、[NodeCommunicationChecks.cs](../code/tests/engine/NodeCommunicationChecks.cs)、[StartupReadinessChecks.cs](../code/tests/engine/StartupReadinessChecks.cs)。用户随后明确确认“这4个文件都看完了”。
 - [x] 配置主线：[server.yaml](../code/server/config/server.yaml)、[process.yaml](../code/server/config/process.yaml)、[ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)。用户明确确认已读完所推荐的配置文件与实现。
 - [x] [ServerServices.cs](../code/server/app/ServerServices.cs)：用户明确确认已读完依赖注册。
-- [ ] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs) / [ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：发现主线已追到 `WatchProcessesAsync`，也讨论过初始化、占号、临时节点及 `ephemeralOwner`；完整会话状态和 worker 租约释放仍待确认，不把局部阅读等同于整份文件完成。
-- [x] **ID 模块**：用户于 2026-11-25 明确确认已读完，包括 [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)、[SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)、[SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)、[IdText.cs](../code/server/engine/identifiers/IdText.cs) 和 [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)。已结合 [IdGeneratorLifecycleChecks.cs](../code/tests/engine/IdGeneratorLifecycleChecks.cs) 讨论工厂委托、取消清理、并发发号、实例隔离和会话失效；接下来进入会话与租约。
-- [ ] 日志、辅助类型与其余测试：保留待确认或当前版本复核状态。控制台和独立存储按需继续。
+- [x] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs) / [ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：此前的局部阅读记录由 2026-11-28 的整体确认更新为基本读完，涵盖计划中的会话状态、进程身份及 worker 租约申请与释放。
+- [x] **ID 模块**：用户于 2026-11-25 明确确认已读完，包括 [IdGenerator.cs](../code/server/engine/identifiers/IdGenerator.cs)、[SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)、[SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)、[IdText.cs](../code/server/engine/identifiers/IdText.cs) 和 [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)。已结合 [IdGeneratorLifecycleChecks.cs](../code/tests/engine/IdGeneratorLifecycleChecks.cs) 讨论工厂委托、取消清理、并发发号、实例隔离和会话失效，后续按需回查。
+- [x] 日志、辅助类型、计划中的配套测试与独立存储：依据 2026-11-28 的整体确认，记录为基本读完，不再保留为必读待办。
+- **服务器控制台：主动跳过实现细读。** 用户明确认为“只要能用就好”，不需要具体阅读实现。保留使用与故障定位入口，不计入未完成阅读量，也不标记为实现已读或可用性已验证。
 
-以上记录依据本会话截至 2026-11-25 的明确确认。已读表示用户读过当时的文件，不意味着自动确认之后的每项改动；本轮文档修正也不自动增加用户已读项。历史测试结果与适用版本见路径文档第 7 节。
+以上记录依据截至 2026-11-28 的用户确认。已读表示用户读过当时的内容，不意味着自动确认之后的每项改动；文档修正本身也不自动增加用户已读项。阅读测试不等于执行测试，历史测试结果与适用版本见路径文档第 7 节。
 
 ## 下一步与后续阅读顺序
 
-**下一步先读 [ZooKeeperSession.cs 详解](代码详解/code/server/engine/ZooKeeperSession.cs.md)，对照[源码](../code/server/engine/ZooKeeperSession.cs)：字段与 `Connected` / `Lost` → `process` → `StateChanged` → `Invalidate` → `CheckActive`。** 先理解连接状态、不可恢复的失效标记以及通知任务，再回到代理中的 worker 租约申请与释放。ID 模块已完成，相关算法和测试按需要回查。
+**本轮逐文件阅读基本完成，不再指定下一份必读文件。** 后续遇到具体开发任务或疑问时，按“调用入口 → 对应实现 → 配套测试”回查相关内容。服务器控制台只在使用故障或需要修改功能时定位实现，不继续安排逐文件细读。
 
-本节列出的 **28 份详解已于 2026-11-25 全部按新的逐段教学方式重新编写**，包括 `ops.yaml`、控制台与独立存储的按需内容。可从[详解首页的阅读顺序表](代码详解/README.md#当前-review-进度与下一步)直接进入各篇；下列源码顺序不变，文档完成不表示用户已经读完。
+原计划的 **28 份详解已于 2026-11-25 全部按新的逐段教学方式重新编写**，包括 `ops.yaml`、控制台与独立存储的内容。可从[详解首页](代码详解/README.md)进入各篇。下面保留原阅读路线作为回查索引，不再表示待完成清单；阅读状态来自上述用户确认，而非文档编写完成。
 
 1. **会话与租约**：[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)，再读 [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs) 的 `AcquireWorkerAsync` → `WorkerLease.DisposeAsync` → `ReleaseWorkerAsync` → `DisposeAsync` / `CloseAsync`，补看 [ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs) 和 [ops.yaml](../code/server/config/ops.yaml)。对照 [ZooKeeperProxyChecks.cs](../code/tests/engine/ZooKeeperProxyChecks.cs)，理解 worker 如何占用和释放，以及会话失效为什么同时影响发号和宿主退出。
 2. **日志系统**：[GameLog.cs](../code/server/engine/GameLog.cs) → [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs) → [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs) → [LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)，对照 [LogLevelChecks.cs](../code/tests/engine/LogLevelChecks.cs)。
 3. **辅助类型与运行标记**：[ProcessType.cs](../code/server/engine/configuration/ProcessType.cs)、[DiscoveredProcess.cs](../code/server/engine/DiscoveredProcess.cs)、[TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)、[EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs)。历史已读部分只复核变化，重点是实例身份、发现代次、元数据键和精确停止标记。
-4. **配套测试按模块补读**：[IocChecks.cs](../code/tests/engine/IocChecks.cs)、[ServerConfigurationChecks.cs](../code/tests/engine/ServerConfigurationChecks.cs)、[YamlConfigurationChecks.cs](../code/tests/engine/YamlConfigurationChecks.cs)、[DynamicTopologyChecks.cs](../code/tests/engine/DynamicTopologyChecks.cs)、[DiscoveryLinkChecks.cs](../code/tests/engine/DiscoveryLinkChecks.cs)、[StartupPublicationChecks.cs](../code/tests/engine/StartupPublicationChecks.cs)。已确认的三个通信测试不重新列为必读。
-5. **按需扩展**：控制台从 [ConsoleSession.cs](../tools/server-console/ConsoleSession.cs) → [ServerInstance.cs](../tools/server-console/ServerInstance.cs) → [RollingLog.cs](../tools/server-console/RollingLog.cs) → [MainWindow.xaml.cs](../tools/server-console/MainWindow.xaml.cs) 阅读；独立存储从 [StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs) → [MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs) → [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs) 阅读。
+4. **配套测试按模块回查**：[IocChecks.cs](../code/tests/engine/IocChecks.cs)、[ServerConfigurationChecks.cs](../code/tests/engine/ServerConfigurationChecks.cs)、[YamlConfigurationChecks.cs](../code/tests/engine/YamlConfigurationChecks.cs)、[DynamicTopologyChecks.cs](../code/tests/engine/DynamicTopologyChecks.cs)、[DiscoveryLinkChecks.cs](../code/tests/engine/DiscoveryLinkChecks.cs)、[StartupPublicationChecks.cs](../code/tests/engine/StartupPublicationChecks.cs)。已确认的三个通信测试不重新列为必读。
+5. **独立存储**：[StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs) → [MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs) → [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs)，随本轮整体确认记录为基本读完，后续按需回查。
+6. **服务器控制台：跳过实现细读。** 只关注配置选择、启动与停止、进程状态和日志查看等使用行为。遇到具体问题时可查 [ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)、[RollingLog.cs](../tools/server-console/RollingLog.cs) 和 [MainWindow.xaml.cs](../tools/server-console/MainWindow.xaml.cs)，不将这些文件重新列为必读任务。
 
 ## 剩余范围估算
 
-ID 模块已完成。按当前服务器基础框架估算，还剩会话与租约、日志两个主要模块和一组辅助类型，约 **10 个源码文件的阅读或复核范围**，另含已有 ZooKeeper 代理方法及选项回顾；不是精确的未读文件计数，已讨论片段和历史已读内容可快速回顾。
+根据 2026-11-28 的整体确认，本轮计划按基本完成处理，**不再保留固定必读待办**。原来的“约 10 个源码文件及配套测试”剩余量估算已不适用；不将“基本读完”换算成精确的逐文件完成率。
 
-| 内容 | 大致范围 |
+| 内容 | 当前状态 |
 | --- | --- |
-| ZooKeeper 会话与租约 | 1 个会话文件，加已有代理方法及选项回顾 |
-| 日志系统 | 4 个源码文件 |
-| 基础辅助类型 | 约 5 个短文件，历史已读部分只核对变化 |
+| 服务器基础框架、配置、ID、会话与租约、日志及辅助类型 | 基本读完，按具体问题回查 |
+| 计划中的配套测试与独立存储 | 基本读完，阅读记录不代表测试已执行 |
+| 服务器控制台实现 | 主动跳过，不计入剩余阅读任务 |
 
-配套测试另有十来个，跟随模块选择阅读。控制台还有十几个源码文件，独立存储有 3 个主要源码文件，均不计入上述基础框架估算。阅读源码和测试说明不需要实际执行测试。
+后续只有具体问题、代码变化或开发任务涉及的内容需要回查，不为补齐控制台阅读数量继续扩展计划。阅读源码和测试说明不需要实际执行测试。
 
 ## 本轮已确定的行为
 
@@ -52,7 +57,7 @@ ID 模块已完成。按当前服务器基础框架估算，还剩会话与租�
 - 配置只从源 YAML 加载到内存，没有文件写回接口。启动器直接传源配置路径，本轮目录通过 `EngineEnvironment.RunDirectory` 传递；不保存配置快照。进程运行期间不重载，补起会重新读取源配置。
 - 当前协议编号为 `Frame: hello=1/request=2/reply=3`，`RpcReply: request_id=1/error=2/payload=3`。旧对话中的字段编号与配置保存接口说明，以当前源码和详解为准。
 
-上一轮文档核对以源码提交 `b91fbd7` 为基准，修正了配置写回接口移除后的说明、测试自行构造临时 YAML 的方式及协议字段编号，并扩写了当时的未读计划。2026-11-25 在 `review-1124` 对照当前源码重新编写本节后续计划的全部 28 份详解，按新的深度展开实际代码、语法与类型、执行顺序、状态变化、设计原因和失败清理。测试逐项说明准备、动作、断言与覆盖边界；补齐原来没有独立文档的 `ops.yaml`。阅读进度保留用户确认，不新增已读项；本轮只做文档核对，未运行构建、服务器或测试。
+上一轮文档核对以源码提交 `b91fbd7` 为基准，修正了配置写回接口移除后的说明、测试自行构造临时 YAML 的方式及协议字段编号，并扩写了当时的未读计划。2026-11-25 在 `review-1124` 对照当时源码重新编写原阅读计划的全部 28 份详解，按新的深度展开实际代码、语法与类型、执行顺序、状态变化、设计原因和失败清理。测试逐项说明准备、动作、断言与覆盖边界；补齐原来没有独立文档的 `ops.yaml`。该次文档重写没有自动增加已读项。2026-11-28 根据用户新的整体确认更新阅读状态与后续安排；此次仅维护进度和路径文档，未运行构建、服务器或测试。
 
 ## 上一轮确认记录
 
