@@ -11,5 +11,5 @@ public sealed record IdGeneratorOptions
         return new ServerConfiguration(path).Identifiers;
     }
 
-    public void Validate() => ZooKeeperOptions.ValidatePath(WorkerRootPath);
+    public void Validate() => ZooKeeperPath.ValidateRoot(WorkerRootPath);
 }

@@ -298,7 +298,7 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
 
     internal async Task<WorkerLease> AcquireWorkerAsync(string root, CancellationToken stop)
     {
-        ZooKeeperOptions.ValidatePath(root);
+        ZooKeeperPath.ValidateRoot(root);
         _ = Client;
         session.CheckActive();
         stop.ThrowIfCancellationRequested();
