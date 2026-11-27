@@ -27,7 +27,7 @@
             </ListBox.ItemContainerStyle>
             <ListBox.ItemTemplate><DataTemplate><DockPanel>
                 <TextBlock Text="{Binding Description}" DockPanel.Dock="Right" Foreground="{StaticResource Muted}" FontSize="12"/>
-                <CheckBox IsHitTestVisible="False" Focusable="False" Content="{Binding Role}"
+                <CheckBox IsHitTestVisible="False" Focusable="False" Content="{Binding Name}"
                           IsChecked="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}, Mode=OneWay}"/>
             </DockPanel></DataTemplate></ListBox.ItemTemplate>
         </ListBox>

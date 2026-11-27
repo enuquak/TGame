@@ -1,4 +1,5 @@
 using System.Reflection;
+using YamlDotNet.Serialization;
 using TGame;
 using TGame.ServerConsole;
 
@@ -10,6 +11,7 @@ internal static class GroupConfigChecks
         try
         {
             CheckSelectedConfiguration(checkout);
+            CheckCountUpdate(checkout);
         }
         finally
         {
@@ -103,26 +105,28 @@ internal static class GroupConfigChecks
 
         var validEntry = File.ReadAllText(defaultConfiguration).Replace("include: [ops, process]", "include: [ops]");
         validEntry += "\nconnections:\n" + string.Join("\n", Enum.GetValues<ProcessType>().Select(type => $"  {type}: []"));
-        string[] invalid =
+        var validCounts = "processes:\n" + string.Join("\n", counts.Select(pair => $"  {pair.Key}: {pair.Value}"));
+        File.WriteAllText(defaultConfiguration, validEntry + "\n" + validCounts);
+        _ = ServerGroup.Load(defaultConfiguration);
+        (string Yaml, string Reason)[] invalid =
         [
-            "[]", "{}", "processes: [bad", "processes: {Router: -1}", "processes: {Router: 1.5}",
-            "processes: {Unknown: 1}", "processes: {Router: 1, Router: 2}",
-            "processes:\n" + string.Join("\n", counts.Select(pair => $"  {pair.Key}: 0"))
+            ("processes: [bad", "Invalid YAML configuration"),
+            (validCounts.Replace("Router: 1", "Router: -1"), "Invalid or missing process count for Router"),
+            (validCounts.Replace("Router: 1", "Router: 1.5"), "Invalid configuration"),
+            (validCounts.Replace("Router: 1", "Unknown: 1"), "Unknown process type Unknown"),
+            (validCounts.Replace("Router: 1", "Router: 1\n  Router: 2"), "Invalid YAML configuration"),
+            (validCounts.Replace("  Router: 1\n", ""), "count of every process type"),
+            ("processes:\n" + string.Join("\n", counts.Select(pair => $"  {pair.Key}: 0")), "at least one process")
         ];
-        foreach (var yaml in invalid)
+        foreach (var (yaml, reason) in invalid)
         {
-            var contents = yaml;
-            if (yaml.StartsWith("processes:", StringComparison.Ordinal))
-            {
-                contents = validEntry + "\n" + yaml;
-            }
-            File.WriteAllText(defaultConfiguration, contents);
+            File.WriteAllText(defaultConfiguration, validEntry + "\n" + yaml);
             try
             {
                 ServerGroup.Load(defaultConfiguration);
                 throw new Exception("Accepted invalid counts, unknown types or duplicate configuration keys.");
             }
-            catch (InvalidDataException)
+            catch (InvalidDataException error) when (error.Message.Contains(reason, StringComparison.Ordinal))
             {
             }
         }
@@ -135,6 +139,66 @@ internal static class GroupConfigChecks
         }
         catch (InvalidDataException)
         {
+        }
+    }
+
+    private static void CheckCountUpdate(string checkout)
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(checkout, "count-update")).FullName;
+        var path = Path.Combine(directory, ServerConfiguration.FileName);
+        var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type.ToString(), _ => 1);
+        WriteConfiguration(path, counts);
+        File.Move(Path.Combine(directory, "process.yaml"), Path.Combine(directory, "topology.yaml"));
+        File.WriteAllText(path, File.ReadAllText(path).Replace("[ops, process]", "[ops, topology]"));
+        counts[nameof(ProcessType.Login)] = 2;
+        UpdateCounts(path, counts);
+        if (new ServerConfiguration(path).Group.GetStartupMinimum(ProcessType.Login) != 2)
+        {
+            throw new Exception("Count updates must follow the selected include file.");
+        }
+
+        File.WriteAllText(path, File.ReadAllText(path).Replace("include: [ops, topology]", "") + "\n" +
+            File.ReadAllText(Path.Combine(directory, "ops.yaml")) + "\n" + File.ReadAllText(Path.Combine(directory, "topology.yaml")));
+        counts[nameof(ProcessType.Login)] = 3;
+        UpdateCounts(path, counts);
+        var updated = new ServerConfiguration(path);
+        if (updated.Group.GetStartupMinimum(ProcessType.Login) != 3 || updated.Mongo!.DatabaseName != "snapshot-check")
+        {
+            throw new Exception("Count updates must support a single-file configuration and preserve other settings.");
+        }
+    }
+
+    internal static void UpdateCounts(string configuration, IReadOnlyDictionary<string, int> counts)
+    {
+        // 校验仍由产品加载器负责；测试只定位并修改临时输入中声明数量的文件。
+        _ = new ServerConfiguration(configuration);
+        if (!UpdateFile(configuration))
+        {
+            throw new InvalidDataException("The test configuration has no process counts.");
+        }
+
+        bool UpdateFile(string path)
+        {
+            var document = new DeserializerBuilder().Build().Deserialize<Dictionary<string, object>>(File.ReadAllText(path));
+            if (document.ContainsKey(ServerGroup.SectionName))
+            {
+                document[ServerGroup.SectionName] = counts;
+                File.WriteAllText(path, new SerializerBuilder().Build().Serialize(document));
+                return true;
+            }
+
+            if (document.TryGetValue(ServerConfiguration.IncludeKey, out var includes))
+            {
+                foreach (var include in (IEnumerable<object>)includes)
+                {
+                    if (UpdateFile(Path.Combine(Path.GetDirectoryName(path)!, include + ".yaml")))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
     }
 

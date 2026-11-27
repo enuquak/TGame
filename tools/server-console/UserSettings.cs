@@ -16,7 +16,7 @@ internal sealed class UserSettings
         WriteIndented = true
     };
     private string path = "";
-    public string? SelectedRole
+    public string? SelectedSlotName
     {
         get; set;
     }

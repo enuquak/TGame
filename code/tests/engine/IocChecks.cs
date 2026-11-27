@@ -82,8 +82,6 @@ internal static class IocChecks
             Console.SetError(originalError);
         }
 
-        await ZooKeeperProxyChecks.CheckSessionAsync(secondLog);
-        await IdGeneratorLifecycleChecks.RunAsync();
         Console.WriteLine("PASS actual IoC registrations, shared instances, independent containers, asynchronous disposal and startup error logging.");
     }
 

@@ -10,7 +10,6 @@ public static class ServerLogEvents
     public const string ZkDiscover = "ZK_DISCOVER";
     public const string LinkUp = "LINK_UP";
     public const string LinksReady = "LINKS_READY";
-    public const string LinksLost = "LINKS_LOST";
     public const string UnmatchedReply = "UNMATCHED_REPLY";
 }
 

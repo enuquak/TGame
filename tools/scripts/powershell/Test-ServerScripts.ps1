@@ -42,7 +42,7 @@ foreach ($name in @($entryNames) + 'Run-ServerScript')
 }
 
 $sourceFiles = @(Get-ChildItem -LiteralPath "$root/code/server/engine/configuration" -Filter '*.cs')
-$sourceFiles += Get-Item -LiteralPath "$root/code/server/engine/identifiers/IdText.cs", "$root/code/server/engine/identifiers/IdGeneratorOptions.cs", "$root/code/server/engine/ZooKeeperOptions.cs", "$root/code/server/engine/logging/ServerLogProtocol.cs", "$root/code/server/engine/logging/ServerLogLevel.cs"
+$sourceFiles += Get-Item -LiteralPath "$root/code/server/engine/identifiers/IdText.cs", "$root/code/server/engine/identifiers/IdGeneratorOptions.cs", "$root/code/server/engine/ZooKeeperOptions.cs", "$root/code/server/engine/ZooKeeperPath.cs", "$root/code/server/engine/logging/ServerLogProtocol.cs", "$root/code/server/engine/logging/ServerLogLevel.cs"
 foreach ($file in $sourceFiles)
 {
     $relative = [IO.Path]::GetRelativePath($root, $file.FullName)
@@ -52,10 +52,12 @@ foreach ($file in $sourceFiles)
 }
 Copy-Item -LiteralPath "$root/code/server/engine/TGame.Server.Engine.csproj" -Destination "$checkout/code/server/engine/TGame.Server.Engine.csproj"
 
-$connections = [TGame.ServerConfiguration]::new((Join-Path $root ([TGame.ServerConfiguration]::ConfigurationPath))).Read[System.Collections.Generic.Dictionary[string, string[]]]('connections')
+$configuration = [TGame.ServerConfiguration]::new((Join-Path $root ([TGame.ServerConfiguration]::ConfigurationPath)))
+$connections = [ordered]@{}
 $counts = [ordered]@{}
 foreach ($type in [Enum]::GetValues([TGame.ProcessType]))
 {
+    $connections[$type.ToString()] = @($configuration.GetDialTargets($type) | ForEach-Object { $_.ToString() })
     $counts[$type.ToString()] = 0
 }
 $counts[[TGame.ProcessType]::Router.ToString()] = 2
@@ -116,7 +118,7 @@ File.WriteAllText(Path.Combine(runDir, process.Id + ".started.json"), JsonSerial
     Role = args[0],
     Environment = configuration.Environment,
     ConfigurationPath = config,
-    Minimums = configuration.Read<Dictionary<string, int>>("processes")
+    Minimums = Enum.GetValues<ProcessType>().ToDictionary(type => type.ToString(), configuration.Group.GetStartupMinimum)
 }));
 while (true)
 {
@@ -203,6 +205,9 @@ try
     Assert-True ($restored.Count -eq 2 -and $restored.Id -contains $first[1].Id) '补起不应重启存活进程。'
     Assert-True ((Split-Path ((Get-Content -LiteralPath $currentFile -Raw).Trim()) -Leaf) -eq $current) '补起必须复用当前运行目录。'
 
+    Invoke-Entry ('Start' + [TGame.ProcessType]::Router.ToString()) @('-NoBuild')
+    Assert-True (@(Get-TestProcesses).Count -eq 3) '单类型脚本应额外启动一个实例。'
+
     if ($StartupOnly)
     {
         Invoke-Entry ('Start' + [TGame.ProcessType]::Router.ToString()) @('-Slot', '-1') 1
@@ -222,8 +227,6 @@ try
         $lock.Dispose()
     }
 
-    Invoke-Entry ('Start' + [TGame.ProcessType]::Router.ToString()) @('-NoBuild')
-    Assert-True (@(Get-TestProcesses).Count -eq 3) '单类型脚本应额外启动一个实例。'
     Invoke-Entry 'StopAll'
     Assert-True (@(Get-TestProcesses).Count -eq 0) '正常停止后仍有进程。'
     # 模拟构建目录已清理，只留下运行记录。

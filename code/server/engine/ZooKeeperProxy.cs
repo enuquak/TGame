@@ -249,10 +249,9 @@ public sealed class ZooKeeperProxy : IAsyncDisposable
 
     private static string ValidateAddress(ServerProcess process, string address)
     {
-        var scheme = process.Type == ProcessType.Gate ? Uri.UriSchemeHttps : Uri.UriSchemeHttp;
         if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) ||
             uri.Host != IPAddress.Loopback.ToString() ||
-            uri.Scheme != scheme ||
+            uri.Scheme != Uri.UriSchemeHttp ||
             uri.UserInfo.Length != 0 ||
             uri.AbsolutePath != "/" ||
             uri.Query.Length != 0 ||

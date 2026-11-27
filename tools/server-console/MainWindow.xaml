@@ -125,7 +125,7 @@
                             <ListBox.ItemTemplate><DataTemplate><Grid Margin="4,5">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="13"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <Ellipse Width="7" Height="7" Fill="{Binding Dot}" HorizontalAlignment="Left"/>
-                                <TextBlock Grid.Column="1" Text="{Binding Role}" FontWeight="SemiBold"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold"/>
                                 <TextBlock Grid.Column="2" Text="{Binding Description}" Foreground="{StaticResource Muted}" FontSize="12"/>
                             </Grid></DataTemplate></ListBox.ItemTemplate>
                         </ListBox>
@@ -139,7 +139,7 @@
                     <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel>
                     <ListBox.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal" ToolTip="{Binding Description}">
                         <Ellipse Width="7" Height="7" Fill="{Binding Dot}" Margin="0,0,7,0"/>
-                        <TextBlock Text="{Binding Role}" FontFamily="Segoe UI" FontSize="14" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding Name}" FontFamily="Segoe UI" FontSize="14" FontWeight="SemiBold"/>
                     </StackPanel></DataTemplate></ListBox.ItemTemplate>
                 </ListBox>
             </Border>
@@ -149,7 +149,7 @@
                     <DockPanel>
                         <TextBlock x:Name="ShownCount" DockPanel.Dock="Right" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
                         <StackPanel x:Name="ActiveHeading" Orientation="Horizontal">
-                            <TextBlock Text="{Binding Role}" FontFamily="Segoe UI" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                            <TextBlock Text="{Binding Name}" FontFamily="Segoe UI" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
                             <Ellipse Width="7" Height="7" Fill="{Binding Dot}" Margin="15,0,5,0"/>
                             <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Foreground="{StaticResource Ink}"/>
                             <TextBlock Text="{Binding PidLabel}" VerticalAlignment="Center" Margin="13,0,0,0" FontFamily="Consolas" Foreground="{StaticResource Muted}"/>

@@ -19,11 +19,11 @@ internal sealed class RollingLog(string directory, long startedUtcTicks)
         internal MemoryStream? Partial;
     }
 
-    internal bool ReadAvailable(Action<string> accept)
+    internal void ReadAvailable(Action<string> accept)
     {
         if (!Directory.Exists(directory))
         {
-            return true;
+            return;
         }
 
         var started = new DateTime(startedUtcTicks, DateTimeKind.Utc).ToLocalTime();
@@ -101,12 +101,10 @@ internal sealed class RollingLog(string directory, long startedUtcTicks)
 
                 if (budget == 0)
                 {
-                    return false;
+                    return;
                 }
             }
         }
-
-        return true;
     }
 
     private static FileStream? Open(string path)

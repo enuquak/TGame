@@ -28,15 +28,15 @@ internal static class ConfigChecks
         string second = Path.Combine(folder, "user-b", "user.json");
         var settings = UserSettings.Load(first);
         var gmName = ServerProcess.FormatName(nameof(ProcessType.GM), 1);
-        settings.SelectedRole = gmName;
+        settings.SelectedSlotName = gmName;
         settings.Width = 1100;
         settings.Logs[gmName] = new("ping", true, false);
         settings.Save();
         var restored = UserSettings.Load(first);
-        if (restored.SelectedRole != gmName ||
+        if (restored.SelectedSlotName != gmName ||
             restored.Width != 1100 ||
             restored.Logs[gmName] != new LogPreference("ping", true, false) ||
-            UserSettings.Load(second).SelectedRole != null ||
+            UserSettings.Load(second).SelectedSlotName != null ||
             File.Exists(second))
         {
             throw new InvalidOperationException("User settings were lost or shared with a second profile.");

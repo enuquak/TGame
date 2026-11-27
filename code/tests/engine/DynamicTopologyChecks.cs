@@ -36,7 +36,7 @@ internal sealed class DynamicTopologyChecks(TestServices services)
             Check(node.Ready && node.FirstLinks.IsCompletedSuccessfully,
                 "Losing the last Router must preserve completed startup readiness.");
 
-            await node.WaitUntilReadyAsync(stop);
+            await node.FirstLinks.WaitAsync(stop);
             Open(router9);
             Check(node.Ready, "A replacement Router revoked readiness.");
 
@@ -68,7 +68,7 @@ internal sealed class DynamicTopologyChecks(TestServices services)
             stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
             streams[peer] = stream;
             tasks[peer] = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, lifetime.Token,
-                requireReady: node.AcceptsIncoming(peer));
+                replyToHello: node.AcceptsIncoming(peer));
         }
 
         async Task Close(string peer)

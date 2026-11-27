@@ -73,20 +73,20 @@ internal static class LogChecks
             Check(item.LineCount == 4 && item.Status == ServerStatus.Ready && item.Lines[^1] == "{damaged line}", "process readiness and diagnostic row");
 
             File.WriteAllLines(prefix + "_999.log", Enumerable.Repeat(Row(TrafficEvent, new string('a', 256)), 1200));
-            File.WriteAllText(prefix + "_1000.log", Row(ServerLogEvents.LinksLost) + "\n");
-            item.Open(run, run, run);
-            Check(item.Status == ServerStatus.Initializing, "replay cannot use a historical green light");
+            File.WriteAllText(prefix + "_1000.log", Row(TrafficEvent, "last shard") + "\n");
+            item.Refresh();
+            Check(item.Status == ServerStatus.Ready, "log backlog cannot revoke process readiness");
             for (int tick = 0; tick < 8; tick++)
             {
                 item.Refresh();
             }
 
-            Check(item.LineCount == 1205 && item.Lines.Count == ServerInstance.MaxRetainedLines && item.Status == ServerStatus.Disconnected, "numeric roll order and bounded history");
+            Check(item.LineCount == 1205 && item.Lines.Count == ServerInstance.MaxRetainedLines && item.Status == ServerStatus.Ready, "numeric roll order and bounded history");
 
             var minuteShard = Path.Combine(logs, hour.AddMinutes(17).ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture) + ".log");
             File.WriteAllText(minuteShard, Row(TrafficEvent, "size roll") + "\n");
             item.Refresh();
-            Check(item.LineCount == 1206 && item.Status == ServerStatus.Disconnected, "size roll with actual minute");
+            Check(item.LineCount == 1206 && item.Status == ServerStatus.Ready, "size roll with actual minute");
 
             File.AppendAllText(prefix + ".log", Row(TrafficEvent, "late old-process record") + "\n");
             item.Refresh();
@@ -94,7 +94,7 @@ internal static class LogChecks
                 "process handover does not skip late writes to an earlier shard");
 
             var next = Path.Combine(logs, hour.AddHours(1).ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture) + ".log");
-            var ready = Row(ServerLogEvents.LinksReady, "中文");
+            var ready = Row(TrafficEvent, "中文");
             var bytes = Encoding.UTF8.GetBytes(ready + "\r\n");
             int split = Array.IndexOf(bytes, (byte)0xe4) + 1;
             Check(split > 1, "multibyte fixture");
@@ -103,18 +103,19 @@ internal static class LogChecks
                 writer.Write(bytes.AsSpan(0, split));
                 writer.Flush();
                 item.Refresh();
-                Check(item.LineCount == 1207 && item.Status == ServerStatus.Disconnected, "partial UTF-8 row");
+                Check(item.LineCount == 1207 && item.Status == ServerStatus.Ready, "partial UTF-8 row");
                 writer.Write(bytes.AsSpan(split));
             }
 
             item.Refresh();
             Check(item.Status == ServerStatus.Ready && item.Lines[^1] == ready, "completed row after hour roll");
-            File.WriteAllText(next, Row(ServerLogEvents.LinksLost) + "\n");
+            var truncated = Row(TrafficEvent);
+            File.WriteAllText(next, truncated + "\n");
             item.Refresh();
-            Check(item.Status == ServerStatus.Disconnected, "truncated shard");
-            File.AppendAllText(next, Row(ServerLogEvents.ProcessFailed) + "\n" + Row(ServerLogEvents.LinksReady) + "\n");
+            Check(item.Status == ServerStatus.Ready && item.Lines[^1] == truncated, "truncated shard preserves readiness");
+            File.AppendAllText(next, Row(ServerLogEvents.ProcessFailed) + "\n" + Row(ServerLogEvents.ProcessReady) + "\n");
             item.Refresh();
-            Check(item.Alive && item.Status == ServerStatus.Failed, "failure overrides connectivity");
+            Check(item.Alive && item.Status == ServerStatus.Failed, "failure overrides readiness");
 
             SaveIdentity(ticks + TimeSpan.TicksPerSecond);
             using var reused = new ServerInstance(ProcessName);

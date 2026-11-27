@@ -15,7 +15,6 @@ internal sealed class StartupPublicationChecks(TestServices services)
 {
     public async Task RunAsync(CancellationToken stop)
     {
-        await new StartupReadinessChecks(services).RunAsync(stop);
         var configured = ZooKeeperProxyChecks.LoadOptions();
         var options = configured with { DiscoveryRoot = configured.DiscoveryRoot + "/startup-check-" + Guid.NewGuid().ToString("N") };
         await using var proxy = new ZooKeeperProxy(options, services.Log);

@@ -54,7 +54,7 @@ internal partial class MainWindow : Window
         }).ToArray();
         InitializeLogs();
         ProcessTabs.ItemsSource = pages;
-        ProcessTabs.SelectedItem = pages.FirstOrDefault(page => page.Role == settings.SelectedRole) ?? pages.FirstOrDefault();
+        ProcessTabs.SelectedItem = pages.FirstOrDefault(page => page.SlotName == settings.SelectedSlotName) ?? pages.FirstOrDefault();
         if (settings.Warning is { Length: > 0 } warning)
         {
             output.Enqueue(warning);
@@ -85,7 +85,7 @@ internal partial class MainWindow : Window
         pickerView = new ListCollectionView(pages);
         PickerResults.ItemsSource = pickerView;
         ProcessTabs.ItemsSource = pages;
-        ProcessTabs.SelectedItem = pages.FirstOrDefault(page => page.Role == settings.SelectedRole) ?? pages.FirstOrDefault();
+        ProcessTabs.SelectedItem = pages.FirstOrDefault(page => page.SlotName == settings.SelectedSlotName) ?? pages.FirstOrDefault();
     }
 
     private ProcessPage[] CreatePages()
@@ -93,7 +93,7 @@ internal partial class MainWindow : Window
         var result = session.Instances.Select(instance => new ProcessPage(instance)).ToArray();
         foreach (var page in result)
         {
-            if (!settings.Logs.TryGetValue(page.Role, out var preference))
+            if (!settings.Logs.TryGetValue(page.SlotName, out var preference))
             {
                 continue;
             }
@@ -137,8 +137,8 @@ internal partial class MainWindow : Window
         settings.Width = bounds.IsEmpty ? Width : bounds.Width;
         settings.Height = bounds.IsEmpty ? Height : bounds.Height;
         settings.Maximized = maximized;
-        settings.SelectedRole = active?.Role;
-        settings.Logs = pages.ToDictionary(page => page.Role, page => new LogPreference(page.Keyword, page.MatchesOnly, page.Following));
+        settings.SelectedSlotName = active?.SlotName;
+        settings.Logs = pages.ToDictionary(page => page.SlotName, page => new LogPreference(page.Keyword, page.MatchesOnly, page.Following));
         try
         {
             settings.Save();
@@ -310,7 +310,7 @@ internal partial class MainWindow : Window
     private void PickerSearchChanged(object sender, TextChangedEventArgs e)
     {
         var term = PickerSearch.Text.Trim();
-        pickerView.Filter = item => item is ProcessPage page && (page.Role.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+        pickerView.Filter = item => item is ProcessPage page && (page.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             (page.Pid?.ToString().Contains(term, StringComparison.Ordinal) ?? false));
         PickerResults.SelectedIndex = pickerView.Count > 0 ? 0 : -1;
     }

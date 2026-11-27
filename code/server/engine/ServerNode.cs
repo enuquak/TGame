@@ -44,12 +44,6 @@ public partial class ServerNode
     public string Role => process.Role;
     public bool Ready => firstLinks.Task.IsCompletedSuccessfully;
 
-    public async Task WaitUntilReadyAsync(CancellationToken stop)
-    {
-        stop.ThrowIfCancellationRequested();
-        await firstLinks.Task.WaitAsync(stop);
-    }
-
     public Task<TReply> CallPeerAsync<TReply>(string peer, IMessage request, CancellationToken stop)
         where TReply : IMessage<TReply>, new()
     {
@@ -120,11 +114,6 @@ public partial class ServerNode
 
     private async Task ConnectAsync(string peer, string address, CancellationToken stop)
     {
-        if (!ServerProcess.TryParse(peer, out var peerProcess) || !configuration.Dials(process.Type, peerProcess.Type))
-        {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, $"Unexpected peer instance {peer}."));
-        }
-
         var id = ids.GenId();
         using var channel = GrpcChannel.ForAddress(address);
         var headers = new Metadata { { TransportProtocol.PeerHeader, Name }, { TransportProtocol.LinkHeader, id } };
@@ -142,21 +131,21 @@ public partial class ServerNode
             throw new RpcException(new Status(StatusCode.InvalidArgument, "Unexpected link."));
         }
 
-        if (!await zooKeeper.IsProcessClaimedAsync(peer, stop))
-        {
-            throw new RpcException(new Status(StatusCode.Unavailable, "Peer identity is not claimed."));
-        }
-
         if (!Ready)
         {
             throw new RpcException(new Status(StatusCode.Unavailable, "The receiving process is not ready."));
         }
 
-        await RunLinkAsync(peer, id, input, output, stop, requireReady: true);
+        if (!await zooKeeper.IsProcessClaimedAsync(peer, stop))
+        {
+            throw new RpcException(new Status(StatusCode.Unavailable, "Peer identity is not claimed."));
+        }
+
+        await RunLinkAsync(peer, id, input, output, stop, replyToHello: true);
     }
 
     internal async Task RunLinkAsync(string peer, string id, IAsyncStreamReader<Frame> input,
-        IAsyncStreamWriter<Frame> output, CancellationToken stop, bool requireReady = false)
+        IAsyncStreamWriter<Frame> output, CancellationToken stop, bool replyToHello = false)
     {
         var link = new PeerLink(Role, peer, id, output, log);
         if (!await input.MoveNext(stop) || input.Current.Hello != peer)
@@ -166,11 +155,6 @@ public partial class ServerNode
 
         lock (linkChanges)
         {
-            if (requireReady && !Ready)
-            {
-                throw new RpcException(new Status(StatusCode.Unavailable, "The receiving process is not ready."));
-            }
-
             if (!sessions.Add(peer))
             {
                 throw new RpcException(new Status(StatusCode.AlreadyExists, $"Duplicate link to {peer}."));
@@ -179,7 +163,7 @@ public partial class ServerNode
 
         try
         {
-            if (requireReady)
+            if (replyToHello)
             {
                 await output.WriteAsync(CreateHello(), stop);
             }
