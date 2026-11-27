@@ -19,14 +19,14 @@
 服务器可以完全通过项目脚本运行，无需打开或编译服务器控制台。新工作区先执行 `dotnet restore code/server/engine/TGame.Server.Engine.csproj` 准备 YAML 依赖。运行 `tools/scripts/Start-EnvironmentTunnel.bat`，确保 ZooKeeper 可达；然后双击以下 BAT，或在仓库根目录执行：
 
 ```powershell
-.\tools\scripts\StartAll.bat                 # 按 process.yaml 的数量逐个调用对应类型脚本
+.\tools\scripts\StartAll.bat                 # 按 process.yaml 的数量启动各类型实例
 .\tools\scripts\StartRouter.bat              # 新增一个 Router 进程
 .\tools\scripts\StartScene.bat               # 新增一个 Scene 进程
 .\tools\scripts\StopAll.bat                  # 正常停止，默认等待 10 秒
 .\tools\scripts\KillAll.bat                  # 强制结束脚本管理的当前进程组
 ```
 
-每种类型都有独立入口：`StartGate`、`StartLogin`、`StartBase`、`StartScene`、`StartRouter`、`StartDBMgr`、`StartProfile`、`StartGM`。各 BAT 调用同名 PowerShell 脚本；`StartAll.ps1` 的共用实现读取 [server.yaml](code/server/config/server.yaml) 及 include 的 `processes`，按数量逐个调用这些类型脚本。新运行组默认只编译服务器 App；`-NoBuild` 使用已有产物。已有进程组继续使用本轮可执行文件，重复 `StartAll` 只补齐缺失槽位，单类型入口每次新增一个实例。
+每种类型都有独立入口：`StartGate`、`StartLogin`、`StartBase`、`StartScene`、`StartRouter`、`StartDBMgr`、`StartProfile`、`StartGM`。各 BAT 调用同名 PowerShell 脚本；`StartAll.ps1` 的共用实现读取 [server.yaml](code/server/config/server.yaml) 及 include 的 `processes`，直接按数量调用共用启动函数。新运行组默认只编译服务器 App；`-NoBuild` 使用已有产物。已有进程组继续使用本轮可执行文件，重复 `StartAll` 只补齐缺失槽位，单类型入口每次新增一个实例。
 
 [server.yaml](code/server/config/server.yaml) 的 `runDirectory` 配置运行记录根目录，必须是相对仓库根目录的路径，默认 `logs/server-runs`。脚本固定工作目录并创建本轮子目录，通过 `TGAME_SERVER_RUN_DIRECTORY` 传给服务器；`TGAME_SERVER_CONFIG` 直接指向源配置。服务器不创建运行目录。固定管理指针及互斥锁保存在 `logs/tools/server-scripts/`，指针记录本轮相对运行目录；补起和停止先定位原组；补起读取源配置，停止不依赖配置。修改源 runDirectory 在创建新组时生效。
 
@@ -40,7 +40,7 @@ Windows 上双击 `tools\scripts\Start-ServerConsole.bat`，或在项目根目�
 
 - **启动服务器** 按 [进程数量配置](code/server/config/process.yaml) 拉起各类型的全部实例。再次执行会补起缺少的进程，并直接读取源配置。配置格式、实例命名与就绪条件见 [服务器组配置](docs/服务器组配置.md)。双击 **关闭服务器** 后勾选本次要关闭的实例。关闭控制台窗口后服务器继续运行，下次打开可继续管理。
 - **导出 Protobuf** 生成协议 C# 源码。**编译服务器 C#** 构建服务端工程。**编译并重启** 在构建成功后切换到新一轮进程，编译失败时可在命令输出中查看原因。
-- 右栏为每个配置实例创建独立页签。可以滚动或搜索进程名、PID 切换实例。绿点表示已收到当前实例的 `PROCESS_READY`，且每种主动依赖类型至少有一条握手连接。失去冗余实例时保持就绪；失去某类最后一条依赖连接时显示连接不全，重连后恢复绿色。
+- 右栏为每个启动槽位创建独立页签，认领身份后显示实际进程名。可以滚动或搜索进程名、PID 切换实例；搜索偏好和选中项按稳定槽位保存。绿点表示已收到当前进程的 `PROCESS_READY`，此后依赖断线或日志读取积压不撤销就绪；失败、停止和退出仍更新对应状态。
 - 各页签保留最近 1000 行。按 `Ctrl+F` 搜索，`F3` 和 `Shift+F3` 跳到下一条、上一条匹配日志，也可勾选“仅匹配行”来过滤显示。清空显示后继续接收新日志，磁盘上的滚动日志可用于复盘。
 
 ### 项目配置与用户配置
@@ -88,9 +88,11 @@ dotnet run --project code/tests/engine/TGame.EngineTests.csproj -- --engine
 dotnet run --project tools/server-console/tests/ServerConsole.Check.csproj -- --state-only
 ```
 
-测试无参数时也只运行 `--engine`，`--node` 是同义入口。动态连接、日志、配置、ID 和独立存储检查见[服务器启动与动态发现](docs/服务器组配置.md)、[代码 Review 路径](docs/代码Review路径.md)及[统一 ID 生成](docs/雪花ID.md)。外部服务联调或完整控制台验收须先说明范围与预计耗时，获得明确同意后执行。历史测试记录不代表当前版本已完成联调。
+测试无参数时运行 `--engine`，`--node` 只运行节点通信专项。动态连接、日志、配置、ID 和独立存储检查见[服务器启动与动态发现](docs/服务器组配置.md)、[代码 Review 路径](docs/代码Review路径.md)及[统一 ID 生成](docs/雪花ID.md)。外部服务联调或完整控制台验收须先说明范围与预计耗时，获得明确同意后执行。历史测试记录不代表当前版本已完成联调。
 
-宿主启动依次完成日志 → 配置 → 构建 IoC 根容器 → ZooKeeper 会话与空地址临时占号 → ID → 监听及主动依赖连接 → 地址发布 → `PROCESS_READY`。首次启动要求每种主动目标类型达到配置数量，首次达标后只要求每种正门槛类型至少保留一条完成握手的连接，`ServerNode.Ready` 才为真；无主动依赖的 Router 可直接就绪，不等入站。`FirstLinks` 只记录首次连接齐备，当前就绪随依赖断线与重连变化。连接握手只交换进程身份。
+宿主启动依次完成日志 → 配置 → 构建 IoC 根容器 → ZooKeeper 会话与空地址临时占号 → ID → 监听及主动依赖连接 → 地址发布 → `PROCESS_READY`。首次启动要求每种主动目标类型达到配置数量，`FirstLinks` 达标后完成一次，`ServerNode.Ready` 由其完成状态派生并保持为真；无主动依赖的 Router 可直接就绪，不等入站。依赖断线只影响对应连接与 RPC，发现和重连持续运行。连接握手只交换进程身份。
+
+当前所有监听地址均为本机 HTTP，不加载或管理 TLS 证书。Gate 使用 HTTP/1.1，尚未接入客户端业务接口；其余进程使用 HTTP/2 承载内部 gRPC。
 
 服务端入口 [Program.cs](code/server/app/Program.cs) 只接受 `<进程类型>`，例如 `Scene`；运行目录优先读取 `TGAME_SERVER_RUN_DIRECTORY`，未设置时使用源配置的 `runDirectory`，相对进程工作目录解析。脚本与控制台均把工作目录设为仓库根目录，并预先创建本轮运行目录。类型启动后通过 ZooKeeper 自动抢占从 1 开始的空闲实例编号，统一生成为 `Scene1`、`Scene2` 等名称。空地址节点不参与服务发现，但可证明尚未发布地址的主动连接方持有合法身份。强制终止后，旧节点在会话过期时删除；期间新进程可抢占其他空闲编号。
 
@@ -103,7 +105,7 @@ pwsh -NoProfile -File tools/scripts/powershell/New-ServerRunDirectory.ps1 -Confi
 dotnet build/bin/TGame.Server/debug/TGame.Server.dll Router
 ```
 
-服务进程直接写入 `logs/server/<实例名称>Server/`，例如 `logs/server/Base1Server/`。每行是一条 JSON 事件，可按 PID、角色、实例、时间和请求 ID 查询。同一实例使用 `<PID>-<进程启动UTC ticks>-yyyyMMddHH.log`，按小时滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。`TGAME_SERVER_LOG_ROOT` 可指定服务日志根目录。控制台依据 `PROCESS_READY`、`LINKS_READY` 和 `LINKS_LOST` 更新就绪状态；前两项为 INFO 日志，最低级别设为 `ERROR` 时无法准确显示就绪。
+服务进程认领身份前，将日志写入本轮运行目录的 `startup/<PID>-<启动UTC ticks>/`，因此配置加载、ZooKeeper 初始化和占号失败也可在控制台查看。未指定 `TGAME_SERVER_RUN_DIRECTORY` 时，启动日志保存在服务日志根目录的同名子目录。认领身份后写入 `logs/server/<实例名称>/`，例如 `logs/server/Login1/`。文件名使用本机时间 `yyyyMMddHHmm.log`：自然跨小时切分时分钟固定为 `00`，例如 `202607112300.log`；约满 10 MiB 时按实际分钟分片，例如 `202607112317.log`，同一分钟再次分片使用 `_001.log`、`_002.log`。重启后追加到该小时最新的可用分片。每行是一条 JSON 事件，控制台通过 PID、角色、实例和记录时间筛选当前进程的日志。`TGAME_SERVER_LOG_ROOT` 可指定服务日志根目录。控制台依据 INFO 级别的 `PROCESS_READY` 记录启动完成，最低级别设为 `ERROR` 时无法准确显示就绪。
 
 独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现、基础 RPC、日志与 ID；可以单独构建，不引用宿主或业务 Shared。宿主 [TGame.Server.csproj](code/server/app/TGame.Server.csproj) 显式引用 Engine 与 Shared，使用 .NET 内置 IoC 容器组装进程服务；ZK、ID 和节点使用共享实例，使用方通过构造函数接收依赖。配置显式加载并注入；日志在配置加载前创建，注册到容器共享，由宿主最后释放以记录启动与清理失败。
 

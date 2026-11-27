@@ -8,8 +8,10 @@ internal static class YamlConfigurationChecks
     {
         var source = Path.Combine(AppContext.BaseDirectory, "config", "server.yaml");
         var settings = ServerConfiguration.Load(source);
-        if (settings.LoggingMinimumLevel != ServerLogLevel.Debug || settings.MongoDatabase != "tgame_test" ||
-            settings.MongoUser != settings.RedisUser || settings.Mongo!.AuthenticationDatabase != settings.MongoDatabase)
+        if (settings.LoggingMinimumLevel != ServerLogLevel.Debug ||
+            settings.Mongo!.DatabaseName != "tgame_test" ||
+            settings.Mongo.UserName != settings.Redis!.UserName ||
+            settings.Mongo.AuthenticationDatabase != settings.Mongo.DatabaseName)
         {
             throw new Exception("The unified entry did not load nested settings and YAML aliases.");
         }
@@ -21,14 +23,16 @@ internal static class YamlConfigurationChecks
             var entry = Path.Combine(directory, ServerConfiguration.FileName);
             var first = Path.Combine(directory, "first.yaml");
             var second = Path.Combine(directory, "second.yaml");
-            File.WriteAllText(first, "mongo:\n  endpoint: &shared alpha\n  databaseName: *shared\n");
-            File.WriteAllText(second, "redis:\n  endpoint: &shared beta\n  userName: *shared\n");
-            var baseline = settings.Read<Dictionary<string, object>>();
-            baseline.Remove("mongo");
-            baseline.Remove("redis");
-            baseline["include"] = new[] { "first", "second" };
+            const string mongo = "mongo:\n  endpoint: &shared alpha\n  databaseName: *shared\n";
+            const string redis = "redis:\n  endpoint: &shared beta\n  userName: *shared\n";
+            File.WriteAllText(first, mongo);
+            File.WriteAllText(second, redis);
+            var baseline = ConfigurationFixture.CreateDocument();
             baseline[ServerConfiguration.RunDirectoryKey] = "logs/original";
-            File.WriteAllText(entry, new SerializerBuilder().Build().Serialize(baseline));
+            var core = new SerializerBuilder().Build().Serialize(baseline);
+            void WriteEntry(string extra) => File.WriteAllText(entry, core + "\n" + extra + "\n");
+
+            WriteEntry("include: [first, second]");
             var configuration = new ServerConfiguration(entry);
             Check(configuration.Mongo!.DatabaseName == "alpha", "First document alias changed.");
             Check(configuration.Redis!.UserName == "beta", "Anchor names leaked across files.");
@@ -39,28 +43,47 @@ internal static class YamlConfigurationChecks
             Check(configuration.Redis!.UserName == "beta", "Loaded settings still depend on source include files.");
             Expect<FileNotFoundException>(() => new ServerConfiguration(entry));
 
-            File.WriteAllText(first, "shared: first\n");
-            File.WriteAllText(second, "shared: second\n");
-            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
-            File.WriteAllText(entry, "include: [first]\nshared: entry\n");
-            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
+            File.WriteAllText(first, mongo);
+            File.WriteAllText(second, redis);
+            _ = new ServerConfiguration(entry);
+            File.WriteAllText(second, "mongo:\n  endpoint: second\n");
+            ExpectInvalid(() => new ServerConfiguration(entry), "Duplicate top-level configuration key 'mongo'");
+            WriteEntry("include: [first]\nmongo: {endpoint: entry}");
+            ExpectInvalid(() => new ServerConfiguration(entry), "Duplicate top-level configuration key 'mongo'");
 
-            foreach (var invalid in new[] { "include: first", "include: [../first]", "include: [first.yaml]", "include: [first, first]",
-                "value: 1\nvalue: 2", "values:\n  value: 1\n  value: 2", "[one, two]", "---\na: 1\n---\nb: 2" })
+            // 空 include 是合法输入，重复文件名只能由 include 规则拒绝，不能误命中字段重名。
+            File.WriteAllText(first, "{}");
+            WriteEntry("include: [first]");
+            _ = new ServerConfiguration(entry);
+            foreach (var invalid in new[] { "include: first", "include: [../first]", "include: [first.yaml]", "include: [first, first]" })
             {
-                File.WriteAllText(entry, invalid);
-                Expect<InvalidDataException>(() => new ServerConfiguration(entry));
+                WriteEntry(invalid);
+                ExpectInvalid(() => new ServerConfiguration(entry), "include");
             }
 
-            File.WriteAllText(entry, "include: [first]\n");
+            WriteEntry("environment: duplicate");
+            ExpectInvalid(() => new ServerConfiguration(entry), "Invalid YAML configuration");
+            WriteEntry("mongo:\n  endpoint: first\n");
+            _ = new ServerConfiguration(entry);
+            WriteEntry("mongo:\n  endpoint: first\n  endpoint: second\n");
+            ExpectInvalid(() => new ServerConfiguration(entry), "Invalid YAML configuration");
+            foreach (var invalid in new[] { "[one, two]", core + "\n---\n" + core })
+            {
+                File.WriteAllText(entry, invalid);
+                ExpectInvalid(() => new ServerConfiguration(entry), "one YAML mapping document");
+            }
+
+            WriteEntry("include: [first]");
             File.WriteAllText(first, "include: [server]\n");
-            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
-            File.WriteAllText(entry, "include: [first, second]\n");
-            File.WriteAllText(first, "first: &onlyHere value\n");
-            File.WriteAllText(second, "second: *onlyHere\n");
-            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
-            File.WriteAllText(entry, "value: &recursive [*recursive]\n");
-            Expect<InvalidDataException>(() => new ServerConfiguration(entry));
+            ExpectInvalid(() => new ServerConfiguration(entry), "Circular configuration include");
+            WriteEntry("include: [first, second]");
+            File.WriteAllText(first, "mongo:\n  endpoint: &onlyHere value\n");
+            File.WriteAllText(second, "redis:\n  endpoint: value\n");
+            _ = new ServerConfiguration(entry);
+            File.WriteAllText(second, "redis:\n  endpoint: *onlyHere\n");
+            ExpectInvalid(() => new ServerConfiguration(entry), "Invalid YAML configuration");
+            WriteEntry("mongo: &recursive {endpoint: *recursive}");
+            ExpectInvalid(() => new ServerConfiguration(entry), "aliases must be acyclic");
         }
         finally
         {
@@ -90,5 +113,21 @@ internal static class YamlConfigurationChecks
         }
 
         throw new Exception($"Expected {typeof(T).Name}.");
+    }
+
+    private static void ExpectInvalid(Action action, string reason)
+    {
+        try
+        {
+            action();
+        }
+        catch (InvalidDataException error)
+        {
+            Check(error.Message.Contains(reason, StringComparison.OrdinalIgnoreCase),
+                $"Expected rejection for '{reason}', got: {error.Message}");
+            return;
+        }
+
+        throw new Exception($"Expected invalid configuration for '{reason}'.");
     }
 }

@@ -1,16 +1,16 @@
 # 代码 Review 路径
 
-更新时间：2026-11-25（Asia/Shanghai），当前在 `review-1124` 继续阅读。服务器已收敛为进程基础框架：ZooKeeper、进程连接、基础 RPC、日志和 ID。进程服务由 App 的单个 IoC 根容器组装，使用方通过构造函数接收依赖；`process.yaml` 的 `processes` 同时提供控制台初始启动数量和运行时首次连接门槛。独立存储工具与业务共享协议保留，启动不再创建实体或初始化业务服务。
+更新时间：2026-11-28（Asia/Shanghai），当前工作分支为 `review-1128`。服务器已收敛为进程基础框架：ZooKeeper、进程连接、基础 RPC、日志和 ID。进程服务由 App 的单个 IoC 根容器组装，使用方通过构造函数接收依赖；`process.yaml` 的 `processes` 同时提供控制台初始启动数量和运行时首次连接门槛。独立存储工具与业务共享协议保留，启动不再创建实体或初始化业务服务。
 
-用户已确认读完 Program、发现与连接主线、LinkService、PeerLink、transport.proto、三个通信/就绪测试，以及配置主线和 ServerServices；于 2026-11-25 确认 ID 模块已读完。ZooKeeper 的若干片段仍只代表局部阅读。详细确认、历史范围和剩余量估算统一见[代码 Review 进度](代码Review进度.md)。
+用户于 2026-11-28 确认：阅读计划除服务器控制台外基本读完；控制台只关注是否可用，考虑时间投入，主动跳过实现细读。此次新增勾选按“基本读完”记录，不表示逐文件精读或已执行测试。详细确认与范围统一见[代码 Review 进度](代码Review进度.md)。
 
-**下一步读 [ZooKeeperSession.cs 详解](代码详解/code/server/engine/ZooKeeperSession.cs.md)，对照[源码](../code/server/engine/ZooKeeperSession.cs)，再读 `ZooKeeperProxy` 的 worker 租约申请与释放。** 后续顺序为：ZooKeeper 会话和 worker 租约 → 日志 → 辅助类型与运行文件 → 其余配套测试，控制台和独立存储按需阅读。最新逐文件顺序见[后续阅读顺序](代码Review进度.md#下一步与后续阅读顺序)，其中全部 28 份详解已按新的逐段教学方式重写，入口见[详解首页](代码详解/README.md#当前-review-进度与下一步)；文档完成不改变用户已读记录。下面保留按主题组织的问题清单，不要求从第一节重读。阅读源码无需启动服务，测试入口与历史范围放在第 7 节。
+**本轮阅读基本完成，不再指定下一份必读文件，也不把控制台实现算作未完成任务。** 后续结合实际开发或具体问题，按“调用入口 → 对应实现 → 配套测试”回查。最新安排见[后续阅读安排](代码Review进度.md#下一步与后续阅读顺序)，逐文件文档见[详解首页](代码详解/README.md)。下面保留按主题组织的回查清单，不要求从第一节重读；阅读状态以进度文档为准。阅读源码无需启动服务，测试入口与历史范围放在第 7 节。
 
 ## 1. 工程边界和进程配置
 
 - [x] [TGame.slnx](../TGame.slnx)、[宿主工程](../code/server/app/TGame.Server.csproj)、[引擎工程](../code/server/engine/TGame.Server.Engine.csproj)、[业务共享工程](../code/shared/TGame.Shared.csproj)：用户已确认工程边界。宿主分别引用 Engine 和 Shared；Engine 只引用第三方包，两套协议各自在所属项目生成。
 - [x] [ProcessType.cs](../code/server/engine/configuration/ProcessType.cs)、[ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs)：角色、实例名称与数量的区别已有历史确认，本轮又确认读完 ServerGroup；实例统一使用 `Router1`、`Base1` 等带编号名称。
-- 历史已确认 [EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs)、[ServerEnvironment.cs](../code/shared/csharp/ServerEnvironment.cs) 的职责边界；新增运行目录变量等当前变化留在辅助类型阶段复核。
+- [x] [EngineEnvironment.cs](../code/server/engine/configuration/EngineEnvironment.cs)、[ServerRunFiles.cs](../code/server/engine/configuration/ServerRunFiles.cs) 随辅助类型阶段基本读完，运行目录与运行文件按需回查；[ServerEnvironment.cs](../code/shared/csharp/ServerEnvironment.cs) 的职责边界已有历史确认。
 - [x] [server.yaml](../code/server/config/server.yaml)、[process.yaml](../code/server/config/process.yaml)：用户确认读完入口及数量/连接配置。运维项按需对照 [ops.yaml](../code/server/config/ops.yaml)。
 - [x] [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs) 一次加载总入口与 include、展开文件内别名、严格绑定并校验核心配置、拓扑和数量。它持有配置值与类型连接图，私有 DTO 只用于绑定；App 仅注册这一配置实例及其持有的数量和选项对象，运行期间读取已加载值，不使用静态全局配置。
 - [x] [ServerGroup.cs](../code/server/engine/configuration/ServerGroup.cs) 与 [process.yaml](../code/server/config/process.yaml)：连接规则必须无环；数量同时决定控制台初始启动次数和运行时首次连接门槛，通过 `GetStartupMinimum(ProcessType)` 查询。实际实例仍由 ZooKeeper 动态发现，数量不是连接上限或合法编号范围。
@@ -26,7 +26,7 @@
 - [x] [IdGeneratorOptions.cs](../code/server/engine/identifiers/IdGeneratorOptions.cs)：ID 配置随模块完成，worker 根路径来自统一配置。
 - [x] [IdText.cs](../code/server/engine/identifiers/IdText.cs)：校验无前导零的正 `long` 十进制文本，不负责生成 ID 或判断业务对象是否存在。
 - [x] [SnowflakeIdGenerator.cs](../code/server/engine/identifiers/SnowflakeIdGenerator.cs)、[SnowflakeSequence.cs](../code/server/engine/identifiers/SnowflakeSequence.cs)：已完成实际生成器与算法阅读，包括时间戳、worker、序号组合、同毫秒序列耗尽、时钟回退及释放。
-- [ ] **当前下一步**：[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs) 的字段与通知任务 → `process` → `StateChanged` → `Invalidate` → `CheckActive`，再看 [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs) 的 `AcquireWorkerAsync` → `WorkerLease.DisposeAsync` → `ReleaseWorkerAsync` → `DisposeAsync` / `CloseAsync`。结合 [ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs)、[ops.yaml](../code/server/config/ops.yaml) 和 [ZooKeeperProxyChecks.cs](../code/tests/engine/ZooKeeperProxyChecks.cs) 理解连接、会话超时和租约失效。
+- [x] **会话与租约，基本读完**：[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs) 的字段与通知任务 → `process` → `StateChanged` → `Invalidate` → `CheckActive`，以及 [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs) 的 `AcquireWorkerAsync` → `WorkerLease.DisposeAsync` → `ReleaseWorkerAsync` → `DisposeAsync` / `CloseAsync`。结合 [ZooKeeperOptions.cs](../code/server/engine/ZooKeeperOptions.cs)、[ops.yaml](../code/server/config/ops.yaml) 和 [ZooKeeperProxyChecks.cs](../code/tests/engine/ZooKeeperProxyChecks.cs) 回查连接、会话超时和租约失效。
 
 区分三种标识：进程实例名表示本次占号的进程，连接 ID 表示一次连接，RPC 请求 ID 关联一次请求与响应。进程实例编号与雪花 worker 编号独立；当前节点不生成实体身份。调用与限制见[统一 ID 生成](雪花ID.md)。
 
@@ -45,11 +45,11 @@
 ## 4. 服务发现、拓扑与连接
 
 - [x] [ServerConfiguration.cs](../code/server/engine/configuration/ServerConfiguration.cs)：通过实例方法 `GetDialTargets`、`Dials` 和 `ArePeers` 按类型连接规则匹配动态成员，区分主动目标与入站邻居；`ValidateAcyclic` 独立负责启动依赖的无环检查。
-- [ ] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs)、[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：跟踪空地址占号、地址发布、成员快照和 Watch、身份校验、`SessionLost` 与释放。空地址节点不参与拨号，但可证明主动方持有实例身份。`EnsurePathAsync` 负责公共根目录，`TryCreateEphemeralAsync` 复用抢占步骤，`ReadDiscoveredProcessAsync` 处理单条发现记录；进程编号与 worker 编号仍各自管理申请范围和时序。
+- [x] [ZooKeeperProxy.cs](../code/server/engine/ZooKeeperProxy.cs)、[ZooKeeperSession.cs](../code/server/engine/ZooKeeperSession.cs)：空地址占号、地址发布、成员快照和 Watch、身份校验、`SessionLost` 与释放已随本轮计划基本读完。空地址节点不参与拨号，但可证明主动方持有实例身份。`EnsurePathAsync` 负责公共根目录，`TryCreateEphemeralAsync` 复用抢占步骤，`ReadDiscoveredProcessAsync` 处理单条发现记录；进程编号与 worker 编号仍各自管理申请范围和时序。
 - [x] [ServerNode.Discovery.cs](../code/server/engine/ServerNode.Discovery.cs)：用户于 2026-11-20 确认读完。成员新增、离开、地址变化和同名重建会取消旧任务并按快照收敛；首次达标后仍持续发现和维护全部匹配实例，门槛为 `0` 的目标也参与连接。
-- [ ] [DiscoveredProcess.cs](../code/server/engine/DiscoveredProcess.cs)：补看值比较与 `Generation` 的来源，关联 ZooKeeper 节点 `czxid` 和发现层的任务替换。
+- [x] [DiscoveredProcess.cs](../code/server/engine/DiscoveredProcess.cs)：值比较与 `Generation` 的来源，关联 ZooKeeper 节点 `czxid` 和发现层的任务替换。
 - [x] [LinkService.cs](../code/server/engine/LinkService.cs)：只读取 `peer`、`link` 元数据并交接；静态方向、占号与就绪校验在 `AcceptConnectAsync`，主动入口在 `ConnectAsync`。
-- [ ] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)：辅助类型阶段补看元数据键的统一声明。
+- [x] [TransportProtocol.cs](../code/server/engine/TransportProtocol.cs)：辅助类型阶段基本读完，元数据键的统一声明按需回查。
 - [x] [ServerNode.cs](../code/server/engine/ServerNode.cs)：沿连接维护、拨号、握手和读循环看成功与失败分支；`RunLinkAsync` 管理握手与连接登记/注销，`RunTransportAsync` 管理收发与取消协调；断线时清理连接、结束等待项，首次完成的就绪状态保持不变；重新连接后恢复对应通信。
 
 读完应能回答：为什么依赖关系不能成环？Router 为何可以先发布地址？Base 为何分别按 Router 与 DBMgr 的数量等待而不等 Gate？`Router: 2` 达标后为何全部断开仍保持就绪，但相关 RPC 仍可能失败？首次达标后为何仍会连接新增 Router？
@@ -76,19 +76,19 @@ sequenceDiagram
 
 ## 6. 日志、控制台与独立存储工具
 
-- [ ] [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs)、[GameLog.cs](../code/server/engine/GameLog.cs)：从 `ServerConfiguration.LoggingMinimumLevel` 追到日志实例创建、注入、级别过滤、文件开启与释放。理解 App 提前创建且最后释放日志的原因。缺省为 `Info`，当前本地配置为 `DEBUG`。
-- [ ] [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs)、[LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)：看事件、实例、连接、请求及等级如何写入 JSON；`ProcessReady` 的事件值为 `PROCESS_READY`。
-- [ ] [控制台工程](../tools/server-console/TGame.ServerConsole.csproj)、[ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)：控制台分别引用 Engine 与业务 Shared，直接传递源配置路径和本轮运行目录，起服数量和首次连接门槛读取同一配置；按启动计划起服、获配实例名和 `ProcessReady` 更新状态，再看精确停止、恢复和编译重启。
-- [ ] [Import-ServerTypes.ps1](../tools/scripts/powershell/Import-ServerTypes.ps1)、[Read-ServerGroup.ps1](../tools/scripts/powershell/Read-ServerGroup.ps1)：脚本从引擎唯一声明加载基础类型，按需加载业务环境变量，不复制常量。
-- [ ] [ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs)、[StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs)、[MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs)、[MongoStorageSettings.cs](../code/server/engine/configuration/MongoStorageSettings.cs)：`MongoStorageSettings` 是 Engine 中的纯配置，其余是 logic 中的独立存储实现。按需阅读，不把它们理解为当前启动阶段；存储实现未通过进程 RPC 暴露。
-- [ ] [profile.proto](../code/shared/protocols/profile.proto)、[ProfileLogEvents.cs](../code/shared/csharp/ProfileLogEvents.cs)：业务协议和事件仍由 Shared 持有，不进入引擎传输层。
+- [x] [ServerLogLevel.cs](../code/server/engine/logging/ServerLogLevel.cs)、[GameLog.cs](../code/server/engine/GameLog.cs)：从 `ServerConfiguration.LoggingMinimumLevel` 追到日志实例创建、注入、级别过滤、文件开启与释放。理解 App 提前创建且最后释放日志的原因。缺省为 `Info`，当前本地配置为 `DEBUG`。
+- [x] [ServerLogProtocol.cs](../code/server/engine/logging/ServerLogProtocol.cs)、[LogEventJson.cs](../code/server/engine/logging/LogEventJson.cs)：事件、实例、连接、请求及等级写入 JSON 的方式；`ProcessReady` 的事件值为 `PROCESS_READY`。
+- **跳过实现细读**：[控制台工程](../tools/server-console/TGame.ServerConsole.csproj)、[ConsoleSession.cs](../tools/server-console/ConsoleSession.cs)、[ServerInstance.cs](../tools/server-console/ServerInstance.cs)。根据用户 2026-11-28 的决定，控制台只关注配置选择、启动与停止、进程状态、日志查看等使用行为；出现故障或需要修改功能时再定位相关代码，不计入剩余阅读任务，也不标记为可用性已验证。
+- **工具脚本按需参考**：[Import-ServerTypes.ps1](../tools/scripts/powershell/Import-ServerTypes.ps1)、[Read-ServerGroup.ps1](../tools/scripts/powershell/Read-ServerGroup.ps1)：脚本从引擎唯一声明加载基础类型，按需加载业务环境变量，不复制常量。不新增为本轮必读项。
+- [x] **独立存储计划基本读完**：[StorageConnections.cs](../code/server/logic/storage/StorageConnections.cs)、[MongoStorage.cs](../code/server/logic/storage/MongoStorage.cs)、[ProfileStore.cs](../code/server/logic/storage/ProfileStore.cs)。配套 [MongoStorageSettings.cs](../code/server/engine/configuration/MongoStorageSettings.cs) 是 Engine 中的纯配置，其余是 logic 中的独立存储实现；这些实现不是当前启动阶段，也未通过进程 RPC 暴露。
+- **业务声明按需参考**：[profile.proto](../code/shared/protocols/profile.proto)、[ProfileLogEvents.cs](../code/shared/csharp/ProfileLogEvents.cs)：业务协议和事件仍由 Shared 持有，不进入引擎传输层。不新增为本轮必读项。
 
 ## 7. 用测试反查理解
 
 阅读测试不需要执行测试。优先关注准备状态、执行步骤与断言结果；完整、耗时或外部服务联调仍须按规范单独确认。
 
 - [x] 用户已确认读完 [RpcChecks.cs](../code/tests/engine/RpcChecks.cs)、[NodeCommunicationChecks.cs](../code/tests/engine/NodeCommunicationChecks.cs)、[StartupReadinessChecks.cs](../code/tests/engine/StartupReadinessChecks.cs)。
-- [ ] 后续测试按会话、日志、配置、动态发现及发布顺序选读，ID 测试按需回查，具体文件见[后续阅读顺序](代码Review进度.md#下一步与后续阅读顺序)。下列命令是入口索引，不是运行授权或本轮执行记录。
+- [x] 会话、日志、配置、IoC、动态发现及发布等计划内配套测试，随 2026-11-28 的整体确认记录为基本读完；ID 测试继续按需回查，具体文件见[回查索引](代码Review进度.md#下一步与后续阅读顺序)。下列命令是入口索引，不是运行授权或本轮执行记录。
 
 当前检查项目为 [TGame.EngineTests.csproj](../code/tests/engine/TGame.EngineTests.csproj)，实际入口集中在 [Program.cs](../code/tests/engine/Program.cs)。按功能选择命令：
 
@@ -108,4 +108,4 @@ sequenceDiagram
 
 命令示例与环境要求见[服务器启动与动态发现](服务器组配置.md)和[统一 ID 生成](雪花ID.md)。[2026-11-17 完整测试记录](2026-11-17完整测试记录.md)及 `docs/superpowers/` 中旧方案保留历史适用范围，其中实体与业务 RPC 的结果不代表当前框架已经验证。本文更新没有执行或宣称新的联调通过。
 
-每次完成一个小节后记录问题与用户确认结果。已理解的 C# 基础不必从头复讲，重点核对 IoC 组装与实例依赖、启动顺序、连接就绪和 RPC 错误行为。
+后续仅按具体问题、代码变化或开发任务回查，新增阅读记录仍以用户确认为准。已理解的 C# 基础不必从头复讲；控制台不安排实现细读。

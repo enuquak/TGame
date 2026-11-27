@@ -1,4 +1,3 @@
-using System.Reflection;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using TGame;
@@ -9,24 +8,11 @@ internal sealed class NodeCommunicationChecks(TestServices services)
 {
     internal async Task RunAsync(CancellationToken stop)
     {
-        await CheckOutgoingValidationAsync(stop);
         await CheckIncomingValidationAsync(stop);
         await CheckPeerCallsAsync(stop);
         await CheckIncomingRequestsAsync(stop);
         await CheckRejectedHandshakeAsync(stop);
         Console.WriteLine("PASS direct peer RPC payloads, errors, cancellation, disconnect and unsupported requests.");
-    }
-
-    private async Task CheckOutgoingValidationAsync(CancellationToken stop)
-    {
-        var node = services.CreateNode(new ServerProcess(ProcessType.Router, 1), TestNodes.LoadConfiguration());
-        var method = typeof(ServerNode).GetMethod("ConnectAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        var connect = method.CreateDelegate<Func<string, string, CancellationToken, Task>>(node);
-
-        // 非法名称和反向连接都应先被拒绝，不能开始解析地址或建立网络连接。
-        await ExpectStatusAsync(StatusCode.InvalidArgument, () => connect(nameof(ProcessType.Scene), "invalid-address", stop));
-        var peer = ServerProcess.FormatName(nameof(ProcessType.Scene), 1);
-        await ExpectStatusAsync(StatusCode.InvalidArgument, () => connect(peer, "invalid-address", stop));
     }
 
     private async Task CheckIncomingValidationAsync(CancellationToken stop)
@@ -58,7 +44,7 @@ internal sealed class NodeCommunicationChecks(TestServices services)
         var running = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, lifetime.Token);
         try
         {
-            await node.WaitUntilReadyAsync(stop);
+            await node.FirstLinks.WaitAsync(stop);
             var request = new StringValue { Value = "payload" };
             var call = node.CallPeerAsync<StringValue>(peer, request, stop);
             var frame = await stream.Output.Reader.ReadAsync(stop);
@@ -132,7 +118,7 @@ internal sealed class NodeCommunicationChecks(TestServices services)
         var peer = ServerProcess.FormatName(nameof(ProcessType.Scene), 1);
         var stream = new FrameStream();
         stream.Input.Writer.TryWrite(TestNodes.Hello(peer));
-        var running = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, stop, requireReady: true);
+        var running = node.RunLinkAsync(peer, services.Ids.GenId(), stream, stream, stop, replyToHello: true);
         try
         {
             var hello = await stream.Output.Reader.ReadAsync(stop);

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Diagnostics;
+using System.Globalization;
 using TGame;
 using TGame.Server;
 using TGame.Server.Engine;
@@ -18,6 +20,7 @@ internal static class LogLevelChecks
         try
         {
             CheckSettings(root);
+            CheckStartupFailure(root);
             foreach (var minimum in Enum.GetValues<ServerLogLevel>())
             {
                 using var output = new StringWriter();
@@ -66,6 +69,16 @@ internal static class LogLevelChecks
                 }
 
                 var files = Directory.GetFiles(logRoot, "*.log", SearchOption.AllDirectories);
+                foreach (var file in files)
+                {
+                    if (Path.GetDirectoryName(file) != Path.Combine(logRoot, "Login1") ||
+                        !DateTime.TryParseExact(Path.GetFileNameWithoutExtension(file), "yyyyMMddHHmm",
+                            CultureInfo.InvariantCulture, DateTimeStyles.None, out var hour) || hour.Minute != 0)
+                    {
+                        throw new Exception("Server logs must use Login1/yyyyMMddHH00.log for hourly files.");
+                    }
+                }
+
                 var lines = files.Order(StringComparer.Ordinal).SelectMany(File.ReadLines).ToArray();
                 CheckRows(lines[..^1], minimum, process.Name);
                 var consoleLines = error.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
@@ -77,6 +90,7 @@ internal static class LogLevelChecks
             }
 
             CheckLifecycle(process);
+            ServerLogFileChecks.Run(Path.Combine(root, "rolling"));
         }
         finally
         {
@@ -86,7 +100,65 @@ internal static class LogLevelChecks
             Directory.Delete(root, recursive: true);
         }
 
-        Console.WriteLine("PASS logger instance lifecycle and isolation, DEBUG/INFO/ERROR filtering, JSON fields, server log configuration and optional console mirroring.");
+        Console.WriteLine("PASS logger lifecycle, levels, JSON, console mirroring, hourly/size filenames, restart append and concurrent writes.");
+    }
+
+    private static void CheckStartupFailure(string root)
+    {
+        var runDirectory = Directory.CreateDirectory(Path.Combine(root, "failed-startup")).FullName;
+        var missingConfiguration = Path.Combine(root, "missing-server.yaml");
+        ExpectStartupFailure(root, missingConfiguration, runDirectory, missingConfiguration);
+
+        var configuration = Path.Combine(root, "startup.yaml");
+        var document = ConfigurationFixture.CreateDocument();
+        var zooKeeper = (Dictionary<string, object>)document[ZooKeeperOptions.SectionName];
+        // 即使运行目录校验失效，也只在本地解析端口时失败，不连接外部服务。
+        zooKeeper["endpoint"] = "127.0.0.1:invalid-port";
+        File.WriteAllText(configuration, new SerializerBuilder().Build().Serialize(document));
+        var missingDirectory = Path.Combine(root, "unprepared-run");
+        ExpectStartupFailure(root, configuration, missingDirectory, "Runtime directory does not exist");
+        if (Directory.Exists(missingDirectory))
+        {
+            throw new Exception("The server must not create an unprepared runtime directory.");
+        }
+    }
+
+    private static void ExpectStartupFailure(string root, string configuration, string runDirectory, string expectedDetail)
+    {
+        var start = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        start.ArgumentList.Add(typeof(ServerServices).Assembly.Location);
+        start.ArgumentList.Add(nameof(ProcessType.Router));
+        start.Environment[EngineEnvironment.Config] = configuration;
+        start.Environment[EngineEnvironment.RunDirectory] = runDirectory;
+        start.Environment[EngineEnvironment.LogRoot] = Path.Combine(root, "startup-fallback");
+        using var child = Process.Start(start) ?? throw new Exception("Could not start the failure fixture.");
+        var output = child.StandardOutput.ReadToEndAsync();
+        var error = child.StandardError.ReadToEndAsync();
+        if (!child.WaitForExit(5000))
+        {
+            child.Kill(entireProcessTree: true);
+            child.WaitForExit();
+            throw new Exception("The invalid configuration did not stop startup.");
+        }
+
+        Task.WhenAll(output, error).GetAwaiter().GetResult();
+        var lines = Directory.GetFiles(root, "*.log", SearchOption.AllDirectories).SelectMany(File.ReadLines);
+        bool recorded = lines.Any(line =>
+        {
+            using var row = JsonDocument.Parse(line);
+            return row.RootElement.GetProperty(ServerLogFields.Event).GetString() == ServerLogEvents.ProcessFailed &&
+                row.RootElement.GetProperty(ServerLogFields.Detail).GetString()!.Contains(expectedDetail, StringComparison.Ordinal);
+        });
+        if (child.ExitCode == 0 || !recorded)
+        {
+            throw new Exception($"Startup failure must persist its configuration error before claiming an identity. {error.Result}");
+        }
     }
 
     private static void CheckLifecycle(ServerProcess process)
@@ -152,8 +224,9 @@ internal static class LogLevelChecks
         }
 
         var path = Path.Combine(root, "server.yaml");
-        var values = new ServerConfiguration(source).Read<Dictionary<string, object>>();
-        var yaml = new SerializerBuilder().Build().Serialize(values).Replace("loggingMinimumLevel: DEBUG", "");
+        var values = ConfigurationFixture.CreateDocument();
+        values.Remove("loggingMinimumLevel");
+        var yaml = new SerializerBuilder().Build().Serialize(values);
         File.WriteAllText(path, yaml);
         if (ServerConfiguration.Load(path).LoggingMinimumLevel != ServerLogLevel.Info)
         {

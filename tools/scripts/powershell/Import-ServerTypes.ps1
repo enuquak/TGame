@@ -25,6 +25,7 @@ $sources = @('ProcessType.cs', 'ServerGroup.cs', 'ServerRunFiles.cs', 'ServerCon
 $sources += Join-Path $engineDirectory 'identifiers/IdText.cs'
 $sources += Join-Path $engineDirectory 'identifiers/IdGeneratorOptions.cs'
 $sources += Join-Path $engineDirectory 'ZooKeeperOptions.cs'
+$sources += Join-Path $engineDirectory 'ZooKeeperPath.cs'
 $sources += Join-Path $engineDirectory 'logging/ServerLogLevel.cs'
 $sources += Join-Path $engineDirectory 'logging/ServerLogProtocol.cs'
 $references = @(Get-ChildItem -LiteralPath (Join-Path $PSHOME 'ref') -Filter '*.dll' | ForEach-Object FullName)

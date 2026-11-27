@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using TGame;
 using TGame.ServerConsole;
-using YamlDotNet.Serialization;
 
 if (args is ["--identity-only"] or ["--state-only"])
 {
@@ -11,6 +10,7 @@ if (args is ["--identity-only"] or ["--state-only"])
         {
             var root = Directory.CreateTempSubdirectory("tgame-console-state-").FullName;
             ConfigChecks.Run(root);
+            PreferenceChecks.Run(root);
             GroupConfigChecks.Run(root);
             LogChecks.Run(root);
         }
@@ -143,12 +143,10 @@ try
     }
 
     var loaded = new ServerConfiguration(configuration);
-    var counts = loaded.Read<Dictionary<string, int>>(ServerGroup.SectionName);
-    var document = loaded.Read<Dictionary<string, object>>();
+    var counts = Enum.GetValues<ProcessType>().ToDictionary(type => type.ToString(), loaded.Group.GetStartupMinimum);
     int expectedInstances = session.Instances.Count + 1;
     counts[nameof(ProcessType.Login)]++;
-    document[ServerGroup.SectionName] = counts;
-    File.WriteAllText(configuration, new SerializerBuilder().Build().Serialize(document));
+    GroupConfigChecks.UpdateCounts(configuration, counts);
     bool instancesChanged = false;
     session.InstancesChanged += () => instancesChanged = true;
 

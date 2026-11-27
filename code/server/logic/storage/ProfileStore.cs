@@ -34,21 +34,23 @@ internal sealed class ProfileStore : IDisposable
     {
         this.log = log;
         this.ids = ids;
-        cacheKeyPrefix = settings.ProfileCachePrefix;
+        cacheKeyPrefix = settings.Redis!.ProfileCachePrefix;
         this.mongo = mongo;
         this.redis = redis;
-        summaries = mongo.GetDatabase(settings.MongoDatabase).GetCollection<BsonDocument>(CollectionName);
+        summaries = mongo.GetDatabase(settings.Mongo!.DatabaseName).GetCollection<BsonDocument>(CollectionName);
         cache = redis.GetDatabase();
     }
 
     public static async Task<ProfileStore> OpenAsync(ServerConfiguration settings, IdGenerator ids, GameLog log, CancellationToken stop)
     {
         settings.ValidateProfileStorage();
+        var mongoSettings = settings.Mongo!;
+        var redisSettings = settings.Redis!;
         var options = new ConfigurationOptions
         {
-            EndPoints = { settings.ProfileRedis },
-            User = settings.RedisUser,
-            Password = StorageConnections.Password(settings.RedisPasswordVariable),
+            EndPoints = { redisSettings.Endpoint },
+            User = redisSettings.UserName,
+            Password = StorageConnections.Password(redisSettings.PasswordVariable),
             AbortOnConnectFail = false,
             ConnectTimeout = RedisTimeoutMilliseconds,
             AsyncTimeout = RedisTimeoutMilliseconds,
@@ -62,7 +64,7 @@ internal sealed class ProfileStore : IDisposable
         {
             log.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "MongoDB 客户端创建完成");
 
-            await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(settings.MongoDatabase), stop);
+            await MongoStorage.CheckConnectionAsync(mongo.GetDatabase(mongoSettings.DatabaseName), stop);
             log.Info(ServerLogEvents.InitStepCompleted, nameof(ProcessType.Profile), detail: "MongoDB 连接检查完成");
 
             var redis = await ConnectionMultiplexer.ConnectAsync(options);

@@ -6,7 +6,8 @@ namespace TGame.ServerConsole;
 internal sealed class ProcessPage(ServerInstance instance) : INotifyPropertyChanged
 {
     public ServerInstance Instance { get; } = instance;
-    public string Role { get; private set; } = instance.Name;
+    public string SlotName => Instance.SlotName;
+    public string Name { get; private set; } = instance.Name;
     public int? Pid { get; private set; } = instance.Pid;
     public string Status { get; private set; } = instance.Status;
     public string PidLabel => $"PID {Pid?.ToString() ?? "—"}";
@@ -15,7 +16,7 @@ internal sealed class ProcessPage(ServerInstance instance) : INotifyPropertyChan
     {
         ServerStatus.Ready => Brushes.SeaGreen,
         ServerStatus.Starting or ServerStatus.Initializing => Brushes.SteelBlue,
-        ServerStatus.Disconnected or ServerStatus.Stopping => Brushes.DarkGoldenrod,
+        ServerStatus.Stopping => Brushes.DarkGoldenrod,
         ServerStatus.Failed => Brushes.IndianRed,
         _ => Brushes.SlateGray
     };
@@ -53,9 +54,9 @@ internal sealed class ProcessPage(ServerInstance instance) : INotifyPropertyChan
             TopLine = SelectedLine = null;
         }
 
-        if (changedInstance || Instance.Status != Status || Instance.Name != Role)
+        if (changedInstance || Instance.Status != Status || Instance.Name != Name)
         {
-            Role = Instance.Name;
+            Name = Instance.Name;
             Pid = Instance.Pid;
             Status = Instance.Status;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(null));

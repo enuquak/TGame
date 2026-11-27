@@ -16,8 +16,7 @@ internal static class MongoStorageChecks
     public static async Task RunAsync()
     {
         var config = Path.GetTempFileName();
-        var defaults = Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName);
-        var document = ServerConfiguration.Load(defaults).Read<Dictionary<string, object>>();
+        var document = ConfigurationFixture.CreateDocument();
         void WriteSettings(string yaml)
         {
             var settings = new DeserializerBuilder().Build().Deserialize<Dictionary<string, object>>(yaml);

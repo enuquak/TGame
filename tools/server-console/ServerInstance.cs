@@ -11,7 +11,6 @@ internal static class ServerStatus
     public const string Starting = "启动中";
     public const string Initializing = "初始化中";
     public const string Ready = "就绪";
-    public const string Disconnected = "连接不全";
     public const string Stopping = "停止中";
     public const string Stopped = "已停止";
     public const string Failed = "异常退出";
@@ -35,7 +34,8 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
     private bool identityResolved;
     private long startedUtcTicks;
     private RollingLog? log;
-    private bool initializing, initialized, connected, failed;
+    private RollingLog? startupLog;
+    private bool initializing, ready, failed;
 
     public string Role { get; } = role;
     public string Name { get; private set; } = ServerProcess.FormatName(role, channelId);
@@ -62,7 +62,7 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
         Reset();
         runDir = directory;
         this.logRoot = logRoot;
-        logDir = Path.Combine(logRoot, Name + "Server");
+        logDir = Path.Combine(logRoot, Name);
         var exe = Path.Combine(snapshot, ExecutableName);
         var saved = File.Exists(IdentityPath)
             ? JsonSerializer.Deserialize<Identity>(File.ReadAllText(IdentityPath)) ?? throw new InvalidDataException(IdentityPath)
@@ -82,7 +82,8 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
 
         if (Pid != null)
         {
-            log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
+            startupLog = new RollingLog(ServerRunFiles.StartupLogDirectory(runDir, Pid.Value, startedUtcTicks), startedUtcTicks);
+            log = new RollingLog(logDir, startedUtcTicks);
         }
 
         Refresh();
@@ -148,7 +149,8 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
         process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{Name} 启动失败。");
         Pid = process.Id;
         startedUtcTicks = process.StartTime.ToUniversalTime().Ticks;
-        log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
+        startupLog = new RollingLog(ServerRunFiles.StartupLogDirectory(runDir, Pid.Value, startedUtcTicks), startedUtcTicks);
+        log = new RollingLog(logDir, startedUtcTicks);
         Save(new Identity(process.Id, startedUtcTicks));
         File.Delete(LaunchMarker);
         Status = ServerStatus.Starting;
@@ -179,21 +181,20 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
                 }
 
                 Name = assigned.Name;
-                logDir = Path.Combine(logRoot, Name + "Server");
-                log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
+                logDir = Path.Combine(logRoot, Name);
+                log = new RollingLog(logDir, startedUtcTicks);
                 identityResolved = true;
             }
         }
 
-        bool caughtUp;
         try
         {
-            caughtUp = log?.ReadAvailable(AddLine) ?? true;
+            startupLog?.ReadAvailable(line => AddLine(line, Role));
+            log?.ReadAvailable(line => AddLine(line, Name));
         }
         catch (IOException e) when (e is DirectoryNotFoundException || (e.HResult & HResultCodeMask) is SharingViolation or LockViolation)
         {
-            // Retry a shard that disappeared or was temporarily locked while the server rolled its log.
-            caughtUp = false;
+            // 分片滚动或暂时锁定时，下次刷新继续读取，不改变已知的进程状态。
         }
 
         if (lines.Count > MaxRetainedLines)
@@ -221,22 +222,16 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
             return;
         }
 
-        if (!caughtUp)
+        if (ready)
         {
-            Status = ServerStatus.Initializing;
-            return;
-        }
-
-        if (initialized)
-        {
-            Status = connected ? ServerStatus.Ready : ServerStatus.Disconnected;
+            Status = ServerStatus.Ready;
             return;
         }
 
         Status = initializing ? ServerStatus.Initializing : ServerStatus.Starting;
     }
 
-    private void AddLine(string line)
+    private void AddLine(string line, string expectedInstance)
     {
         try
         {
@@ -248,7 +243,7 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
                 return;
             }
 
-            if (row.TryGetProperty(ServerLogFields.Instance, out var instance) && instance.GetString() != Name)
+            if (row.TryGetProperty(ServerLogFields.Instance, out var instance) && instance.GetString() != expectedInstance)
             {
                 return;
             }
@@ -278,13 +273,7 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
                 initializing = true;
                 break;
             case ServerLogEvents.ProcessReady:
-                initialized = true;
-                break;
-            case ServerLogEvents.LinksReady:
-                connected = true;
-                break;
-            case ServerLogEvents.LinksLost:
-                connected = false;
+                ready = true;
                 break;
             case ServerLogEvents.ProcessFailed:
                 failed = true;
@@ -331,11 +320,12 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
         Pid = null;
         Name = SlotName;
         identityResolved = false;
-        logDir = Path.Combine(logRoot, Name + "Server");
+        logDir = Path.Combine(logRoot, Name);
         log = null;
+        startupLog = null;
         lines.Clear();
         LineCount = 0;
-        initializing = initialized = connected = failed = false;
+        initializing = ready = failed = false;
         Status = ServerStatus.NotStarted;
     }
 

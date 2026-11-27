@@ -9,7 +9,9 @@ internal static class ServerConfigurationChecks
         var path = Path.GetTempFileName();
         var defaults = Path.Combine(AppContext.BaseDirectory, "config", ServerConfiguration.FileName);
         var baseline = ServerConfiguration.Load(defaults);
-        var document = baseline.Read<Dictionary<string, object>>();
+        var document = ConfigurationFixture.CreateDocument();
+        var baselineTargets = Enum.GetValues<ProcessType>().ToDictionary(type => type.ToString(),
+            type => baseline.GetDialTargets(type).Select(target => target.ToString()).ToArray());
         void WriteConnections(IReadOnlyDictionary<string, string[]> configured)
         {
             document[ServerConfiguration.SectionName] = configured;
@@ -20,7 +22,7 @@ internal static class ServerConfigurationChecks
         {
             WriteConnections(new Dictionary<string, string[]>());
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));
-            WriteConnections(baseline.Read<Dictionary<string, string[]>>(ServerConfiguration.SectionName));
+            WriteConnections(baselineTargets);
             var configuration = ServerConfiguration.Load(path);
 
             File.WriteAllText(path, "{}");
@@ -32,7 +34,7 @@ internal static class ServerConfigurationChecks
             var independent = ServerConfiguration.Load(defaults);
             Check(!ReferenceEquals(configuration, independent), "Independent configurations share an instance.");
 
-            var invalid = new ServerConfiguration(defaults).Read<Dictionary<string, string[]>>(ServerConfiguration.SectionName);
+            var invalid = new Dictionary<string, string[]>(baselineTargets);
             invalid[nameof(ProcessType.Router)] = [nameof(ProcessType.Base)];
             WriteConnections(invalid);
             Expect<InvalidDataException>(() => ServerConfiguration.Load(path));

@@ -41,18 +41,23 @@ internal static class SettingsChecks
             File.WriteAllText(path, yaml);
             var settings = ServerConfiguration.Load(path);
             settings.ValidateProfileStorage();
-            if (settings.MongoDatabase != "game_staging" || settings.MongoUser != "game_service" ||
-                settings.MongoPasswordVariable != "GAME_DB_SECRET" || settings.RedisPasswordVariable != "GAME_CACHE_SECRET" ||
-                settings.ProfileCachePrefix != "game:staging:profile:" || settings.DiscoveryRoot != "/game/staging" ||
-                settings.ProfileMongo != "mongo-b:27017" ||
-                settings.ProfileRedis != "redis-a:6379" || settings.RedisUser != "cache_service" || settings.ZooKeeper != "zk-a:2181")
+            if (settings.Mongo!.DatabaseName != "game_staging" ||
+                settings.Mongo.UserName != "game_service" ||
+                settings.Mongo.PasswordVariables.Profile != "GAME_DB_SECRET" ||
+                settings.Redis!.PasswordVariable != "GAME_CACHE_SECRET" ||
+                settings.Redis.ProfileCachePrefix != "game:staging:profile:" ||
+                settings.ZooKeeperOptions.DiscoveryRoot != "/game/staging" ||
+                settings.Mongo.Endpoint != "mongo-b:27017" ||
+                settings.Redis.Endpoint != "redis-a:6379" ||
+                settings.Redis.UserName != "cache_service" ||
+                settings.ZooKeeperOptions.Endpoint != "zk-a:2181")
             {
                 throw new Exception("Selected environment settings were replaced by fixed test values.");
             }
 
             File.WriteAllText(path, core);
             var coreSettings = ServerConfiguration.Load(path);
-            if (coreSettings.ZooKeeper != "zk-a:2181" || coreSettings.DiscoveryRoot != "/game/staging")
+            if (coreSettings.ZooKeeperOptions.Endpoint != "zk-a:2181" || coreSettings.ZooKeeperOptions.DiscoveryRoot != "/game/staging")
             {
                 throw new Exception("The process framework requires only ZooKeeper settings.");
             }
@@ -66,7 +71,7 @@ internal static class SettingsChecks
             {
             }
 
-            foreach (var invalid in new[] { "", "mongoDatabase: only-one-setting", yaml.Replace("/game/staging", "relative-root") })
+            foreach (var invalid in new[] { "", yaml + "\nmongoDatabase: unknown-setting", yaml.Replace("/game/staging", "relative-root") })
             {
                 File.WriteAllText(path, invalid);
                 try

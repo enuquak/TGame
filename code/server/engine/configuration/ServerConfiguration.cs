@@ -19,7 +19,6 @@ public sealed class ServerConfiguration
     public const string RunDirectoryKey = "runDirectory";
     public const string SectionName = "connections";
     private const int MaximumNodeDepth = 64;
-    private readonly YamlMappingNode root;
     private readonly IReadOnlyDictionary<ProcessType, IReadOnlyList<ProcessType>> targets;
 
     public string Environment { get; }
@@ -31,17 +30,6 @@ public sealed class ServerConfiguration
     public IdGeneratorOptions Identifiers { get; }
     public ServerGroup Group { get; }
 
-    public string ZooKeeper => ZooKeeperOptions.Endpoint;
-    public string DiscoveryRoot => ZooKeeperOptions.DiscoveryRoot;
-    public string ProfileMongo => Mongo?.Endpoint ?? "";
-    public string ProfileRedis => Redis?.Endpoint ?? "";
-    public string MongoDatabase => Mongo?.DatabaseName ?? "";
-    public string MongoUser => Mongo?.UserName ?? "";
-    public string MongoPasswordVariable => Mongo?.PasswordVariables.Profile ?? "";
-    public string RedisUser => Redis?.UserName ?? "";
-    public string RedisPasswordVariable => Redis?.PasswordVariable ?? "";
-    public string ProfileCachePrefix => Redis?.ProfileCachePrefix ?? "";
-
     public static string ConfigurationPath => Path.Combine("code", "server", "config", FileName);
     public string SourcePath { get; }
 
@@ -49,8 +37,8 @@ public sealed class ServerConfiguration
     {
         SourcePath = Path.GetFullPath(path);
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        root = Load(SourcePath, new HashSet<string>(comparer));
-        var document = Read<ConfigurationDocument>();
+        var root = Load(SourcePath, new HashSet<string>(comparer));
+        var document = Bind(root, SourcePath);
         Environment = document.Environment;
         RunDirectory = document.RunDirectory;
         LoggingMinimumLevel = document.LoggingMinimumLevel;
@@ -84,30 +72,24 @@ public sealed class ServerConfiguration
         targets = ValidateTargets(ParseTargets(document.Connections));
     }
 
-    public T Read<T>(string? section = null)
+    private static ConfigurationDocument Bind(YamlMappingNode root, string path)
     {
-        YamlNode node = root;
-        if (section is not null && !root.Children.TryGetValue(new YamlScalarNode(section), out node!))
-        {
-            throw new InvalidDataException($"Missing configuration section '{section}' in {SourcePath}.");
-        }
-
         var builder = new DeserializerBuilder();
         builder.WithNamingConvention(CamelCaseNamingConvention.Instance);
         builder.WithDuplicateKeyChecking();
         try
         {
-            var value = builder.Build().Deserialize<T>(Serialize(node));
+            var value = builder.Build().Deserialize<ConfigurationDocument>(Serialize(root));
             if (value is null)
             {
-                throw new InvalidDataException($"Empty configuration section '{section}' in {SourcePath}.");
+                throw new InvalidDataException($"Empty configuration in {path}.");
             }
 
             return value;
         }
         catch (YamlException error)
         {
-            throw new InvalidDataException($"Invalid configuration section '{section ?? "root"}' in {SourcePath}.", error);
+            throw new InvalidDataException($"Invalid configuration in {path}.", error);
         }
     }
 

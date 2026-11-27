@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -17,7 +18,7 @@ internal static class LogChecks
         var name = ServerProcess.FormatName(ProcessName, 1);
         var id = Guid.NewGuid().ToString("N");
         var run = Directory.CreateDirectory(Path.Combine(checkout, "build", "log-check", id)).FullName;
-        var logs = Directory.CreateDirectory(Path.Combine(run, name + "Server")).FullName;
+        var logs = Directory.CreateDirectory(Path.Combine(run, name)).FullName;
         var exe = Path.Combine(run, name + "Server.exe");
         File.Copy(Path.Combine(Environment.SystemDirectory, "sort.exe"), exe);
         using var child = Process.Start(new ProcessStartInfo(exe)
@@ -31,15 +32,17 @@ internal static class LogChecks
         {
             var identity = Path.Combine(run, name + ".json");
             long ticks = child.StartTime.ToUniversalTime().Ticks;
-            string prefix = Path.Combine(logs, $"{child.Id}-{ticks}-2026110712");
+            var started = child.StartTime;
+            var hour = started.Date.AddHours(started.Hour);
+            string prefix = Path.Combine(logs, hour.ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture));
 
             var options = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-            string Row(string ev, string detail = "", int? pid = null, string? role = null, long? time = null) =>
+            string Row(string ev, string detail = "", int? pid = null, string? role = null, long? time = null, string? instance = null) =>
                 JsonSerializer.Serialize(new
                 {
                     pid = pid ?? child.Id,
                     role = role ?? ProcessName,
-                    instance = name,
+                    instance = instance ?? name,
                     time = new DateTimeOffset(time ?? DateTime.UtcNow.Ticks, TimeSpan.Zero),
                     ev,
                     detail
@@ -52,9 +55,13 @@ internal static class LogChecks
             SaveIdentity(ticks);
             File.WriteAllLines(prefix + ".log", [
                 Row(ServerLogEvents.ProcessFailed, time: ticks - 1), Row(ServerLogEvents.ProcessFailed, pid: 1),
-                Row(ServerLogEvents.ProcessFailed, role: nameof(ProcessType.Router)), Row(ServerLogEvents.Listen)
+                Row(ServerLogEvents.ProcessFailed, role: nameof(ProcessType.Router)),
+                Row(ServerLogEvents.ProcessFailed, instance: "LogCheck2"), Row(ServerLogEvents.Listen)
             ]);
             File.WriteAllText(Path.Combine(logs, $"{child.Id}-{ticks - 1}-2026110712.log"), Row(ServerLogEvents.ProcessFailed) + "\n");
+            File.WriteAllText(Path.Combine(logs, "202602300000.log"), Row(ServerLogEvents.ProcessFailed) + "\n");
+            File.WriteAllText(Path.Combine(logs, hour.AddHours(-1).ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture) + ".log"),
+                Row(ServerLogEvents.ProcessFailed) + "\n");
             using var item = new ServerInstance(ProcessName);
             item.Open(run, run, run);
             Check(item.Alive && item.LineCount == 1 && item.Status == ServerStatus.Initializing, "listening starts initialization");
@@ -66,18 +73,28 @@ internal static class LogChecks
             Check(item.LineCount == 4 && item.Status == ServerStatus.Ready && item.Lines[^1] == "{damaged line}", "process readiness and diagnostic row");
 
             File.WriteAllLines(prefix + "_999.log", Enumerable.Repeat(Row(TrafficEvent, new string('a', 256)), 1200));
-            File.WriteAllText(prefix + "_1000.log", Row(ServerLogEvents.LinksLost) + "\n");
-            item.Open(run, run, run);
-            Check(item.Status == ServerStatus.Initializing, "replay cannot use a historical green light");
+            File.WriteAllText(prefix + "_1000.log", Row(TrafficEvent, "last shard") + "\n");
+            item.Refresh();
+            Check(item.Status == ServerStatus.Ready, "log backlog cannot revoke process readiness");
             for (int tick = 0; tick < 8; tick++)
             {
                 item.Refresh();
             }
 
-            Check(item.LineCount == 1205 && item.Lines.Count == ServerInstance.MaxRetainedLines && item.Status == ServerStatus.Disconnected, "numeric roll order and bounded history");
+            Check(item.LineCount == 1205 && item.Lines.Count == ServerInstance.MaxRetainedLines && item.Status == ServerStatus.Ready, "numeric roll order and bounded history");
 
-            var next = prefix.Replace("2026110712", "2026110713") + ".log";
-            var ready = Row(ServerLogEvents.LinksReady, "中文");
+            var minuteShard = Path.Combine(logs, hour.AddMinutes(17).ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture) + ".log");
+            File.WriteAllText(minuteShard, Row(TrafficEvent, "size roll") + "\n");
+            item.Refresh();
+            Check(item.LineCount == 1206 && item.Status == ServerStatus.Ready, "size roll with actual minute");
+
+            File.AppendAllText(prefix + ".log", Row(TrafficEvent, "late old-process record") + "\n");
+            item.Refresh();
+            Check(item.LineCount == 1207 && item.Lines[^1].Contains("late old-process record", StringComparison.Ordinal),
+                "process handover does not skip late writes to an earlier shard");
+
+            var next = Path.Combine(logs, hour.AddHours(1).ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture) + ".log");
+            var ready = Row(TrafficEvent, "中文");
             var bytes = Encoding.UTF8.GetBytes(ready + "\r\n");
             int split = Array.IndexOf(bytes, (byte)0xe4) + 1;
             Check(split > 1, "multibyte fixture");
@@ -86,18 +103,19 @@ internal static class LogChecks
                 writer.Write(bytes.AsSpan(0, split));
                 writer.Flush();
                 item.Refresh();
-                Check(item.LineCount == 1205 && item.Status == ServerStatus.Disconnected, "partial UTF-8 row");
+                Check(item.LineCount == 1207 && item.Status == ServerStatus.Ready, "partial UTF-8 row");
                 writer.Write(bytes.AsSpan(split));
             }
 
             item.Refresh();
             Check(item.Status == ServerStatus.Ready && item.Lines[^1] == ready, "completed row after hour roll");
-            File.WriteAllText(next, Row(ServerLogEvents.LinksLost) + "\n");
+            var truncated = Row(TrafficEvent);
+            File.WriteAllText(next, truncated + "\n");
             item.Refresh();
-            Check(item.Status == ServerStatus.Disconnected, "truncated shard");
-            File.AppendAllText(next, Row(ServerLogEvents.ProcessFailed) + "\n" + Row(ServerLogEvents.LinksReady) + "\n");
+            Check(item.Status == ServerStatus.Ready && item.Lines[^1] == truncated, "truncated shard preserves readiness");
+            File.AppendAllText(next, Row(ServerLogEvents.ProcessFailed) + "\n" + Row(ServerLogEvents.ProcessReady) + "\n");
             item.Refresh();
-            Check(item.Alive && item.Status == ServerStatus.Failed, "failure overrides connectivity");
+            Check(item.Alive && item.Status == ServerStatus.Failed, "failure overrides readiness");
 
             SaveIdentity(ticks + TimeSpan.TicksPerSecond);
             using var reused = new ServerInstance(ProcessName);
@@ -107,6 +125,24 @@ internal static class LogChecks
             using var otherPath = new ServerInstance(ProcessName);
             otherPath.Open(run, run, Path.Combine(run, "other"));
             Check(!otherPath.Alive, "unrelated apphost path");
+
+            var interleaved = Directory.CreateDirectory(Path.Combine(run, "interleaved")).FullName;
+            var firstFile = Path.Combine(interleaved, hour.ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture) + ".log");
+            var secondFile = Path.Combine(interleaved, hour.ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture) + "_001.log");
+            var incomplete = Encoding.UTF8.GetBytes("中文半行\n");
+            File.WriteAllBytes(firstFile, incomplete[..1]);
+            File.WriteAllText(secondFile, "complete newer shard\n");
+            var reader = new RollingLog(interleaved, ticks);
+            var replay = new List<string>();
+            reader.ReadAvailable(replay.Add);
+            Check(replay.SequenceEqual(["complete newer shard"]), "a newer shard does not consume another shard's partial UTF-8");
+            using (var append = new FileStream(firstFile, FileMode.Append))
+            {
+                append.Write(incomplete.AsSpan(1));
+            }
+
+            reader.ReadAvailable(replay.Add);
+            Check(replay.SequenceEqual(["complete newer shard", "中文半行"]), "late UTF-8 completion resumes the correct shard without duplicates");
         }
         finally
         {

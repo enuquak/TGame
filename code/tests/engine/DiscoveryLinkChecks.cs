@@ -25,6 +25,7 @@ internal sealed class DiscoveryLinkChecks(TestServices services)
         var router1 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 1), firstApp.Urls.Single(), 1);
         var router2 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 2), secondApp.Urls.Single(), 2);
         var router3 = new DiscoveredProcess(new ServerProcess(ProcessType.Router, 3), thirdApp.Urls.Single(), 3);
+        var unrelated = new DiscoveredProcess(new ServerProcess(ProcessType.Base, 1), "invalid-address", 1);
         var changes = Channel.CreateUnbounded<IReadOnlyList<DiscoveredProcess>>();
         var counts = System.Enum.GetValues<ProcessType>().ToDictionary(type => type, _ => 1);
         counts[ProcessType.Router] = 2;
@@ -34,7 +35,8 @@ internal sealed class DiscoveryLinkChecks(TestServices services)
         var maintenance = node.MaintainConnectionsAsync(changes.Reader.ReadAllAsync(lifetime.Token), lifetime.Token);
         try
         {
-            changes.Writer.TryWrite([router1]);
+            // 发现中的非主动目标必须被忽略，不能进入地址解析或连接。
+            changes.Writer.TryWrite([unrelated, router1]);
             var old = await first.Connections.Reader.ReadAsync(stop);
             await old.Handshaken.Task.WaitAsync(stop);
             if (node.FirstLinks.IsCompleted || node.Ready)

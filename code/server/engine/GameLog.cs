@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using TGame.Logging;
 using Serilog;
 using Serilog.Core;
@@ -14,6 +13,22 @@ public sealed class GameLog : IDisposable
     private string? processName;
     private Logger? serverLog;
     private readonly LoggingLevelSwitch minimumLevel = new();
+    private readonly Logger? startupLog;
+
+    public GameLog(string? startupDirectory = null)
+    {
+        if (startupDirectory is not null)
+        {
+            startupLog = CreateLogger(startupDirectory);
+        }
+    }
+
+    private Logger CreateLogger(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        return new LoggerConfiguration().MinimumLevel.ControlledBy(minimumLevel)
+            .WriteTo.Sink(new ServerFileSink(directory, FileSizeLimit)).CreateLogger();
+    }
 
     public void OpenServer(ServerProcess server)
     {
@@ -31,15 +46,8 @@ public sealed class GameLog : IDisposable
             throw new InvalidOperationException("The server log file is already open.");
         }
 
-        using var process = Process.GetCurrentProcess();
-        long startedUtcTicks = process.StartTime.ToUniversalTime().Ticks;
         var root = Environment.GetEnvironmentVariable(EngineEnvironment.LogRoot) ?? Path.Combine("logs", "server");
-        var directory = Directory.CreateDirectory(Path.Combine(root, server.Name + "Server"));
-        var path = Path.Combine(directory.FullName, $"{Environment.ProcessId}-{startedUtcTicks}-.log");
-        var logger = new LoggerConfiguration().MinimumLevel.ControlledBy(minimumLevel)
-            .WriteTo.File(path, outputTemplate: "{Message:lj}{NewLine}",
-            rollingInterval: RollingInterval.Hour, rollOnFileSizeLimit: true, fileSizeLimitBytes: FileSizeLimit,
-            retainedFileCountLimit: null).CreateLogger();
+        var logger = CreateLogger(Path.Combine(root, server.Name));
         processName = server.Name;
         Volatile.Write(ref serverLog, logger);
     }
@@ -54,7 +62,14 @@ public sealed class GameLog : IDisposable
             }
 
             disposed = true;
-            serverLog?.Dispose();
+            try
+            {
+                serverLog?.Dispose();
+            }
+            finally
+            {
+                startupLog?.Dispose();
+            }
         }
     }
 
@@ -89,7 +104,7 @@ public sealed class GameLog : IDisposable
             return;
         }
 
-        var logger = Volatile.Read(ref serverLog);
+        var logger = Volatile.Read(ref serverLog) ?? startupLog;
         var json = LogEventJson.Serialize(level, ev, role, peer, id, entity, link, detail, processName);
 
         if (logger is not null)
