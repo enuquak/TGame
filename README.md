@@ -103,7 +103,7 @@ pwsh -NoProfile -File tools/scripts/powershell/New-ServerRunDirectory.ps1 -Confi
 dotnet build/bin/TGame.Server/debug/TGame.Server.dll Router
 ```
 
-服务进程直接写入 `logs/server/<实例名称>Server/`，例如 `logs/server/Base1Server/`。每行是一条 JSON 事件，可按 PID、角色、实例、时间和请求 ID 查询。同一实例使用 `<PID>-<进程启动UTC ticks>-yyyyMMddHH.log`，按小时滚动，同一小时约满 10 MiB 后续写到 `_001.log`、`_002.log`。`TGAME_SERVER_LOG_ROOT` 可指定服务日志根目录。控制台依据 `PROCESS_READY`、`LINKS_READY` 和 `LINKS_LOST` 更新就绪状态；前两项为 INFO 日志，最低级别设为 `ERROR` 时无法准确显示就绪。
+服务进程直接写入 `logs/server/<实例名称>/`，例如 `logs/server/Login1/`。文件名使用本机时间 `yyyyMMddHHmm.log`：自然跨小时切分时分钟固定为 `00`，例如 `202607112300.log`；约满 10 MiB 时按实际分钟分片，例如 `202607112317.log`，同一分钟再次分片使用 `_001.log`、`_002.log`。重启后追加到该小时最新的可用分片。每行是一条 JSON 事件，控制台通过 PID、角色、实例和记录时间筛选当前进程的日志。`TGAME_SERVER_LOG_ROOT` 可指定服务日志根目录。控制台依据 `PROCESS_READY`、`LINKS_READY` 和 `LINKS_LOST` 更新就绪状态；前两项为 INFO 日志，最低级别设为 `ERROR` 时无法准确显示就绪。
 
 独立引擎项目 [TGame.Server.Engine.csproj](code/server/engine/TGame.Server.Engine.csproj) 承担进程拓扑、gRPC 接入、连接管理、服务发现、基础 RPC、日志与 ID；可以单独构建，不引用宿主或业务 Shared。宿主 [TGame.Server.csproj](code/server/app/TGame.Server.csproj) 显式引用 Engine 与 Shared，使用 .NET 内置 IoC 容器组装进程服务；ZK、ID 和节点使用共享实例，使用方通过构造函数接收依赖。配置显式加载并注入；日志在配置加载前创建，注册到容器共享，由宿主最后释放以记录启动与清理失败。
 

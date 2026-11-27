@@ -62,7 +62,7 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
         Reset();
         runDir = directory;
         this.logRoot = logRoot;
-        logDir = Path.Combine(logRoot, Name + "Server");
+        logDir = Path.Combine(logRoot, Name);
         var exe = Path.Combine(snapshot, ExecutableName);
         var saved = File.Exists(IdentityPath)
             ? JsonSerializer.Deserialize<Identity>(File.ReadAllText(IdentityPath)) ?? throw new InvalidDataException(IdentityPath)
@@ -82,7 +82,7 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
 
         if (Pid != null)
         {
-            log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
+            log = new RollingLog(logDir, startedUtcTicks);
         }
 
         Refresh();
@@ -148,7 +148,7 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
         process = Process.Start(startInfo) ?? throw new InvalidOperationException($"{Name} 启动失败。");
         Pid = process.Id;
         startedUtcTicks = process.StartTime.ToUniversalTime().Ticks;
-        log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
+        log = new RollingLog(logDir, startedUtcTicks);
         Save(new Identity(process.Id, startedUtcTicks));
         File.Delete(LaunchMarker);
         Status = ServerStatus.Starting;
@@ -179,8 +179,8 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
                 }
 
                 Name = assigned.Name;
-                logDir = Path.Combine(logRoot, Name + "Server");
-                log = new RollingLog(logDir, $"{Pid}-{startedUtcTicks}-");
+                logDir = Path.Combine(logRoot, Name);
+                log = new RollingLog(logDir, startedUtcTicks);
                 identityResolved = true;
             }
         }
@@ -331,7 +331,7 @@ internal sealed class ServerInstance(string role, int channelId = 1) : IDisposab
         Pid = null;
         Name = SlotName;
         identityResolved = false;
-        logDir = Path.Combine(logRoot, Name + "Server");
+        logDir = Path.Combine(logRoot, Name);
         log = null;
         lines.Clear();
         LineCount = 0;

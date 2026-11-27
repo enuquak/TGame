@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 using TGame;
 using TGame.Server;
 using TGame.Server.Engine;
@@ -66,6 +67,16 @@ internal static class LogLevelChecks
                 }
 
                 var files = Directory.GetFiles(logRoot, "*.log", SearchOption.AllDirectories);
+                foreach (var file in files)
+                {
+                    if (Path.GetDirectoryName(file) != Path.Combine(logRoot, "Login1") ||
+                        !DateTime.TryParseExact(Path.GetFileNameWithoutExtension(file), "yyyyMMddHHmm",
+                            CultureInfo.InvariantCulture, DateTimeStyles.None, out var hour) || hour.Minute != 0)
+                    {
+                        throw new Exception("Server logs must use Login1/yyyyMMddHH00.log for hourly files.");
+                    }
+                }
+
                 var lines = files.Order(StringComparer.Ordinal).SelectMany(File.ReadLines).ToArray();
                 CheckRows(lines[..^1], minimum, process.Name);
                 var consoleLines = error.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
@@ -77,6 +88,7 @@ internal static class LogLevelChecks
             }
 
             CheckLifecycle(process);
+            ServerLogFileChecks.Run(Path.Combine(root, "rolling"));
         }
         finally
         {
@@ -86,7 +98,7 @@ internal static class LogLevelChecks
             Directory.Delete(root, recursive: true);
         }
 
-        Console.WriteLine("PASS logger instance lifecycle and isolation, DEBUG/INFO/ERROR filtering, JSON fields, server log configuration and optional console mirroring.");
+        Console.WriteLine("PASS logger lifecycle, levels, JSON, console mirroring, hourly/size filenames, restart append and concurrent writes.");
     }
 
     private static void CheckLifecycle(ServerProcess process)

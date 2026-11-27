@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using TGame.Logging;
 using Serilog;
 using Serilog.Core;
@@ -31,15 +30,10 @@ public sealed class GameLog : IDisposable
             throw new InvalidOperationException("The server log file is already open.");
         }
 
-        using var process = Process.GetCurrentProcess();
-        long startedUtcTicks = process.StartTime.ToUniversalTime().Ticks;
         var root = Environment.GetEnvironmentVariable(EngineEnvironment.LogRoot) ?? Path.Combine("logs", "server");
-        var directory = Directory.CreateDirectory(Path.Combine(root, server.Name + "Server"));
-        var path = Path.Combine(directory.FullName, $"{Environment.ProcessId}-{startedUtcTicks}-.log");
+        var directory = Directory.CreateDirectory(Path.Combine(root, server.Name));
         var logger = new LoggerConfiguration().MinimumLevel.ControlledBy(minimumLevel)
-            .WriteTo.File(path, outputTemplate: "{Message:lj}{NewLine}",
-            rollingInterval: RollingInterval.Hour, rollOnFileSizeLimit: true, fileSizeLimitBytes: FileSizeLimit,
-            retainedFileCountLimit: null).CreateLogger();
+            .WriteTo.Sink(new ServerFileSink(directory.FullName, FileSizeLimit)).CreateLogger();
         processName = server.Name;
         Volatile.Write(ref serverLog, logger);
     }
