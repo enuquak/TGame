@@ -14,6 +14,10 @@
 
 若更新 .NET SDK 后出现 `CS0518`（连 `System.Object` 都无法识别），先执行 `dotnet build TGame.slnx` 检查真实编译结果；编译通过时，在命令面板执行 `Developer: Reload Window`，让 C# 扩展重新加载 SDK 和工程引用。
 
+## 查看提交差异
+
+在 GitHub 切换到事项分支后，打开 **Commits** 并选择某次提交，即可查看该次提交的文件增删。要查看分支尚未合入 `main` 的全部改动，使用 **Compare**，将 `base` 设为 `main`，`compare` 设为事项分支。分支合并后，单次提交的 diff 仍可查看。
+
 ## 独立起停脚本
 
 服务器可以完全通过项目脚本运行，无需打开或编译服务器控制台。新工作区先执行 `dotnet restore code/server/engine/TGame.Server.Engine.csproj` 准备 YAML 依赖。运行 `tools/scripts/Start-EnvironmentTunnel.bat`，确保 ZooKeeper 可达；然后双击以下 BAT，或在仓库根目录执行：
